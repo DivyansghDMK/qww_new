@@ -197,15 +197,14 @@ class SerialStreamReader:
             # Stop data acquisition first
             self.running = False
             
-            # COMMENTED OUT: Hardware CLOSE command disabled
             # Send CLOSE command to hardware if command handler is available
-            # if self.command_handler:
-            #     try:
-            #         success, response = self.command_handler.send_close_command()
-            #         if not success:
-            #             print(" ⚠️ Warning: CLOSE command ACK not received")
-            #     except Exception as e:
-            #         print(f" ⚠️ Error sending CLOSE command: {e}")
+            if self.command_handler:
+                try:
+                    success, response = self.command_handler.send_close_command()
+                    if not success:
+                        print(" ⚠️ Warning: CLOSE command ACK not received")
+                except Exception as e:
+                    print(f" ⚠️ Error sending CLOSE command: {e}")
             
             # Flush any remaining data
             if hasattr(self.ser, 'reset_input_buffer'):
@@ -384,14 +383,29 @@ class SerialStreamReader:
         out: List[Dict[str, int]] = []
         
         try:
-            # Read larger chunks to prevent buffer overflow at 500 Hz
-            # At 500 Hz with 22-byte packets = 11,000 bytes/second
-            # Read MORE bytes if buffer is accumulating (indicates we're falling behind)
-            read_size = 4096
-            if len(self.buf) > 20000:  # If buffer > 20KB, read more aggressively
-                read_size = 8192  # Read 8KB to catch up faster
-            elif len(self.buf) > 50000:  # If buffer > 50KB, read even more
-                read_size = 16384  # Read 16KB to catch up quickly
+            bytes_to_read = 0
+            if hasattr(self.ser, 'in_waiting'):
+                try:
+                    bytes_to_read = self.ser.in_waiting
+                except Exception:
+                    pass
+            
+            # If no data is available, return immediately to keep UI responsive
+            if bytes_to_read == 0:
+                return []
+            
+            # Cap the read size to prevent massive reads if buffer piled up
+            # But ensure we read enough to drain the buffer if possible
+            # Logic: Read available bytes, but respect our "catch up" logic sizes if they are larger/smaller
+            target_read_size = 4096
+            if len(self.buf) > 20000:
+                target_read_size = 8192
+            elif len(self.buf) > 50000:
+                target_read_size = 16384
+                
+            # Read whichever is smaller: what's available or our max chunk size
+            # (Actually, we should read all available to clear hardware buffer, but in chunks)
+            read_size = min(bytes_to_read, target_read_size)
             
             chunk = self.ser.read(read_size)
             if chunk:

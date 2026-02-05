@@ -48,6 +48,7 @@ except ImportError:
 
 from utils.settings_manager import SettingsManager
 from utils.crash_logger import get_crash_logger
+from ecg.ecg_filters import apply_ac_filter, apply_emg_filter
 from dashboard.history_window import append_history_entry
 
 # Import ECGTestPage + helpers to reuse EXACT same calculation + smoothing as 12‑lead test
@@ -558,6 +559,22 @@ class HRVTestWindow(QWidget):
             if len(self.captured_data) > 0:
                 # Use the circular buffer for display (contains smoothed data)
                 buffer_data = self.data[self.data != 0]  # Get non-zero values
+
+                if len(buffer_data) > 100: # Ensure enough data for filtering
+                    # Get filter settings from SettingsManager
+                    ac_val = self.settings_manager.get_setting("filter_ac", "50")
+                    emg_val = self.settings_manager.get_setting("filter_emg", "35")
+                    
+                    fs = self.sampling_rate if self.sampling_rate > 0 else 500.0
+                    
+                    # Apply AC Filter
+                    if ac_val != "Off" and ac_val != "off":
+                        buffer_data = apply_ac_filter(buffer_data, fs, ac_val)
+                        
+                    # Apply EMG Filter
+                    if emg_val != "Off" and emg_val != "off":
+                        buffer_data = apply_emg_filter(buffer_data, fs, emg_val)
+
                 if len(buffer_data) > 0:
                     # Create time axis based on sampling rate
                     num_samples = len(buffer_data)

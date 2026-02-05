@@ -16,12 +16,12 @@ class SettingsManager:
             "printer_average_wave": "on",
 
             # Filter settings
-            "filter_ac": "off",
+            "filter_ac": "50",
             "filter_emg": "150",
             "filter_dft": "0.5",
 
             # System Setup settings
-            "system_beat_vol": "on",
+            "system_beat_vol": "off",
             "system_language": "en",
 
             # Factory Maintain settings
@@ -32,7 +32,7 @@ class SettingsManager:
         }
         self.settings = self.load_settings()
 
-        # Force EMG filter to 150Hz on every application start (User requirement)
+        # Force EMG filter to 150Hz on every application start
         # This overrides any saved setting from previous sessions.
         self.settings["filter_emg"] = "150"
     

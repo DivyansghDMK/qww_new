@@ -272,74 +272,6 @@ def calculate_st_segment(lead_signal, r_peaks, fs=500, j_offset_ms=40, st_offset
         return "Depressed"
     return str(st_value)
 
-# ------------------------ Calculate Arrhythmia ------------------------
-
-# def detect_arrhythmia(heart_rate, qrs_duration, rr_intervals, pr_interval=None, p_peaks=None, r_peaks=None, ecg_signal=None):
-#     """
-#     Expanded arrhythmia detection logic for common clinical arrhythmias.
-#     - Sinus Bradycardia: HR < 60, regular RR
-#     - Sinus Tachycardia: HR > 100, regular RR
-#     - Atrial Fibrillation: Irregular RR, absent/irregular P waves
-#     - Atrial Flutter: Sawtooth P pattern (not robustly detected here)
-#     - PAC: Early P, narrow QRS, compensatory pause (approximate)
-#     - PVC: Early wide QRS, no P, compensatory pause (approximate)
-#     - VT: HR > 100, wide QRS (>120ms), regular
-#     - VF: Chaotic, no clear QRS, highly irregular
-#     - Asystole: Flatline (very low amplitude, no R)
-#     - SVT: HR > 150, narrow QRS, regular
-#     - Heart Block: PR > 200 (1°), dropped QRS (2°), AV dissociation (3°)
-#     """
-#     try:
-#         if not rr_intervals or len(rr_intervals) < 2:
-#             return "Insufficient Data"
-#         rr_std = np.std(rr_intervals)
-#         rr_mean = np.mean(rr_intervals)
-#         rr_reg = rr_std < 0.12  # Regular if std < 120ms
-#         # Asystole: flatline (no R peaks, or very low amplitude)
-#         if r_peaks is not None and len(r_peaks) < 1:
-#             if ecg_signal is not None and np.ptp(ecg_signal) < 50:
-#                 return "Asystole (Flatline)"
-#             return "No QRS Detected"
-#         # VF: highly irregular, no clear QRS, rapid undulating
-#         if r_peaks is not None and len(r_peaks) > 5:
-#             if rr_std > 0.25 and np.ptp(ecg_signal) > 100 and heart_rate and heart_rate > 180:
-#                 return "Ventricular Fibrillation (VF)"
-#         # VT: HR > 100, wide QRS (>120ms), regular
-#         if heart_rate and heart_rate > 100 and qrs_duration and qrs_duration > 120 and rr_reg:
-#             return "Ventricular Tachycardia (VT)"
-#         # Sinus Bradycardia: HR < 60, regular
-#         if heart_rate and heart_rate < 60 and rr_reg:
-#             return "Sinus Bradycardia"
-#         # Sinus Tachycardia: HR > 100, regular
-#         if heart_rate and heart_rate > 100 and qrs_duration and qrs_duration <= 120 and rr_reg:
-#             return "Sinus Tachycardia"
-#         # SVT: HR > 150, narrow QRS, regular
-#         if heart_rate and heart_rate > 150 and qrs_duration and qrs_duration <= 120 and rr_reg:
-#             return "Supraventricular Tachycardia (SVT)"
-#         # AFib: Irregular RR, absent/irregular P
-#         if not rr_reg and (p_peaks is None or len(p_peaks) < len(r_peaks) * 0.5):
-#             return "Atrial Fibrillation (AFib)"
-#         # Atrial Flutter: (not robust, but if HR ~150, regular, and P waves rapid)
-#         if heart_rate and 140 < heart_rate < 170 and rr_reg and p_peaks is not None and len(p_peaks) > len(r_peaks):
-#             return "Atrial Flutter (suggestive)"
-#         # PAC: Early P, narrow QRS, compensatory pause (approximate)
-#         if p_peaks is not None and r_peaks is not None and len(p_peaks) > 1 and len(r_peaks) > 1:
-#             pr_diffs = np.diff([r - p for p, r in zip(p_peaks, r_peaks)])
-#             if np.any(pr_diffs < -0.15 * len(ecg_signal)) and qrs_duration and qrs_duration <= 120:
-#                 return "Premature Atrial Contraction (PAC)"
-#         # PVC: Early wide QRS, no P, compensatory pause (approximate)
-#         if qrs_duration and qrs_duration > 120 and (p_peaks is None or len(p_peaks) < len(r_peaks) * 0.5):
-#             return "Premature Ventricular Contraction (PVC)"
-#         # Heart Block: PR > 200ms (1°), dropped QRS (2°), AV dissociation (3°)
-#         if pr_interval and pr_interval > 200:
-#             return "Heart Block (1° AV)"
-#         # If QRS complexes are missing (dropped beats)
-#         if r_peaks is not None and len(r_peaks) < len(ecg_signal) / 500 * heart_rate * 0.7:
-#             return "Heart Block (2°/3° AV, dropped QRS)"
-#         return "None Detected"
-#     except Exception as e:
-#         return "Detecting..."
-
 
 class SerialECGReader:
     def __init__(self, port, baudrate):
@@ -706,9 +638,9 @@ class ECGTestPage(QWidget):
         self.stacked_widget = stacked_widget  # Save reference for navigation
 
         self.settings_manager = SettingsManager()
-        # Ensure AC filter starts at "off" each launch (Set Filter default)
+        # Ensure AC filter starts at "50" each launch (Set Filter default)
         try:
-            self.settings_manager.set_setting("filter_ac", "off")
+            self.settings_manager.set_setting("filter_ac", "50")
         except Exception as e:
             print(f" Could not enforce default AC filter state: {e}")
         self.current_language = self.settings_manager.get_setting("system_language", "en")
@@ -767,6 +699,21 @@ class ECGTestPage(QWidget):
         self.paused_duration = 0  # Total cumulative paused time
         self.elapsed_timer = QTimer()
         self.elapsed_timer.timeout.connect(self.update_elapsed_time)
+
+        def close_serial_connection(self):
+            """Safely close the serial connection if it exists"""
+            if self.serial_reader:
+                print("Cleaning up serial connection...")
+                try:
+                    self.serial_reader.close()
+                except Exception as e:
+                    print(f"Error closing serial reader: {e}")
+                self.serial_reader = None
+
+        def closeEvent(self, event):
+            """Handle widget closure"""
+            self.close_serial_connection()
+            event.accept()
 
         main_vbox = QVBoxLayout()
 
@@ -1258,6 +1205,25 @@ class ECGTestPage(QWidget):
 
         self.start_btn.clicked.connect(self.start_acquisition)
         self.stop_btn.clicked.connect(self.stop_acquisition)
+
+        # Initial state: Disable Stop and Generate Report buttons
+        self.stop_btn.setEnabled(False)
+        self.generate_report_btn.setEnabled(False)
+        
+        grey_style = """
+            QPushButton {
+                background: #e0e0e0;
+                color: #a0a0a0;
+                border: 2px solid #cccccc;
+                border-radius: 6px;
+                padding: 4px 8px;
+                font-size: 10px;
+                font-weight: bold;
+                text-align: center;
+            }
+        """
+        self.stop_btn.setStyleSheet(grey_style)
+        self.generate_report_btn.setStyleSheet(grey_style)
 
 
         self.start_btn.setToolTip("Start ECG recording from the selected port")
@@ -5378,12 +5344,14 @@ class ECGTestPage(QWidget):
                 self.demo_toggle.setEnabled(False)
                 self.demo_toggle.setStyleSheet("""
                     QPushButton {
-                        background: #6c757d;
-                        color: #ffffff;
-                        border: 2px solid #6c757d;
+                        background: #e0e0e0;
+                        color: #a0a0a0;
+                        border: 2px solid #cccccc;
                         border-radius: 8px;
-                        padding: 4px 8px;
-                        font-size: 10px;
+                        padding: 8px 12px;
+                        font-size: 12px;
+                        font-weight: bold;
+                        text-align: center;
                     }
                 """)
                 print(" Demo mode disabled (Hardware acquisition active)")
@@ -5446,17 +5414,42 @@ class ECGTestPage(QWidget):
             
             # --- NEW: Scan all COM ports with START command and pick the one that ACKs ---
             port_to_use = port
-            try:
-                scan_result = SerialStreamReader.scan_and_detect_port(baudrate=baud_int, timeout=0.2)
-                if scan_result:
-                    detected_port, detected_serial = scan_result
-                    port_to_use = detected_port
-                    print(f" Auto‑detected ECG device on port {detected_port} (START ACK received)")
-                    # Remember working port in settings
-                    if hasattr(self, 'settings_manager'):
-                        self.settings_manager.set_serial_port(detected_port)
-            except Exception as scan_err:
-                print(f" Port scan failed, falling back to configured port {port}: {scan_err}")
+            scan_needed = (port in ("Select Port", None) or port == "")
+            
+            # If we have a configured port, verify it's physically available
+            if not scan_needed:
+                try:
+                    available_ports = [p.device for p in serial.tools.list_ports.comports()]
+                    if port not in available_ports:
+                        print(f" Configured port {port} not found in available ports. forcing scan.")
+                        scan_needed = True
+                except Exception:
+                    # If we can't list ports, assume we need to scan or just try the configured one
+                    pass
+
+            if scan_needed:
+                print(" Scanning all COM ports for ECG device...")
+                try:
+                    scan_result = SerialStreamReader.scan_and_detect_port(baudrate=baud_int, timeout=0.2)
+                    if scan_result:
+                        detected_port, detected_serial = scan_result
+                        port_to_use = detected_port
+                        print(f" Auto‑detected ECG device on port {detected_port} (START ACK received)")
+                        
+                        # IMPORTANT: Close the detected serial object because SerialStreamReader will open its own
+                        try:
+                            if detected_serial and detected_serial.is_open:
+                                detected_serial.close()
+                        except Exception as e:
+                            print(f" Warning: Failed to close detected serial port: {e}")
+
+                        # Remember working port in settings
+                        if hasattr(self, 'settings_manager'):
+                            self.settings_manager.set_serial_port(detected_port)
+                except Exception as scan_err:
+                    print(f" Port scan failed, falling back to configured port {port}: {scan_err}")
+            else:
+                print(f" Using configured port {port_to_use}, skipping auto-scan.")
 
             try:
                 # Use new packet-based SerialStreamReader on the detected/selected port
@@ -5474,7 +5467,7 @@ class ECGTestPage(QWidget):
             # OPTIMIZED: Timer interval for smooth wave display without jitter
             # At 500 Hz, we get 500 packets/second = ~8-10 packets per 16ms timer interval
             # Using 16ms (60 FPS) for smooth, jitter-free wave flow
-            timer_interval = 16  # 60 FPS - smooth flow without jitter
+            timer_interval = 33  # 30 FPS - smooth flow without jitter
             # Using default timer type - works fine in EXE with proper interval
             self.timer.start(timer_interval)
             # INSTANT DISPLAY: Trigger immediate first update to show waves right away
@@ -5536,6 +5529,52 @@ class ECGTestPage(QWidget):
             if self.elapsed_timer.isActive():
                 self.elapsed_timer.stop()
             self.elapsed_timer.start(1000)  # Update every 1 second
+
+            # Disable Start button to prevent multiple clicks and visual indication
+            self.start_btn.setEnabled(False)
+            self.start_btn.setStyleSheet("""
+                QPushButton {
+                    background: #e0e0e0;
+                    color: #a0a0a0;
+                    border: 2px solid #cccccc;
+                    border-radius: 6px;
+                    padding: 4px 8px;
+                    font-size: 10px;
+                    font-weight: bold;
+                    text-align: center;
+                }
+            """)
+
+            # Enable Stop and Generate Report buttons
+            green_style = """
+                QPushButton {
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                        stop:0 #4CAF50, stop:1 #45a049);
+                    color: white;
+                    border: 2px solid #4CAF50;
+                    border-radius: 6px;
+                    padding: 4px 8px;
+                    font-size: 10px;
+                    font-weight: bold;
+                    text-align: center;
+                }
+                QPushButton:hover {
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                        stop:0 #45a049, stop:1 #4CAF50);
+                    border: 2px solid #45a049;
+                    color: white;
+                }
+                QPushButton:pressed {
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                        stop:0 #3d8b40, stop:1 #357a38);
+                    border: 2px solid #3d8b40;
+                    color: white;
+                }
+            """
+            self.stop_btn.setEnabled(True)
+            self.stop_btn.setStyleSheet(green_style)
+            self.generate_report_btn.setEnabled(True)
+            self.generate_report_btn.setStyleSheet(green_style)
             
         except Exception as e:
             error_msg = f"Failed to connect to any serial port: {str(e)}"
@@ -5554,8 +5593,8 @@ class ECGTestPage(QWidget):
             
         if self.serial_reader:
             self.serial_reader.stop()
-            self.serial_reader.close()
-            self.serial_reader = None
+            # self.serial_reader.close()
+            # self.serial_reader = None
         self.timer.stop()
         if hasattr(self, '_12to1_timer'):
             self._12to1_timer.stop()
@@ -5663,21 +5702,71 @@ class ECGTestPage(QWidget):
                         color: #1a1a1a;
                         border: 2px solid #e9ecef;
                         border-radius: 8px;
-                        padding: 4px 8px;
-                        font-size: 10px;
+                        padding: 8px 12px;
+                        font-size: 12px;
+                        font-weight: bold;
+                        text-align: center;
+                        margin: 2px 0;
                     }
                     QPushButton:hover {
                         background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
-                            stop:0 #f8f9fa, stop:1 #e9ecef);
+                            stop:0 #fff5f0, stop:1 #ffe0cc);
+                        border: 2px solid #ff6600;
+                        color: #ff6600;
                     }
                     QPushButton:checked {
-                        background: #28a745;
-                        color: white;
+                        background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
+                            stop:0 #fff5f0, stop:1 #ffe0cc);
+                        border: 2px solid #dc3545;
+                        color: #dc3545;
                     }
                 """)
                 print(" Demo mode enabled (Hardware acquisition stopped)")
         except Exception as e:
             print(f" Error enabling demo mode: {e}")
+
+        # Disable Stop button
+        self.stop_btn.setEnabled(False)
+        self.stop_btn.setStyleSheet("""
+            QPushButton {
+                background: #e0e0e0;
+                color: #a0a0a0;
+                border: 2px solid #cccccc;
+                border-radius: 6px;
+                padding: 4px 8px;
+                font-size: 10px;
+                font-weight: bold;
+                text-align: center;
+            }
+        """)
+
+        # Re-enable Start button and restore green style
+        self.start_btn.setEnabled(True)
+        self.start_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                    stop:0 #4CAF50, stop:1 #45a049);
+                color: white;
+                border: 2px solid #4CAF50;
+                border-radius: 6px;
+                padding: 4px 8px;
+                font-size: 10px;
+                font-weight: bold;
+                text-align: center;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                    stop:0 #45a049, stop:1 #4CAF50);
+                border: 2px solid #45a049;
+                color: white;
+            }
+            QPushButton:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                    stop:0 #3d8b40, stop:1 #357a38);
+                border: 2px solid #3d8b40;
+                color: white;
+            }
+        """)
 
     def update_plot(self):
         print(f"[DEBUG] ECGTestPage - update_plot called, serial_reader exists: {self.serial_reader is not None}")
@@ -6746,7 +6835,7 @@ class ECGTestPage(QWidget):
                                 pass
 
                         # AC Filter
-                        ac_setting = self.settings_manager.get_setting("filter_ac", "off") if hasattr(self, "settings_manager") else "off"
+                        ac_setting = self.settings_manager.get_setting("filter_ac", "50") if hasattr(self, "settings_manager") else "off"
                         if (not emg_applied or not emg_suppresses_ac) and ac_setting and ac_setting != "off" and len(filtered_segment) >= 10:
                             from ecg.ecg_filters import apply_ac_filter
                             filtered_segment = apply_ac_filter(filtered_segment, sampling_rate, ac_setting)
@@ -7203,8 +7292,12 @@ class ECGTestPage(QWidget):
     # ------------------------------------ 6 leads overlay --------------------------------------------
 
     def six_leads_overlay(self):
-        # If overlay is already shown, hide it and restore original layout
-        if hasattr(self, '_overlay_active') and self._overlay_active:
+        if getattr(self, "_overlay_active", False):
+            # If we're already in 6:2, treat this as a toggle (close overlay)
+            if getattr(self, "_current_overlay_layout", None) == "6x2":
+                self._restore_original_layout()
+                self._current_overlay_layout = None
+                return
             self._restore_original_layout()
         
         # Store the original plot area layout
@@ -7497,7 +7590,7 @@ class ECGTestPage(QWidget):
                                 pass
 
                         # AC Filter
-                        ac_setting = self.settings_manager.get_setting("filter_ac", "off") if hasattr(self, "settings_manager") else "off"
+                        ac_setting = self.settings_manager.get_setting("filter_ac", "50") if hasattr(self, "settings_manager") else "off"
                         if (not emg_applied or not emg_suppresses_ac) and ac_setting and ac_setting != "off" and len(filtered_segment) >= 10:
                             from ecg.ecg_filters import apply_ac_filter
                             filtered_segment = apply_ac_filter(filtered_segment, sampling_rate, ac_setting)
@@ -8025,7 +8118,7 @@ class ECGTestPage(QWidget):
 
                             try:
                                 # AC Filter
-                                ac_setting = self.settings_manager.get_setting("filter_ac", "off") if self.settings_manager else "off"
+                                ac_setting = self.settings_manager.get_setting("filter_ac", "50") if self.settings_manager else "off"
                                 if (not emg_applied or not emg_suppresses_ac) and ac_setting and ac_setting != "off" and len(filtered_slice) >= 10:
                                     from ecg.ecg_filters import apply_ac_filter
                                     filtered_slice = apply_ac_filter(filtered_slice, sampling_rate, ac_setting)

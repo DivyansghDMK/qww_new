@@ -1458,7 +1458,7 @@ class ExpandedLeadView(QDialog):
             try:
                 # Apply AC filter if enabled
                 if (not emg_applied or not emg_suppresses_ac) and 'apply_ac_filter' in globals() and apply_ac_filter is not None and hasattr(self._parent, 'settings_manager'):
-                    ac_opt = str(self._parent.settings_manager.get_setting('filter_ac', 'off')).strip()
+                    ac_opt = str(self._parent.settings_manager.get_setting('filter_ac', '50')).strip()
                     if ac_opt in ('50', '60'):
                         display_signal = apply_ac_filter(display_signal, float(self.sampling_rate), ac_opt)
             except Exception as _ac_err:

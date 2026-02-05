@@ -618,6 +618,11 @@ class HyperkalemiaTestWindow(QWidget):
                 sr = self.ecg_calculator.sampler.add_sample()
                 if sr > 0:
                     self.sampling_rate = sr
+
+            # Get filter settings from SettingsManager
+            ac_val = self.settings_manager.get_setting("filter_ac", "50")
+            emg_val = self.settings_manager.get_setting("filter_emg", "35")
+            fs = self.sampling_rate if self.sampling_rate > 0 else 500.0
             
             # Update all plots with stable display window
             for lead_name in self.lead_data.keys():
@@ -632,6 +637,19 @@ class HyperkalemiaTestWindow(QWidget):
 
                     times = [d['time'] for d in self.lead_data[lead_name]]
                     values = [d['value'] for d in self.lead_data[lead_name]]
+
+                    # Apply Filters
+                    try:
+                        from ecg.ecg_filters import apply_ac_filter, apply_emg_filter
+                        if len(values) > 100: # Ensure enough data
+                            values_array = np.array(values)
+                            if ac_val not in ["Off", "off"]:
+                                values_array = apply_ac_filter(values_array, fs, ac_val)
+                            if emg_val not in ["Off", "off"]:
+                                values_array = apply_emg_filter(values_array, fs, emg_val)
+                            values = values_array.tolist()
+                    except ImportError:
+                        pass
                     
                     if len(times) > 0:
                         max_time = max(times)

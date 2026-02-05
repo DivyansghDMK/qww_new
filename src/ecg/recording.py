@@ -2329,7 +2329,7 @@ class ECGMenu(QGroupBox):
             
             # Calculate optimal button size - smaller for small screens
             if is_small_screen:
-                button_width = max(50, min(90, int(margin_size * 2.5)))
+                button_width = max(80, min(120, int(margin_size * 4.0)))
                 button_height = max(20, min(28, int(margin_size * 1.0)))
                 radio_font_size = max(8, min(10, int(margin_size * 0.4)))
                 radio_padding = max(3, min(5, int(margin_size * 0.15)))
@@ -2337,7 +2337,7 @@ class ECGMenu(QGroupBox):
                 indicator_margin_left = max(4, min(5, int(margin_size * 0.2)))
                 indicator_margin_right = max(5, min(6, int(margin_size * 0.25)))
             else:
-                button_width = max(70, min(120, int(margin_size * 3.5)))
+                button_width = max(120, min(180, int(margin_size * 6.0)))
                 button_height = max(25, min(35, int(margin_size * 1.3)))
                 radio_font_size = max(9, int(margin_size * 0.45))
                 radio_padding = max(4, int(margin_size * 0.2))
@@ -2363,7 +2363,7 @@ class ECGMenu(QGroupBox):
                         border: 1px solid #e0e0e0;
                         border-radius: {max(4, min(6, int(margin_size * 0.3)))}px;
                         min-width: {button_width}px;
-                        max-width: {button_width + 10}px;
+                        max-width: {button_width + 5}px;
                         min-height: {button_height}px;
                     }}
                     QRadioButton:hover {{

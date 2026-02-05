@@ -4262,6 +4262,20 @@ class Dashboard(QWidget):
         
         # Ensure all widgets maintain proper proportions
         self.update_layout_proportions()
+
+    def closeEvent(self, event):
+        """Handle dashboard closure to ensure hardware is disconnected"""
+        print("Dashboard closing...")
+        try:
+            if hasattr(self, 'ecg_test_page') and self.ecg_test_page:
+                if hasattr(self.ecg_test_page, 'close_serial_connection'):
+                    self.ecg_test_page.close_serial_connection()
+                elif hasattr(self.ecg_test_page, 'serial_reader') and self.ecg_test_page.serial_reader:
+                    self.ecg_test_page.serial_reader.stop()
+                    self.ecg_test_page.serial_reader.close()
+        except Exception as e:
+            print(f"Error cleaning up dashboard resources: {e}")
+        event.accept()
     
     def update_layout_proportions(self):
         """Update layout proportions when window is resized"""
