@@ -712,21 +712,6 @@ class ECGTestPage(QWidget):
         self.elapsed_timer = QTimer()
         self.elapsed_timer.timeout.connect(self.update_elapsed_time)
 
-        def close_serial_connection(self):
-            """Safely close the serial connection if it exists"""
-            if self.serial_reader:
-                print("Cleaning up serial connection...")
-                try:
-                    self.serial_reader.close()
-                except Exception as e:
-                    print(f"Error closing serial reader: {e}")
-                self.serial_reader = None
-
-        def closeEvent(self, event):
-            """Handle widget closure"""
-            self.close_serial_connection()
-            event.accept()
-
         main_vbox = QVBoxLayout()
 
         menu_frame = QGroupBox("Menu")
@@ -6515,6 +6500,23 @@ class ECGTestPage(QWidget):
                     "Export Error", 
                     f"Failed to export CSV:\n{str(e)}"
                 )
+
+    def close_serial_connection(self):
+        """Safely close the serial connection if it exists"""
+        if self.serial_reader:
+            print("Cleaning up serial connection...")
+            try:
+                if hasattr(self.serial_reader, 'stop'):
+                    self.serial_reader.stop()
+                self.serial_reader.close()
+            except Exception as e:
+                print(f"Error closing serial reader: {e}")
+            self.serial_reader = None
+
+    def closeEvent(self, event):
+        """Handle widget closure"""
+        self.close_serial_connection()
+        event.accept()
 
     def go_back(self):
         """Go back to the dashboard"""

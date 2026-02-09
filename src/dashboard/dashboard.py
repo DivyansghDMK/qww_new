@@ -333,6 +333,8 @@ class Dashboard(QWidget):
         self.device_status_label = QLabel("Device Disconnected")
         self.device_status_label.setFont(QFont("Arial", 10, QFont.Bold))
         self.device_status_label.setStyleSheet("color: red; margin-right: 10px;")
+        self.device_status_label.setMinimumWidth(160)
+        self.device_status_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         header.addWidget(self.device_status_label)
         
         self.medical_btn = QPushButton("Medical Mode")
@@ -460,22 +462,28 @@ class Dashboard(QWidget):
         greet_row.addWidget(self.history_btn)
 
         # Hyperkalemia Test button (orange suede color, right of History, left of HRV Test)
+        # Define disabled style for initial state to prevent flash of active buttons
+        grey_style = "background: #cccccc; color: #666666; border-radius: 16px; padding: 8px 24px;"
+
         self.hyperkalemia_test_btn = QPushButton("Hyperkalemia Test")
-        self.hyperkalemia_test_btn.setStyleSheet("background: #d2691e; color: white; border-radius: 16px; padding: 8px 24px;")
+        self.hyperkalemia_test_btn.setEnabled(False)
+        self.hyperkalemia_test_btn.setStyleSheet(grey_style)
         self.hyperkalemia_test_btn.clicked.connect(self.open_hyperkalemia_test)
         self.hyperkalemia_test_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         greet_row.addWidget(self.hyperkalemia_test_btn)
         
         # HRV Test button (red color, left of ECG Lead Test 12)
         self.hrv_test_btn = QPushButton("HRV Test")
-        self.hrv_test_btn.setStyleSheet("background: #dc3545; color: white; border-radius: 16px; padding: 8px 24px;")
+        self.hrv_test_btn.setEnabled(False)
+        self.hrv_test_btn.setStyleSheet(grey_style)
         self.hrv_test_btn.clicked.connect(self.open_hrv_test)
         self.hrv_test_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.hrv_test_btn.setVisible(True)
         greet_row.addWidget(self.hrv_test_btn)
         
         self.date_btn = QPushButton("ECG Lead Test 12")
-        self.date_btn.setStyleSheet("background: #ff6600; color: white; border-radius: 16px; padding: 8px 24px;")
+        self.date_btn.setEnabled(False)
+        self.date_btn.setStyleSheet(grey_style)
         self.date_btn.clicked.connect(self.go_to_lead_test)
         self.date_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         greet_row.addWidget(self.date_btn)
@@ -3969,6 +3977,14 @@ class Dashboard(QWidget):
         
     def open_hyperkalemia_test(self):
         """Open Hyperkalemia Test window in a new window"""
+        # Ensure 12-lead serial connection is closed before opening Hyperkalemia test
+        if hasattr(self, 'ecg_test_page') and self.ecg_test_page:
+            try:
+                if hasattr(self.ecg_test_page, 'close_serial_connection'):
+                    self.ecg_test_page.close_serial_connection()
+            except Exception as e:
+                print(f"Error closing 12-lead serial connection: {e}")
+
         try:
             from ecg.hyperkalemia_test import HyperkalemiaTestWindow
             self.hyperkalemia_window = HyperkalemiaTestWindow(parent=self, username=self.username)
@@ -3988,6 +4004,14 @@ class Dashboard(QWidget):
     
     def open_hrv_test(self):
         """Open HRV Test window in a new window"""
+        # Ensure 12-lead serial connection is closed before opening HRV test
+        if hasattr(self, 'ecg_test_page') and self.ecg_test_page:
+            try:
+                if hasattr(self.ecg_test_page, 'close_serial_connection'):
+                    self.ecg_test_page.close_serial_connection()
+            except Exception as e:
+                print(f"Error closing 12-lead serial connection: {e}")
+
         try:
             from ecg.hrv_test import HRVTestWindow
             self.hrv_window = HRVTestWindow(parent=self, username=self.username)
@@ -4009,6 +4033,15 @@ class Dashboard(QWidget):
         # Also update dashboard metrics when opening ECG test page
         self.update_dashboard_metrics_from_ecg()
     def go_to_dashboard(self):
+        # Close serial connection on ECG page to free up COM port
+        if hasattr(self, 'ecg_test_page') and self.ecg_test_page:
+            try:
+                if hasattr(self.ecg_test_page, 'close_serial_connection'):
+                    self.ecg_test_page.close_serial_connection()
+            except Exception as e:
+                print(f"Error closing serial connection: {e}")
+
+                
         self.page_stack.setCurrentWidget(self.dashboard_page)
         # Update metrics when returning to dashboard
         self.update_dashboard_metrics_from_ecg()
