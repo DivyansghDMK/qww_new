@@ -1245,8 +1245,12 @@ class DemoManager:
                                 'ST': fixed_st  # P duration (st_interval label shows "P")
                             }
 
-                        # Always send fixed metrics in demo mode
-                        payload = dict(self._demo_fixed_metrics)
+                        payload = dict(self._demo_fixed_metrics) if self._demo_fixed_metrics else {}
+                        try:
+                            if heart_rate and 10 <= heart_rate <= 300:
+                                payload['Heart_Rate'] = int(round(heart_rate))
+                        except Exception:
+                            pass
                         # Add live time since demo start in mm:ss
                         try:
                             if self._demo_started_at:

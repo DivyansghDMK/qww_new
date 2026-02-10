@@ -15,6 +15,14 @@ import numpy as np
 # Set matplotlib to use non-interactive backend
 matplotlib.use('Agg')
 
+# ------------------------ ECG grid scale constants ------------------------
+# 40 large boxes across A4 width (210mm) => 1 large box = 5.25mm
+ECG_BASE_BOX_MM = 5.0
+ECG_LARGE_BOX_MM = 210.0 / 40.0
+ECG_SMALL_BOX_MM = ECG_LARGE_BOX_MM / 5.0
+# Scale wave speed so 1 second equals 5 large boxes at 25 mm/s on 40-box grid
+ECG_SPEED_SCALE = ECG_LARGE_BOX_MM / ECG_BASE_BOX_MM
+
 # ------------------------ Resource path helper for PyInstaller compatibility ------------------------
 
 def _get_resource_path(relative_path):
@@ -202,7 +210,11 @@ def save_ecg_data_to_file(ecg_test_page, output_file=None):
     # Get sampling rate if available
     if hasattr(ecg_test_page, 'sampler') and hasattr(ecg_test_page.sampler, 'sampling_rate'):
         if ecg_test_page.sampler.sampling_rate:
-            saved_data["sampling_rate"] = float(ecg_test_page.sampler.sampling_rate)
+            sampled_rate = float(ecg_test_page.sampler.sampling_rate)
+            # Guard against invalid/low sampling rates (report expects 500 Hz)
+            if sampled_rate < 50.0 or sampled_rate > 1000.0:
+                sampled_rate = 500.0
+            saved_data["sampling_rate"] = sampled_rate
     
     # Save each lead's data - use FULL buffer (ecg_buffers if available, otherwise data)
     # Priority: Use ecg_buffers (5000 samples) if available, otherwise use data (1000 samples)
@@ -321,13 +333,13 @@ def calculate_time_window_from_bpm_and_wave_speed(hr_bpm, wave_speed_mm_s, desir
     """
     Calculate optimal time window based on BPM and wave_speed
     
-    Important: Report  ECG graph  width = 33 boxes × 5mm = 165mm 
-     wave_speed  time calculate    factor use :
-        Time from wave_speed = (165mm / wave_speed_mm_s) seconds
+    Important: Report ECG graph width = 33 boxes × ECG_LARGE_BOX_MM
+     wave_speed time calculate factor use :
+        Time from wave_speed = (graph_width_mm / effective_wave_speed_mm_s) seconds
     
     Formula:
-        - Time window = (165mm / wave_speed_mm_s) seconds ONLY
-          ( 33 boxes × 5mm = 165mm total width)
+        - Time window = (graph_width_mm / effective_wave_speed_mm_s) seconds ONLY
+          (33 boxes × ECG_LARGE_BOX_MM)
         - BPM window is NOT used - only wave speed window
         - Beats = (BPM / 60) × time_window
         - Final window clamped maximum 20 seconds (NO minimum clamp)
@@ -348,10 +360,11 @@ def calculate_time_window_from_bpm_and_wave_speed(hr_bpm, wave_speed_mm_s, desir
     Returns: (time_window_seconds, num_samples)
     """
     # Calculate time window from wave_speed ONLY (BPM window NOT used)
-    # Report  ECG graph width = 33 boxes × 5mm = 165mm
-    # Time = Distance / Speed
-    ecg_graph_width_mm = 33 * 5  # 33 boxes × 5mm = 165mm
-    calculated_time_window = ecg_graph_width_mm / max(1e-6, wave_speed_mm_s)
+    # Report ECG graph width = 33 boxes × ECG_LARGE_BOX_MM
+    # Time = Distance / Speed (scaled for 40-box grid)
+    ecg_graph_width_mm = 33 * ECG_LARGE_BOX_MM
+    effective_wave_speed_mm_s = wave_speed_mm_s * ECG_SPEED_SCALE
+    calculated_time_window = ecg_graph_width_mm / max(1e-6, effective_wave_speed_mm_s)
     
     # Only clamp maximum to 20 seconds (NO minimum clamp)
     calculated_time_window = min(calculated_time_window, 20.0)
@@ -365,9 +378,9 @@ def calculate_time_window_from_bpm_and_wave_speed(hr_bpm, wave_speed_mm_s, desir
     expected_beats = beats_per_second * calculated_time_window
     
     print(f" Time Window Calculation (Wave Speed ONLY):")
-    print(f"   Graph Width: 165mm (33 boxes × 5mm)")
-    print(f"   Wave Speed: {wave_speed_mm_s}mm/s")
-    print(f"   Time Window: 165 / {wave_speed_mm_s} = {calculated_time_window:.2f}s")
+    print(f"   Graph Width: {ecg_graph_width_mm:.2f}mm (33 boxes × {ECG_LARGE_BOX_MM:.2f}mm)")
+    print(f"   Wave Speed: {wave_speed_mm_s}mm/s (effective {effective_wave_speed_mm_s:.2f}mm/s)")
+    print(f"   Time Window: {ecg_graph_width_mm:.2f} / {effective_wave_speed_mm_s:.2f} = {calculated_time_window:.2f}s")
     print(f"   BPM: {hr_bpm} → Beats per second: {hr_bpm}/60 = {beats_per_second:.2f} beats/sec")
     print(f"   Expected Beats: {beats_per_second:.2f} × {calculated_time_window:.2f} = {expected_beats:.1f} beats")
     print(f"   Estimated Samples: {num_samples} (at 80Hz)")
@@ -555,10 +568,11 @@ def capture_real_ecg_graphs_from_dashboard(dashboard_instance=None, ecg_test_pag
                     from utils.settings_manager import SettingsManager
                     sm = SettingsManager()
                     wave_speed = float(sm.get_wave_speed())
-                    # NEW LOGIC: Time window = 165mm / wave_speed (33 boxes × 5mm = 165mm)
-                    ecg_graph_width_mm = 33 * 5  # 165mm
-                    time_window_seconds = ecg_graph_width_mm / wave_speed
-                    print(f" DEMO MODE ON - Calculated window using NEW LOGIC: 165mm / {wave_speed}mm/s = {time_window_seconds}s")
+                    # NEW LOGIC: Time window = graph_width / effective_wave_speed (33 boxes)
+                    ecg_graph_width_mm = 33 * ECG_LARGE_BOX_MM
+                    effective_wave_speed_mm_s = wave_speed * ECG_SPEED_SCALE
+                    time_window_seconds = ecg_graph_width_mm / effective_wave_speed_mm_s
+                    print(f" DEMO MODE ON - Calculated window using NEW LOGIC: {ecg_graph_width_mm:.2f}mm / {effective_wave_speed_mm_s:.2f}mm/s = {time_window_seconds:.2f}s")
                 except Exception as e:
                     print(f" Could not get demo time window: {e}")
                     time_window_seconds = None
@@ -620,20 +634,45 @@ def capture_real_ecg_graphs_from_dashboard(dashboard_instance=None, ecg_test_pag
             wave_gain_mm_mv = 10.0
             print(f" Could not get wave_gain from settings, using default: {wave_gain_mm_mv} mm/mV")
     
-    # Create ReportLab drawings with REAL data
+    # Apply report filters (AC/EMG/DFT) based on current settings
+    filtered_ecg_data = real_ecg_data
+    try:
+        from ecg.ecg_filters import apply_dft_filter, apply_emg_filter, apply_ac_filter
+        dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
+        emg_setting = str(settings_manager.get_setting("filter_emg", "off")).strip()
+        ac_setting = str(settings_manager.get_setting("filter_ac", "off")).strip()
+        filtered_ecg_data = {}
+        for lead, signal in real_ecg_data.items():
+            if signal is None or len(signal) == 0:
+                filtered_ecg_data[lead] = signal
+                continue
+            filtered = signal
+            if dft_setting not in ("off", ""):
+                filtered = apply_dft_filter(filtered, float(samples_per_second), dft_setting)
+            if emg_setting not in ("off", ""):
+                filtered = apply_emg_filter(filtered, float(samples_per_second), emg_setting)
+            if ac_setting in ("50", "60"):
+                filtered = apply_ac_filter(filtered, float(samples_per_second), ac_setting)
+            filtered_ecg_data[lead] = filtered
+        print(f" Applied report filters: DFT={dft_setting}, EMG={emg_setting}, AC={ac_setting}")
+    except Exception as e:
+        print(f" Could not apply report filters: {e}")
+        filtered_ecg_data = real_ecg_data
+
+    # Create ReportLab drawings with REAL (filtered) data
     for lead in ordered_leads:
         try:
             # Create ReportLab drawing with REAL ECG data (with wave_gain applied)
             drawing = create_reportlab_ecg_drawing_with_real_data(
                 lead, 
-                real_ecg_data.get(lead), 
+                filtered_ecg_data.get(lead), 
                 width=460, 
                 height=45,
                 wave_gain_mm_mv=wave_gain_mm_mv
             )
             lead_drawings[lead] = drawing
             
-            if lead in real_ecg_data:
+            if lead in filtered_ecg_data:
                 print(f" Created drawing with MAXIMUM data for Lead {lead} - showing 7+ heartbeats")
             else:
                 print(f"Created grid-only drawing for Lead {lead}")
@@ -736,25 +775,6 @@ def create_reportlab_ecg_drawing_with_real_data(lead_name, ecg_data, width=460, 
     height_mm_physical = 60.0  # ±3 mV at 10 mm/mV
 
     ecg_array = np.asarray(ecg_data, dtype=float)
-    
-    # STEADY-STATE BASELINE CORRECTION (Same as Dashboard Lead 2)
-    try:
-        from ecg.signal.signal_processing import extract_low_frequency_baseline
-        # Determine sampling rate (default 500 if not found)
-        current_fs = 500.0
-        if 'computed_sampling_rate' in globals():
-            current_fs = float(globals().get('computed_sampling_rate', current_fs))
-            
-        if len(ecg_array) > 0:
-            baseline_val = extract_low_frequency_baseline(ecg_array, current_fs)
-            ecg_array = ecg_array - baseline_val
-            # Final zero-centering
-            ecg_array = ecg_array - np.mean(ecg_array)
-    except Exception as e:
-        print(f" Baseline correction error: {e}")
-        if len(ecg_array) > 0:
-            ecg_array = ecg_array - np.nanmean(ecg_array)
-
     med_abs = np.nanmedian(np.abs(ecg_array)) if len(ecg_array) else 0.0
     ecg_mv = ecg_array / 1000.0 if med_abs > 20.0 else ecg_array
 
@@ -1087,17 +1107,18 @@ def generate_ecg_report(
     wave_speed_mm_s = _safe_float(wave_speed_setting, 25.0)  # Default: 25.0 mm/s
     wave_gain_mm_mv = _safe_float(wave_gain_setting, 10.0)   # Default: 10.0 mm/mV
     print(f" Using wave_speed from ecg_settings.json: {wave_speed_mm_s} mm/s (for calculation-based beats)")
-    computed_sampling_rate = int(150 * (wave_speed_mm_s / 25.0)) if wave_speed_mm_s > 0 else 150
-    computed_sampling_rate = max(80, min(computed_sampling_rate, 400))
+    computed_sampling_rate = 500
 
     data["wave_speed_mm_s"] = wave_speed_mm_s
     data["wave_gain_mm_mv"] = wave_gain_mm_mv
 
     print(f" Pre-plot checks: HR_bpm={hr_bpm_value}, RR_ms={data['RR_ms']}, wave_speed={wave_speed_mm_s}mm/s, wave_gain={wave_gain_mm_mv}mm/mV, sampling_rate={computed_sampling_rate}Hz")
+    ecg_graph_width_mm = 33 * ECG_LARGE_BOX_MM
+    effective_wave_speed_mm_s = wave_speed_mm_s * ECG_SPEED_SCALE
     print(f" Calculation-based beats formula:")
-    print(f"   Graph width: 33 boxes × 5mm = 165mm")
+    print(f"   Graph width: 33 boxes × {ECG_LARGE_BOX_MM:.2f}mm = {ecg_graph_width_mm:.2f}mm")
     print(f"   BPM window: (desired_beats × 60) / {hr_bpm_value} = {(6 * 60.0 / hr_bpm_value) if hr_bpm_value > 0 else 0:.2f}s")
-    print(f"   Wave speed window: 165mm / {wave_speed_mm_s}mm/s = {165.0 / wave_speed_mm_s:.2f}s")
+    print(f"   Wave speed window: {ecg_graph_width_mm:.2f}mm / {effective_wave_speed_mm_s:.2f}mm/s = {ecg_graph_width_mm / max(1e-6, effective_wave_speed_mm_s):.2f}s")
     
     # ==================== STEP 3: SAVE ECG DATA TO FILE (ALWAYS) ====================
     # IMPORTANT:  data file  save ,    load  (calculation-based beats  )
@@ -1171,13 +1192,9 @@ def generate_ecg_report(
     except Exception:
         pass
 
-    # Replace conclusions with conservative hospital-style list built from measured metrics
-    filtered_conclusions = _build_conservative_conclusions(
-        data,
-        settings_manager=settings_manager,
-        sampling_rate=computed_sampling_rate,
-        recording_duration=data.get("recording_duration") or data.get("duration")
-    )
+    # Use ONLY conclusions from last_conclusions.json (loaded above)
+    # Strip placeholders so only real conclusions appear in report
+    filtered_conclusions = [c for c in dashboard_conclusions if c and c != "---"]
     # Ensure max 12
     filtered_conclusions = filtered_conclusions[:12]
 
@@ -1362,9 +1379,10 @@ def generate_ecg_report(
     #  CREATE SINGLE MASSIVE DRAWING with ALL ECG content (NO individual drawings)
     print("Creating SINGLE drawing with all ECG content...")
     
-    # Single drawing dimensions - ADJUSTED HEIGHT to fit within page frame (max ~770)
-    total_width = 195 * mm  # 39 boxes × 5mm = 195mm
-    total_height = 280 * mm  # 56 boxes × 5mm = 280mm
+    # Single drawing dimensions to align with full-page grid (40×56 boxes)
+    # 40 boxes × 5mm = 200mm, 56 boxes × 5mm = 280mm
+    total_width = 200 * mm
+    total_height = 280 * mm
     # DEBUG: Print actual dimensions being used
     print(f" DEBUG: Drawing dimensions - Width: {total_width/mm:.1f}mm ({total_width/mm/5:.1f} boxes), Height: {total_height/mm:.1f}mm ({total_height/mm/5:.1f} boxes)")
     
@@ -1408,10 +1426,11 @@ def generate_ecg_report(
                     from utils.settings_manager import SettingsManager
                     sm = SettingsManager()
                     wave_speed = float(sm.get_wave_speed())
-                    # NEW LOGIC: Time window = 165mm / wave_speed (33 boxes × 5mm = 165mm)
-                    ecg_graph_width_mm = 33 * 5  # 165mm
-                    time_window_seconds = ecg_graph_width_mm / wave_speed
-                    print(f" Report Generator: Demo mode ON - Calculated window using NEW LOGIC: 165mm / {wave_speed}mm/s = {time_window_seconds}s")
+                    # NEW LOGIC: Time window = graph_width / effective_wave_speed (33 boxes)
+                    ecg_graph_width_mm = 33 * ECG_LARGE_BOX_MM
+                    effective_wave_speed_mm_s = wave_speed * ECG_SPEED_SCALE
+                    time_window_seconds = ecg_graph_width_mm / effective_wave_speed_mm_s
+                    print(f" Report Generator: Demo mode ON - Calculated window using NEW LOGIC: {ecg_graph_width_mm:.2f}mm / {effective_wave_speed_mm_s:.2f}mm/s = {time_window_seconds:.2f}s")
                 except Exception as e:
                     print(f" Could not get demo time window: {e}")
                     time_window_seconds = None
@@ -1562,8 +1581,9 @@ def generate_ecg_report(
     print("Creating SINGLE drawing with all ECG content...")
     
     # Single drawing dimensions - ADJUSTED HEIGHT to fit within page frame (max ~770)
-    total_width = 195 * mm  # 39 boxes × 5mm = 195mm
-    total_height = 280 * mm  # 56 boxes × 5mm = 280mm  
+    # Keep within frame; grid density is handled by the page grid (42×59 boxes).
+    total_width = 195 * mm
+    total_height = 280 * mm  
     
     # Create ONE master drawing
     master_drawing = Drawing(total_width, total_height)
@@ -1606,10 +1626,11 @@ def generate_ecg_report(
                     from utils.settings_manager import SettingsManager
                     sm = SettingsManager()
                     wave_speed = float(sm.get_wave_speed())
-                    # NEW LOGIC: Time window = 165mm / wave_speed (33 boxes × 5mm = 165mm)
-                    ecg_graph_width_mm = 33 * 5  # 165mm
-                    time_window_seconds = ecg_graph_width_mm / wave_speed
-                    print(f" Report Generator: Demo mode ON - Calculated window using NEW LOGIC: 165mm / {wave_speed}mm/s = {time_window_seconds}s")
+                    # NEW LOGIC: Time window = graph_width / effective_wave_speed (33 boxes)
+                    ecg_graph_width_mm = 33 * ECG_LARGE_BOX_MM
+                    effective_wave_speed_mm_s = wave_speed * ECG_SPEED_SCALE
+                    time_window_seconds = ecg_graph_width_mm / effective_wave_speed_mm_s
+                    print(f" Report Generator: Demo mode ON - Calculated window using NEW LOGIC: {ecg_graph_width_mm:.2f}mm / {effective_wave_speed_mm_s:.2f}mm/s = {time_window_seconds:.2f}s")
                 except Exception as e:
                     print(f" Could not get demo time window: {e}")
                     time_window_seconds = None
@@ -1858,9 +1879,28 @@ def generate_ecg_report(
                             else:
                                 pass
             
+            # LEAD-SPECIFIC ADC PER BOX CONFIGURATION
+            # Each lead can have different ADC per box multiplier (will be divided by wave_gain)
+            ADC_PER_BOX_CONFIG = {
+                'I': 6400.0,
+                'II': 6400.0,
+                'III': 6400.0,
+                'aVR': 6400.0,
+                'aVL': 6400.0,
+                'aVF': 6400.0,
+                'V1': 6400.0,
+                'V2': 6400.0,
+                'V3': 6400.0,
+                'V4': 6400.0,
+                'V5': 6400.0,
+                'V6': 6400.0,
+                '-aVR': 6400.0,  # For Cabrera sequence
+            }
+
             if real_data_available and len(real_ecg_data) > 0:
                 # Draw ALL REAL ECG data - NO LIMITS
-                ecg_width = 460
+                # Match paper scale: 33 boxes × ECG_LARGE_BOX_MM
+                ecg_width = 33 * ECG_LARGE_BOX_MM * mm
                 ecg_height = 45
                 
                 # Create time array for ALL data
@@ -1870,6 +1910,21 @@ def generate_ecg_report(
                 
                 # Step 1: Convert ADC data to numpy array
                 adc_data = np.array(real_ecg_data, dtype=float)
+
+                # Step 1.1: Apply report filters (DFT -> EMG -> AC) on raw ADC data
+                try:
+                    from ecg.ecg_filters import apply_dft_filter, apply_emg_filter, apply_ac_filter
+                    dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
+                    emg_setting = str(settings_manager.get_setting("filter_emg", "off")).strip()
+                    ac_setting = str(settings_manager.get_setting("filter_ac", "off")).strip()
+                    if dft_setting not in ("off", ""):
+                        adc_data = apply_dft_filter(adc_data, float(computed_sampling_rate), dft_setting)
+                    if emg_setting not in ("off", ""):
+                        adc_data = apply_emg_filter(adc_data, float(computed_sampling_rate), emg_setting)
+                    if ac_setting in ("50", "60"):
+                        adc_data = apply_ac_filter(adc_data, float(computed_sampling_rate), ac_setting)
+                except Exception as filter_err:
+                    print(f" Report filter apply failed for {lead}: {filter_err}")
                 
                 # Step 1: Apply baseline correction based on data type
                 data_mean = np.mean(adc_data)
@@ -1888,31 +1943,11 @@ def generate_ecg_report(
                 # Chahe baseline wander kitna bhi ho (respiration mode, Fluke data, etc.)
                 # This ensures waveform is exactly centered on grid line regardless of baseline wander
                 centered_adc = baseline_corrected - np.mean(baseline_corrected)
-                    
-                
+
                 # Step 3: Calculate ADC per box based on wave_gain and lead-specific multiplier
-                # LEAD-SPECIFIC ADC PER BOX CONFIGURATION
-                # Each lead can have different ADC per box multiplier (will be divided by wave_gain)
-                adc_per_box_config = {
-                    'I': 5500.0,
-                    'II': 5500.0,  
-                    'III': 5500.0,  
-                    'aVR': 5500.0, 
-                    'aVL': 5500.0,
-                    'aVF': 5500.0, 
-                    'V1': 5500.0,
-                    'V2': 5500.0,
-                    'V3': 5500.0,
-                    'V4': 5500.0,  
-                    'V5': 5500.0,
-                    'V6': 5500.0,  
-                    '-aVR': 5500.0,  # For Cabrera sequence
-                }
-                # Get lead-specific ADC per box multiplier (default: 5500)
-                adc_per_box_multiplier = adc_per_box_config.get(lead, 5500.0)
+                adc_per_box_multiplier = ADC_PER_BOX_CONFIG.get(lead, 6400.0)
                 # Formula: ADC_per_box = adc_per_box_multiplier / wave_gain_mm_mv
                 # IMPORTANT: Each lead can have different ADC per box multiplier
-                # For 10mm/mV with multiplier 5500: 5500 / 10 = 550 ADC per box
                 # This means: 550 ADC offset = 1 box (5mm) vertical movement
                 adc_per_box = adc_per_box_multiplier / max(1e-6, wave_gain_mm_mv)  # Avoid division by zero
                 
@@ -1929,11 +1964,10 @@ def generate_ecg_report(
                 
                 # Step 5: Convert boxes to Y position
                 center_y = y_pos + (ecg_height / 2.0)  # Center of the graph in points
-                # IMPORTANT: Standard ECG paper uses 5mm per box
-                # 5mm = 5 * 2.834645669 points = 14.17 points per box
+                # Use report grid box size for vertical scaling
                 from reportlab.lib.units import mm
-                box_height_points = 5.0 * mm  # Standard ECG: 5mm = 14.17 points per box
-                major_spacing_y = box_height_points  # Use standard ECG spacing (5mm)
+                box_height_points = ECG_LARGE_BOX_MM * mm
+                major_spacing_y = box_height_points
                 
                 # Convert boxes offset to Y position
                 ecg_normalized = center_y + (boxes_offset * box_height_points)
@@ -1969,9 +2003,9 @@ def generate_ecg_report(
                 print(f" DEBUG: Adding calibration notch for Lead {lead}")
                 from reportlab.graphics.shapes import Path
                 
-                # Calibration notch dimensions
-                notch_width_mm = 5.0   # width 5mm
-                notch_height_mm = 10.0 # height 10mm
+                # Calibration notch dimensions (1 box wide, 2 boxes tall)
+                notch_width_mm = ECG_LARGE_BOX_MM
+                notch_height_mm = 2.0 * ECG_LARGE_BOX_MM
                 notch_width = notch_width_mm * mm
                 notch_height = notch_height_mm * mm
                 
@@ -2013,9 +2047,9 @@ def generate_ecg_report(
                 ecg_height = 45  # Same as real data section
                 center_y = y_pos + (ecg_height / 2.0)  # Center of the graph in points
                 
-                # Calibration notch dimensions
-                notch_width_mm = 5.0   # width 5mm
-                notch_height_mm = 10.0 # height 10mm
+                # Calibration notch dimensions (1 box wide, 2 boxes tall)
+                notch_width_mm = ECG_LARGE_BOX_MM
+                notch_height_mm = 2.0 * ECG_LARGE_BOX_MM
                 notch_width = notch_width_mm * mm
                 notch_height = notch_height_mm * mm
                 
@@ -2144,8 +2178,9 @@ def generate_ecg_report(
     print("Creating SINGLE drawing with all ECG content...")
     
     # Single drawing dimensions - ADJUSTED HEIGHT to fit within page frame (max ~770)
-    total_width = 195 * mm  # 39 boxes × 5mm = 195mm
-    total_height = 280 * mm  # 56 boxes × 5mm = 280mm
+    # Keep within frame; grid density is handled by the page grid (42×59 boxes).
+    total_width = 195 * mm
+    total_height = 280 * mm
     
     # Create ONE master drawing
     master_drawing = Drawing(total_width, total_height)
@@ -2188,10 +2223,11 @@ def generate_ecg_report(
                     from utils.settings_manager import SettingsManager
                     sm = SettingsManager()
                     wave_speed = float(sm.get_wave_speed())
-                    # NEW LOGIC: Time window = 165mm / wave_speed (33 boxes × 5mm = 165mm)
-                    ecg_graph_width_mm = 33 * 5  # 165mm
-                    time_window_seconds = ecg_graph_width_mm / wave_speed
-                    print(f" Report Generator: Demo mode ON - Calculated window using NEW LOGIC: 165mm / {wave_speed}mm/s = {time_window_seconds}s")
+                    # NEW LOGIC: Time window = graph_width / effective_wave_speed (33 boxes)
+                    ecg_graph_width_mm = 33 * ECG_LARGE_BOX_MM
+                    effective_wave_speed_mm_s = wave_speed * ECG_SPEED_SCALE
+                    time_window_seconds = ecg_graph_width_mm / effective_wave_speed_mm_s
+                    print(f" Report Generator: Demo mode ON - Calculated window using NEW LOGIC: {ecg_graph_width_mm:.2f}mm / {effective_wave_speed_mm_s:.2f}mm/s = {time_window_seconds:.2f}s")
                 except Exception as e:
                     print(f" Could not get demo time window: {e}")
                     time_window_seconds = None
@@ -2442,7 +2478,8 @@ def generate_ecg_report(
             
             if real_data_available and len(real_ecg_data) > 0:
                 # Draw ALL REAL ECG data - NO LIMITS
-                ecg_width = 460
+                # Match paper scale: 33 boxes × ECG_LARGE_BOX_MM
+                ecg_width = 33 * ECG_LARGE_BOX_MM * mm
                 ecg_height = 45
                 
                 # Create time array for ALL data
@@ -2451,6 +2488,21 @@ def generate_ecg_report(
                
                 # Step 1: Convert ADC data to numpy array
                 adc_data = np.array(real_ecg_data, dtype=float)
+
+                # Step 1.1: Apply report filters (DFT -> EMG -> AC) on raw ADC data
+                try:
+                    from ecg.ecg_filters import apply_dft_filter, apply_emg_filter, apply_ac_filter
+                    dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
+                    emg_setting = str(settings_manager.get_setting("filter_emg", "off")).strip()
+                    ac_setting = str(settings_manager.get_setting("filter_ac", "off")).strip()
+                    if dft_setting not in ("off", ""):
+                        adc_data = apply_dft_filter(adc_data, float(computed_sampling_rate), dft_setting)
+                    if emg_setting not in ("off", ""):
+                        adc_data = apply_emg_filter(adc_data, float(computed_sampling_rate), emg_setting)
+                    if ac_setting in ("50", "60"):
+                        adc_data = apply_ac_filter(adc_data, float(computed_sampling_rate), ac_setting)
+                except Exception as filter_err:
+                    print(f" Report filter apply failed for {lead}: {filter_err}")
                 
                 # Step 1: Apply baseline correction based on data type
                 data_mean = np.mean(adc_data)
@@ -2471,29 +2523,9 @@ def generate_ecg_report(
                 centered_adc = baseline_corrected - np.mean(baseline_corrected)
                 
                 # Step 3: Calculate ADC per box based on wave_gain and lead-specific multiplier
-                # LEAD-SPECIFIC ADC PER BOX CONFIGURATION
-                # Each lead can have different ADC per box multiplier (will be divided by wave_gain)
-                adc_per_box_config = {
-                    'I': 5500.0,
-                    'II': 5500.0, 
-                    'III': 5500.0, 
-                    'aVR': 5500.0,  
-                    'aVL': 5500.0,
-                    'aVF': 5500.0,  
-                    'V1': 5500.0,
-                    'V2': 5500.0,
-                    'V3': 5500.0,
-                    'V4': 5500.0,  
-                    'V5': 5500.0, 
-                    'V6': 5500.0,  
-                    '-aVR': 5500.0,  # For Cabrera sequence
-                }
-                # Get lead-specific ADC per box multiplier (default: 5500)
-                adc_per_box_multiplier = adc_per_box_config.get(lead, 5500.0)
+                adc_per_box_multiplier = ADC_PER_BOX_CONFIG.get(lead, 6400.0)
                 # Formula: ADC_per_box = adc_per_box_multiplier / wave_gain_mm_mv
                 # IMPORTANT: Each lead can have different ADC per box multiplier
-                # For 10mm/mV with multiplier 5500: 5500 / 10 = 550 ADC per box
-                # For 10mm/mV with multiplier 8209: 8209 / 10 = 821 ADC per box
                 adc_per_box = adc_per_box_multiplier / max(1e-6, wave_gain_mm_mv)  # Avoid division by zero
                 
                 # DEBUG: Log actual ADC values for troubleshooting
@@ -2506,11 +2538,9 @@ def generate_ecg_report(
                 
                 # Step 5: Convert boxes to Y position (in mm, then to points)
                 # Center of graph is at y_pos + (ecg_height / 2.0)
-                # IMPORTANT: User changed to height/3 = 45/3 = 15.0 points per box
-                # This matches the actual grid spacing the user wants
+                # Use report grid box size for vertical scaling
                 center_y = y_pos + (ecg_height / 2.0)  # Center of the graph in points
-                major_spacing_y = ecg_height / 3.0  # height/3 = 15.0 points per box (user's choice)
-                box_height_points = major_spacing_y  # Use actual grid spacing (height/3)
+                box_height_points = ECG_LARGE_BOX_MM * mm
                 
                 # Convert boxes offset to Y position
                 ecg_normalized = center_y + (boxes_offset * box_height_points)
@@ -2545,9 +2575,9 @@ def generate_ecg_report(
                 from reportlab.lib.units import mm
                 from reportlab.graphics.shapes import Path
                 
-                # Calibration notch dimensions
-                notch_width_mm = 5.0   # width 5mm
-                notch_height_mm = 10.0 # height 10mm
+                # Calibration notch dimensions (1 box wide, 2 boxes tall)
+                notch_width_mm = ECG_LARGE_BOX_MM
+                notch_height_mm = 2.0 * ECG_LARGE_BOX_MM
                 notch_width = notch_width_mm * mm
                 notch_height = notch_height_mm * mm
                 
@@ -2589,9 +2619,9 @@ def generate_ecg_report(
                 ecg_height = 45  # Same as real data section
                 center_y = y_pos + (ecg_height / 2.0)  # Center of the graph in points
                 
-                # Calibration notch dimensions
-                notch_width_mm = 5.0   # width 5mm
-                notch_height_mm = 10.0 # height 10mm
+                # Calibration notch dimensions (1 box wide, 2 boxes tall)
+                notch_width_mm = ECG_LARGE_BOX_MM
+                notch_height_mm = 2.0 * ECG_LARGE_BOX_MM
                 notch_width = notch_width_mm * mm
                 notch_height = notch_height_mm * mm
                 
@@ -2767,7 +2797,7 @@ def generate_ecg_report(
 
     if (p_amp_mv<=0 or qrs_amp_mv<=0 or t_amp_mv<=0) and ecg_test_page is not None and hasattr(ecg_test_page,'data'):
         try:
-            fs = 250.0
+            fs = 500.0
             if hasattr(ecg_test_page, 'sampler') and hasattr(ecg_test_page.sampler,'sampling_rate') and ecg_test_page.sampler.sampling_rate:
                 fs = float(ecg_test_page.sampler.sampling_rate)
             arr = None
@@ -2839,7 +2869,7 @@ def generate_ecg_report(
             lead_aVF = ecg_test_page.data[5] if len(ecg_test_page.data) > 5 else None
             
             # Get sampling rate
-            fs = 250.0
+            fs = 500.0
             if hasattr(ecg_test_page, 'sampler') and hasattr(ecg_test_page.sampler, 'sampling_rate') and ecg_test_page.sampler.sampling_rate:
                 fs = float(ecg_test_page.sampler.sampling_rate)
             
@@ -3198,7 +3228,7 @@ def generate_ecg_report(
     if (rv5_amp<=0 or sv1_amp==0.0) and ecg_test_page is not None and hasattr(ecg_test_page,'data'):
         try:
             from scipy.signal import butter, filtfilt, find_peaks
-            fs = 250.0
+            fs = 500.0
             if hasattr(ecg_test_page, 'sampler') and hasattr(ecg_test_page.sampler,'sampling_rate') and ecg_test_page.sampler.sampling_rate:
                 fs = float(ecg_test_page.sampler.sampling_rate)
             def _get_last(arr):
@@ -3320,11 +3350,21 @@ def generate_ecg_report(
     master_drawing.add(qtcf_label)
 
     # SECOND COLUMN - Speed/Gain (merged in one line) (ABOVE ECG GRAPH - shifted further up)
-    filter_band = settings_manager.get_setting("filter_band", "0.5~35Hz")
-    ac_frequency = settings_manager.get_setting("ac_frequency", "50")
+    emg_setting = str(settings_manager.get_setting("filter_emg", "off")).strip()
+    dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
+    ac_setting = str(settings_manager.get_setting("filter_ac", "off")).strip()
+    ac_frequency = f"{ac_setting}Hz" if ac_setting in ("50", "60") else "Off"
+    if dft_setting not in ("off", "") and emg_setting not in ("off", ""):
+        filter_band = f"{dft_setting}-{emg_setting}Hz"
+    elif dft_setting not in ("off", ""):
+        filter_band = f"HP: {dft_setting}Hz"
+    elif emg_setting not in ("off", ""):
+        filter_band = f"LP: {emg_setting}Hz"
+    else:
+        filter_band = "Filter: Off"
     master_drawing.add(String(
         84.7 * mm, 257.4 * mm,
-        f"{wave_speed_mm_s} mm/s   {filter_band}   AC : {ac_frequency}Hz   {wave_gain_mm_mv} mm/mV",
+        f"{wave_speed_mm_s} mm/s   {filter_band}   AC : {ac_frequency}   {wave_gain_mm_mv} mm/mV",
         fontSize=10,
         fontName="Helvetica",
         fillColor=colors.black,
@@ -3473,16 +3513,15 @@ def generate_ecg_report(
         import os
         from reportlab.lib.units import mm
         
-        # STEP 1: Draw ECG grid with exactly 40×56 boxes across full A4 page
+        # STEP 1: Draw ECG grid across full A4 with 40×56 major boxes
         if canvas.getPageNumber() == 1:  # Changed from 3 to 2
-            # Full page grid: fit exactly 40×56 boxes to A4
             a4_width, a4_height = canvas._pagesize
             grid_x = 0
             grid_y = 0
             grid_width = a4_width
             grid_height = a4_height
             
-            # Fill entire A4 page with pink background
+            # Fill full page with pink background
             canvas.setFillColor(colors.HexColor("#ffe6e6"))
             canvas.rect(0, 0, a4_width, a4_height, fill=1, stroke=0)
             
@@ -3491,7 +3530,7 @@ def generate_ecg_report(
             
             major_grid_color = colors.HexColor("#ffb3b3")   
             
-            # Box sizes based on full-page fit
+            # Box sizes based on full-page fit: 40×56 major boxes
             major_spacing_x = grid_width / 40.0
             major_spacing_y = grid_height / 56.0
             minor_spacing_x = major_spacing_x / 5.0
@@ -3515,7 +3554,7 @@ def generate_ecg_report(
             
             # Draw major grid lines ON TOP - standard 5mm spacing
             canvas.setStrokeColor(major_grid_color)
-            canvas.setLineWidth(1.2)
+            canvas.setLineWidth(0.6)
             
             # Vertical major lines
             x_major = grid_x

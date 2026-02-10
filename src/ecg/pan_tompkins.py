@@ -13,8 +13,10 @@ def pan_tompkins(ecg, fs=500):
     # 1. Bandpass filter (5-15 Hz)
     def bandpass_filter(signal, lowcut, highcut, fs, order=1):
         nyq = 0.5 * fs
-        low = lowcut / nyq
-        high = highcut / nyq
+        low = max(lowcut / nyq, 0.001)
+        high = min(highcut / nyq, 0.99)
+        if not np.isfinite(low) or not np.isfinite(high) or low <= 0 or high >= 1 or low >= high:
+            return signal
         b, a = butter(order, [low, high], btype='band')
         return lfilter(b, a, signal)
     filtered = bandpass_filter(ecg, 5, 15, fs)

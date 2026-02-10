@@ -2,6 +2,7 @@
 import numpy as np
 from scipy.signal import butter, filtfilt, find_peaks
 import platform
+import time
 from collections import deque
 
 
@@ -9,7 +10,8 @@ from collections import deque
 _bpm_smoothing_buffers = {}  # Key: instance_id, Value: deque buffer
 _bpm_ema_values = {}  # Key: instance_id, Value: EMA value
 _last_stable_bpm = {}  # Key: instance_id, Value: Last stable BPM value
-_bpm_candidate_values = {} # Key: instance_id, Value: (candidate_bpm, count)
+_bpm_last_success_ts = {}  # Key: instance_id, Value: last success timestamp
+
 
 def calculate_heart_rate_from_signal(lead_data, sampling_rate=None, sampler=None, instance_id=None):
     """Calculate heart rate from Lead II data using R-R intervals
@@ -23,6 +25,14 @@ def calculate_heart_rate_from_signal(lead_data, sampling_rate=None, sampler=None
         int: Heart rate in BPM (10-300 range), or 0 if calculation fails
     """
     try:
+        buffer_key = instance_id if instance_id is not None else 'global'
+        def _fallback_value():
+            last = _last_stable_bpm.get(buffer_key, None)
+            last_success = _bpm_last_success_ts.get(buffer_key, 0.0)
+            now = time.time()
+            if last is not None and (now - last_success) <= 0.5:
+                return last
+            return 0
         # Early exit: if no real signal, report 0 instead of fallback
         try:
             arr = np.asarray(lead_data, dtype=float)
@@ -34,19 +44,19 @@ def calculate_heart_rate_from_signal(lead_data, sampling_rate=None, sampler=None
         # Validate input data
         if not isinstance(lead_data, (list, np.ndarray)) or len(lead_data) < 200:
             print(" Insufficient data for heart rate calculation")
-            return 60  # Default fallback
+            return _fallback_value()
 
         # Convert to numpy array for processing
         try:
             lead_data = np.asarray(lead_data, dtype=float)
         except Exception as e:
             print(f" Error converting lead data to array: {e}")
-            return 60
+            return _fallback_value()
 
         # Check for invalid values
         if np.any(np.isnan(lead_data)) or np.any(np.isinf(lead_data)):
             print(" Invalid values (NaN/Inf) in lead data")
-            return 60
+            return _fallback_value()
 
         # Get sampling rate
         is_windows = platform.system() == 'Windows'
@@ -70,10 +80,10 @@ def calculate_heart_rate_from_signal(lead_data, sampling_rate=None, sampler=None
             filtered_signal = display_filter(lead_data, fs)
             if np.any(np.isnan(filtered_signal)) or np.any(np.isinf(filtered_signal)):
                 print(" Filter produced invalid values")
-                return 60
+                return _fallback_value()
         except Exception as e:
             print(f" Error in signal filtering: {e}")
-            return 60
+            return _fallback_value()
 
         # Find R-peaks using scipy with robust parameters
         try:
@@ -81,7 +91,7 @@ def calculate_heart_rate_from_signal(lead_data, sampling_rate=None, sampler=None
             signal_std = np.std(filtered_signal)
             if signal_std == 0:
                 print(" No signal variation detected")
-                return 60
+                return _fallback_value()
             
             # SMART ADAPTIVE PEAK DETECTION (10-300 BPM with BPM-based selection)
             height_threshold = signal_mean + 0.5 * signal_std
@@ -149,38 +159,38 @@ def calculate_heart_rate_from_signal(lead_data, sampling_rate=None, sampler=None
                 )
         except Exception as e:
             print(f" Error in peak detection: {e}")
-            return 60
+            return _fallback_value()
 
         if len(peaks) < 2:
             print(f" Insufficient peaks detected: {len(peaks)}")
-            return 60
+            return _fallback_value()
 
         # Calculate R-R intervals in milliseconds
         try:
             rr_intervals_ms = np.diff(peaks) * (1000 / fs)
             if len(rr_intervals_ms) == 0:
                 print(" No R-R intervals calculated")
-                return 60
+                return _fallback_value()
         except Exception as e:
             print(f" Error calculating R-R intervals: {e}")
-            return 60
+            return _fallback_value()
 
         # Filter physiologically reasonable intervals (200-6000 ms)
         try:
             valid_intervals = rr_intervals_ms[(rr_intervals_ms >= 200) & (rr_intervals_ms <= 6000)]
             if len(valid_intervals) == 0:
                 print(" No valid R-R intervals found")
-                return 60
+                return _fallback_value()
         except Exception as e:
             print(f" Error filtering intervals: {e}")
-            return 60
+            return _fallback_value()
 
         # Calculate heart rate from median R-R interval
         try:
             median_rr = np.median(valid_intervals)
             if median_rr <= 0:
                 print(" Invalid median R-R interval")
-                return 60
+                return _fallback_value()
             heart_rate = 60000 / median_rr
             # Extended: stable 10–300 BPM range
             heart_rate = max(10, min(300, heart_rate))
@@ -198,54 +208,16 @@ def calculate_heart_rate_from_signal(lead_data, sampling_rate=None, sampler=None
             
             if np.isnan(heart_rate) or np.isinf(heart_rate):
                 print(" Invalid heart rate calculated")
-                return 60
+                return _fallback_value()
             
-            # ENHANCED BPM SMOOTHING: Prevent flickering and abrupt jumps
+            # ENHANCED BPM SMOOTHING: Prevent flickering between 99-101 BPM
             hr_int = int(round(heart_rate))
             
             # Use instance_id for per-instance smoothing (or default to 'global')
-            buffer_key = instance_id if instance_id is not None else 'global'
             
             # Initialize smoothing buffer (larger buffer for better stability)
             if buffer_key not in _bpm_smoothing_buffers:
-                _bpm_smoothing_buffers[buffer_key] = deque(maxlen=30)  # Increased for better stability
-            
-            # Initialize last stable if needed
-            if buffer_key not in _last_stable_bpm:
-                _last_stable_bpm[buffer_key] = hr_int
-                
-            last_stable = _last_stable_bpm[buffer_key]
-            
-            # --- JUMP STABILIZATION LOGIC ---
-            # If BPM changes significantly (>20 BPM), require confirmation to prevent spikes
-            # This filters out transient "double counting" artifacts during rhythm changes
-            is_large_jump = abs(hr_int - last_stable) > 20
-            
-            if is_large_jump:
-                # Get candidate info
-                cand_bpm, cand_count = _bpm_candidate_values.get(buffer_key, (None, 0))
-                
-                # If this matches the candidate (within 10 BPM), increment count
-                if cand_bpm is not None and abs(hr_int - cand_bpm) <= 10:
-                    cand_count += 1
-                    # Update candidate to latest value
-                    cand_bpm = hr_int
-                else:
-                    # New candidate
-                    cand_bpm = hr_int
-                    cand_count = 1
-                
-                _bpm_candidate_values[buffer_key] = (cand_bpm, cand_count)
-                
-                # Only accept if seen 3 times (suppress single/double frame spikes)
-                if cand_count < 3:
-                    # Return previous stable value while verifying
-                    return last_stable
-                
-                # If confirmed, we proceed to add to buffer
-            else:
-                # Reset candidate if we are close to stable
-                _bpm_candidate_values[buffer_key] = (None, 0)
+                _bpm_smoothing_buffers[buffer_key] = deque(maxlen=15)  # Increased from 10 to 15
             
             buffer = _bpm_smoothing_buffers[buffer_key]
             buffer.append(hr_int)
@@ -260,23 +232,31 @@ def calculate_heart_rate_from_signal(lead_data, sampling_rate=None, sampler=None
             else:
                 median_hr = hr_int
             
-            # Apply EMA (Exponential Moving Average) with alpha=0.1
-            alpha = 0.1
+            try:
+                current_display = int(round(_bpm_ema_values[buffer_key]))
+            except Exception:
+                current_display = int(round(hr_int))
+            alpha = 0.5 if abs(median_hr - current_display) >= 1 else 0.10
             _bpm_ema_values[buffer_key] = (1 - alpha) * _bpm_ema_values[buffer_key] + alpha * median_hr
             
             smoothed_hr = int(round(_bpm_ema_values[buffer_key]))
             
-            # Final stability check: Only update if change is significant (≥2 BPM)
-            if abs(smoothed_hr - last_stable) >= 2:
+            if buffer_key not in _last_stable_bpm:
                 _last_stable_bpm[buffer_key] = smoothed_hr
+            
+            last_stable = _last_stable_bpm[buffer_key]
+            
+            if abs(smoothed_hr - last_stable) >= 1:
+                _last_stable_bpm[buffer_key] = smoothed_hr
+                _bpm_last_success_ts[buffer_key] = time.time()
                 return smoothed_hr
             else:
-                # Keep previous stable value
+                _bpm_last_success_ts[buffer_key] = time.time()
                 return last_stable
             
         except Exception as e:
             print(f" Error calculating final BPM: {e}")
-            return 60
+            return _fallback_value()
     except Exception as e:
         print(f" Critical error in calculate_heart_rate_from_signal: {e}")
-        return 60
+        return 0

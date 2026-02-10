@@ -495,20 +495,45 @@ def capture_real_ecg_graphs_from_dashboard(dashboard_instance=None, ecg_test_pag
             wave_gain_mm_mv = 10.0
             print(f" Could not get wave_gain from settings, using default: {wave_gain_mm_mv} mm/mV")
     
-    # Create ReportLab drawings with REAL data
+    # Apply report filters (AC/EMG/DFT) based on current settings
+    filtered_ecg_data = real_ecg_data
+    try:
+        from ecg.ecg_filters import apply_dft_filter, apply_emg_filter, apply_ac_filter
+        dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
+        emg_setting = str(settings_manager.get_setting("filter_emg", "off")).strip()
+        ac_setting = str(settings_manager.get_setting("filter_ac", "off")).strip()
+        filtered_ecg_data = {}
+        for lead, signal in real_ecg_data.items():
+            if signal is None or len(signal) == 0:
+                filtered_ecg_data[lead] = signal
+                continue
+            filtered = signal
+            if dft_setting not in ("off", ""):
+                filtered = apply_dft_filter(filtered, float(samples_per_second), dft_setting)
+            if emg_setting not in ("off", ""):
+                filtered = apply_emg_filter(filtered, float(samples_per_second), emg_setting)
+            if ac_setting in ("50", "60"):
+                filtered = apply_ac_filter(filtered, float(samples_per_second), ac_setting)
+            filtered_ecg_data[lead] = filtered
+        print(f" Applied report filters: DFT={dft_setting}, EMG={emg_setting}, AC={ac_setting}")
+    except Exception as e:
+        print(f" Could not apply report filters: {e}")
+        filtered_ecg_data = real_ecg_data
+
+    # Create ReportLab drawings with REAL (filtered) data
     for lead in ordered_leads:
         try:
             # Create ReportLab drawing with REAL ECG data (with wave_gain applied)
             drawing = create_reportlab_ecg_drawing_with_real_data(
                 lead, 
-                real_ecg_data.get(lead), 
+                filtered_ecg_data.get(lead), 
                 width=460, 
                 height=45,
                 wave_gain_mm_mv=wave_gain_mm_mv
             )
             lead_drawings[lead] = drawing
             
-            if lead in real_ecg_data:
+            if lead in filtered_ecg_data:
                 print(f" Created drawing with MAXIMUM data for Lead {lead} - showing 7+ heartbeats")
             else:
                 print(f"Created grid-only drawing for Lead {lead}")
@@ -587,23 +612,8 @@ def create_reportlab_ecg_drawing_with_real_data(lead_name, ecg_data, width=460, 
         t = np.linspace(0, width, len(ecg_data))
         
         
-        adc_per_box_config = {
-            'I': 5500.0,
-            'II': 4955.0,  
-            'III': 5213.0,  
-            'aVR': 5353.0, 
-            'aVL': 5500.0,
-            'aVF': 5353.0, 
-            'V1': 5500.0,
-            'V2': 5500.0,
-            'V3': 5500.0,
-            'V4': 7586.0,  
-            'V5': 7586.0, 
-            'V6': 8209.0, 
-            '-aVR': 5500.0,  # For Cabrera sequence
-        }
-        # Get lead-specific ADC per box multiplier (default: 5500)
-        adc_per_box_multiplier = adc_per_box_config.get(lead_name, 5500.0)
+        # Use uniform ADC per box multiplier (HRV uses lead-specific mapping)
+        adc_per_box_multiplier = 6400.0
         
         # Convert to numpy array
         adc_data = np.array(ecg_data, dtype=float)
@@ -1660,6 +1670,21 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
                 
                 # Step 1: Convert ADC data to numpy array
                 adc_data = np.array(real_ecg_data, dtype=float)
+
+                # Step 1.1: Apply report filters (DFT -> EMG -> AC) on raw ADC data
+                try:
+                    from ecg.ecg_filters import apply_dft_filter, apply_emg_filter, apply_ac_filter
+                    dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
+                    emg_setting = str(settings_manager.get_setting("filter_emg", "off")).strip()
+                    ac_setting = str(settings_manager.get_setting("filter_ac", "off")).strip()
+                    if dft_setting not in ("off", ""):
+                        adc_data = apply_dft_filter(adc_data, float(computed_sampling_rate), dft_setting)
+                    if emg_setting not in ("off", ""):
+                        adc_data = apply_emg_filter(adc_data, float(computed_sampling_rate), emg_setting)
+                    if ac_setting in ("50", "60"):
+                        adc_data = apply_ac_filter(adc_data, float(computed_sampling_rate), ac_setting)
+                except Exception as filter_err:
+                    print(f" Report filter apply failed for {lead}: {filter_err}")
                 
                 # Step 1: Apply baseline correction based on data type
                 data_mean = np.mean(adc_data)
@@ -1682,26 +1707,11 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
                 # Step 3: Calculate ADC per box based on wave_gain and lead-specific multiplier
                 # LEAD-SPECIFIC ADC PER BOX CONFIGURATION
                 # Each lead can have different ADC per box multiplier (will be divided by wave_gain)
-                adc_per_box_config = {
-                    'I': 5500.0,
-                    'II': 4955.0, 
-                    'III': 5213.0, 
-                    'aVR': 5353.0,  
-                    'aVL': 5500.0,
-                    'aVF': 5353.0,  
-                    'V1': 5500.0,
-                    'V2': 5500.0,
-                    'V3': 5500.0,
-                    'V4': 7586.0,  
-                    'V5': 7586.0, 
-                    'V6': 8209.0,  
-                    '-aVR': 5500.0,  # For Cabrera sequence
-                }
-                # Get lead-specific ADC per box multiplier (default: 5500)
-                adc_per_box_multiplier = adc_per_box_config.get(lead, 5500.0)
+                # Use uniform ADC per box multiplier (HRV uses lead-specific mapping)
+                adc_per_box_multiplier = 6400.0
                 # Formula: ADC_per_box = adc_per_box_multiplier / wave_gain_mm_mv
                 # IMPORTANT: Each lead can have different ADC per box multiplier
-                # For 10mm/mV with multiplier 5500: 5500 / 10 = 550 ADC per box
+                # For 10mm/mV with multiplier 6400: 6400 / 10 = 640 ADC per box
                 # For 10mm/mV with multiplier 8209: 8209 / 10 = 821 ADC per box
                 adc_per_box = adc_per_box_multiplier / max(1e-6, wave_gain_mm_mv)  # Avoid division by zero
                 
@@ -1786,8 +1796,8 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
         date_part, time_part = "____", "____"
     
     # RIGHT SIDE: Vital Parameters at SAME LEVEL as patient info (ABOVE ECG GRAPH)
-    # Get real ECG data from dashboard
-    HR = data.get('HR_avg', 70)
+    hr_val = data.get('HR') or data.get('HR_bpm') or data.get('Heart_Rate') or data.get('HR_avg', )
+    HR = int(round(hr_val)) if hr_val else 0
     PR = data.get('PR', 192) 
     QRS = data.get('QRS', 93)
     QT = data.get('QT', 354)
@@ -2252,12 +2262,22 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     master_drawing.add(qtcf_label)
 
     # SECOND COLUMN - Speed/Gain (merged in one line) (ABOVE ECG GRAPH - shifted further up)
-    filter_band = settings_manager.get_setting("filter_band", "0.5~35Hz")
-    ac_frequency = settings_manager.get_setting("ac_frequency", "50")
+    emg_setting = str(settings_manager.get_setting("filter_emg", "off")).strip()
+    dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
+    ac_setting = str(settings_manager.get_setting("filter_ac", "off")).strip()
+    ac_frequency = f"{ac_setting}Hz" if ac_setting in ("50", "60") else "Off"
+    if dft_setting not in ("off", "") and emg_setting not in ("off", ""):
+        filter_band = f"{dft_setting}-{emg_setting}Hz"
+    elif dft_setting not in ("off", ""):
+        filter_band = f"HP: {dft_setting}Hz"
+    elif emg_setting not in ("off", ""):
+        filter_band = f"LP: {emg_setting}Hz"
+    else:
+        filter_band = "Filter: Off"
     master_drawing.add(String(
         240,
         646,  # Moved up from 606 to 616
-        f"{wave_speed_mm_s} mm/s   {filter_band}   AC : {ac_frequency}Hz   {wave_gain_mm_mv} mm/mV",
+        f"{wave_speed_mm_s} mm/s   {filter_band}   AC : {ac_frequency}   {wave_gain_mm_mv} mm/mV",
         fontSize=10,
         fontName="Helvetica",
         fillColor=colors.black,
@@ -2821,8 +2841,18 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     wave_gain_setting = settings_manager.get_setting("wave_gain", "10")
     wave_speed_mm_s = _safe_float(wave_speed_setting, 25.0)
     wave_gain_mm_mv = _safe_float(wave_gain_setting, 10.0)
-    filter_band = settings_manager.get_setting("filter_band", "0.5~35Hz")
-    ac_frequency = settings_manager.get_setting("ac_frequency", "50")
+    emg_setting = str(settings_manager.get_setting("filter_emg", "off")).strip()
+    dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
+    ac_setting = str(settings_manager.get_setting("filter_ac", "off")).strip()
+    ac_frequency = f"{ac_setting}Hz" if ac_setting in ("50", "60") else "Off"
+    if dft_setting not in ("off", "") and emg_setting not in ("off", ""):
+        filter_band = f"{dft_setting}-{emg_setting}Hz"
+    elif dft_setting not in ("off", ""):
+        filter_band = f"HP: {dft_setting}Hz"
+    elif emg_setting not in ("off", ""):
+        filter_band = f"LP: {emg_setting}Hz"
+    else:
+        filter_band = "Filter: Off"
     
     print(f"📊 HRV Report Settings: wave_speed={wave_speed_mm_s}mm/s, wave_gain={wave_gain_mm_mv}mm/mV")
     print(f"📊 HRV Report Final Metrics: HR={data['beat']}, PR={data['PR']}, QRS={data['QRS']}, QT={data['QT']}, QTc={data['QTc']}, ST={data['ST']}")
@@ -2884,8 +2914,8 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
             seg_end = minute_start + segment_duration
             seg_data = [d for d in captured_data if seg_start <= d['time'] < seg_end]
             
-            if len(seg_data) > 5500:
-                seg_data = seg_data[:5500]
+            if len(seg_data) > 6400:
+                seg_data = seg_data[:6400]
             
             if len(seg_data) > 100:
                 avg_rr, hr_val, rr_intervals_list = calculate_rr_from_segment_early(seg_data, sampling_rate)
@@ -2997,9 +3027,9 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
             light_grid_color = colors.HexColor("#ffd1d1")
             major_grid_color = colors.HexColor("#ffb3b3")
             
-            # Minor grid lines - 1mm spacing (scaled proportionally)
-            # In each box of 5.2105mm, we want 5 minor divisions (1mm each)
-            # So minor spacing = box_width / 5 = 5.2105 / 5 = 1.042mm
+            # Minor grid lines - 5 minor boxes per major box (scaled proportionally)
+            # Width: 57 boxes across 297mm → 5.2105mm per box → minor = 1.042mm
+            # Height: 40 boxes across 210mm → 5.25mm per box → minor = 1.05mm
             minor_spacing_mm = box_width_mm / 5.0  # 1.042mm per minor division
             minor_spacing_pts = minor_spacing_mm * mm
             
@@ -3014,8 +3044,12 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
                 if x > page_width:
                     break
             
-            # Horizontal minor lines - full page height
-            minor_spacing_y = 1.0 * mm  # 1mm vertical spacing
+            # Horizontal minor lines - 5 minor boxes per major box
+            # Use proportional spacing to match 40 major boxes across 210mm height.
+            num_boxes_height = 40
+            page_height_mm = 210.0
+            box_height_mm = page_height_mm / num_boxes_height  # 210/40 = 5.25mm per box
+            minor_spacing_y = (box_height_mm / 5.0) * mm
             y = 0
             while y <= page_height:
                 canvas.line(0, y, page_width, y)
@@ -3032,9 +3066,6 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
                 x += box_width_pts
             
             # Horizontal major lines - 40 boxes (210mm height, 5.25mm per box)
-            num_boxes_height = 40
-            page_height_mm = 210.0
-            box_height_mm = page_height_mm / num_boxes_height  # 210/40 = 5.25mm per box
             box_height_pts = box_height_mm * mm
             y = 0
             for i in range(num_boxes_height + 1):  # 41 lines for 40 boxes
@@ -3203,7 +3234,7 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     y_positions = [350, 270, 190, 110, 30]  # 5 graphs (80pt spacing) with proper spacing from params - SHIFTED DOWN 50 points total (25+25)
     
     # 🎯 FIXED CONFIGURATION: Plot exactly 5,500 ADC samples per strip (first 11 seconds)
-    samples_per_strip = 5500  # FIXED: 5,500 ADC samples per strip
+    samples_per_strip = 6400  # FIXED: 6,400 ADC samples per strip
     segment_duration = 11.0  # Target: 11 seconds per strip (first 11s of each minute)
     num_segments = 5  # Always 5 strips
     
@@ -3212,22 +3243,25 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     print(f"   Duration per strip: {segment_duration}s (first 11 seconds)")
     print(f"   Total strips: {num_segments}")
      
-    adc_per_box_config = {
-        'I': 5500.0,
-        'II': 5500.0,
-        'III': 5500.0,
-        'aVR': 5500.0,
-        'aVL': 5500.0,
-        'aVF': 5500.0,
-        'V1': 5500.0,
-        'V2': 5500.0,
-        'V3': 5500.0,
-        'V4': 5500.0,
-        'V5': 5500.0,
-        'V6': 5500.0,
-        '-aVR': 5500.0,
+    # HRV report supports ONLY these leads (same as HRV UI lead combo)
+    allowed_hrv_leads = ["I", "II", "V1", "V2", "V3", "V4", "V5", "V6"]
+    # Lead-specific ADC per box multipliers (HRV report only)
+    ADC_PER_BOX_CONFIG = {
+        "V6": 6400.0,
+        "V5": 6400.0,
+        "V4": 6400.0,
+        "V3": 6400.0,
+        "V2": 6400.0,
+        "V1": 6400.0,
+        "II": 6400.0,
+        "I": 6400.0,
     }
-    adc_per_box_multiplier = adc_per_box_config.get(selected_lead, 5500.0)
+    def _get_adc_per_box_multiplier(lead_name, default=6400.0):
+        return ADC_PER_BOX_CONFIG.get(lead_name, default)
+    if selected_lead not in allowed_hrv_leads:
+        print(f"⚠️ HRV lead '{selected_lead}' not supported, defaulting to Lead II")
+        selected_lead = "II"
+    adc_per_box_multiplier = ADC_PER_BOX_CONFIG.get(selected_lead, 6400.0)
     baseline_adc = 2000.0  #
     
     successful_graphs = 0
@@ -3406,7 +3440,7 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
                 
                 successful_graphs += 1
                 
-                print(f" Drew {len(segment_data)} ECG data points for Strip {segment_idx + 1} ({int(segment_start)}s-{int(segment_end)}s, 5500 max samples)")
+                print(f" Drew {len(segment_data)} ECG data points for Strip {segment_idx + 1} ({int(segment_start)}s-{int(segment_end)}s, 6400 max samples)")
         
         except Exception as e:
             print(f" Error adding Strip {segment_idx + 1}: {e}")
@@ -3530,7 +3564,7 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     
     master_drawing.add(String(
         350, 480,
-        f"{wave_speed_mm_s} mm/s   {filter_band}   AC : {ac_frequency}Hz   {wave_gain_mm_mv} mm/mV",
+        f"{wave_speed_mm_s} mm/s   {filter_band}   AC : {ac_frequency}   {wave_gain_mm_mv} mm/mV",
         fontSize=10, fontName="Helvetica", fillColor=colors.black
     ))
     
@@ -3737,8 +3771,8 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
         seg_data = [d for d in captured_data if seg_start <= d['time'] < seg_end]
         
         # LIMIT: Use only first 5,500 samples (consistent with ECG graphs)
-        if len(seg_data) > 5500:
-            seg_data = seg_data[:5500]
+        if len(seg_data) > 6400:
+            seg_data = seg_data[:6400]
         
         if len(seg_data) > 100:
             # DYNAMIC: Calculate actual RR intervals from R-peaks in this segment

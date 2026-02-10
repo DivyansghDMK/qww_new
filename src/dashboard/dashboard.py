@@ -2744,10 +2744,10 @@ class Dashboard(QWidget):
     
     def update_ecg_metrics(self, intervals):
         import time as _time
-        # Throttle: update at most once every 3.0 seconds
+        # Throttle: update at most once every 0.5 seconds
         if not hasattr(self, '_last_metrics_update_ts'):
             self._last_metrics_update_ts = 0.0
-        if _time.time() - self._last_metrics_update_ts < 3.0:
+        if _time.time() - self._last_metrics_update_ts < 0.5:
             return
         if 'Heart_Rate' in intervals and intervals['Heart_Rate'] is not None:
             self.metric_labels['heart_rate'].setText(

@@ -1,14 +1,10 @@
 {
-  "timestamp": "2026-02-07 17:48:40",
+  "timestamp": "2026-02-10 16:29:48",
   "findings": [
-    "Rhythm Analysis",
     "Normal heart rate",
     "Normal PR interval",
     "Normal QRS duration",
-    "Normal QTc interval",
-    "Good heart rate variability"
+    "Normal QTc interval"
   ],
-  "recommendations": [
-    "Review detected arrhythmia pattern, consult physician if persistent"
-  ]
+  "recommendations": []
 }

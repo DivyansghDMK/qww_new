@@ -386,11 +386,16 @@ def measure_qt_from_median_beat(median_beat, time_axis, fs, tp_baseline, rr_ms=N
         if len(sig) < 100:  # Minimum samples needed for processing (was 2000 for continuous buffer)
             return None
         
-        # EXACT REFERENCE CODE: Remove mean
+        # EXACT REFERENCE CODE: Remove mean, then apply bandpass safely
         sig -= np.mean(sig)
-        
-        # EXACT REFERENCE CODE: Apply 0.5-40 Hz bandpass filter
-        b, a = butter(2, [0.5/(fs/2), 40/(fs/2)], 'band')
+        if not np.isfinite(fs) or fs <= 0:
+            return None
+        nyq = fs / 2.0
+        low = max(0.5/nyq, 0.001)
+        high = min(40.0/nyq, 0.99)
+        if not np.isfinite(low) or not np.isfinite(high) or low <= 0 or high >= 1 or low >= high:
+            return None
+        b, a = butter(2, [low, high], 'band')
         filt = filtfilt(b, a, sig)
         
         # If RR not provided, estimate from median beat length
@@ -947,9 +952,17 @@ def measure_pr_from_median_beat(median_beat_ii, time_axis, fs, tp_baseline_ii,
         Q_onset = qrs_start - int(0.04*fs)
         Q_onset = max(Q_onset, 0)
         
-        # EXACT REFERENCE CODE: P-onset detection
-        pl = max(0, Q_onset - int(0.25*fs))  # 250ms before Q_onset
-        pr = Q_onset - int(0.05*fs)  # 50ms before Q_onset
+        median_beat_length_ms = len(sig) / fs * 1000.0
+        estimated_hr = 60000.0 / median_beat_length_ms if median_beat_length_ms > 0 else 100.0
+        if estimated_hr >= 140.0:
+            pl = max(0, Q_onset - int(0.18 * fs))
+            pr = Q_onset - int(0.05 * fs)
+        elif estimated_hr >= 100.0:
+            pl = max(0, Q_onset - int(0.20 * fs))
+            pr = Q_onset - int(0.06 * fs)
+        else:
+            pl = max(0, Q_onset - int(0.20 * fs))
+            pr = Q_onset - int(0.06 * fs)
         
         if pr <= pl:
             return 0

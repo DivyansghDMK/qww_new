@@ -1804,8 +1804,14 @@ class ECGTestPage(QWidget):
         if not hasattr(self, '_hr_ema_metrics'):
             self._hr_ema_metrics = float(median_hr)
         
-        # EMA with alpha=0.1 (10% new value, 90% old value) for very stable display
-        alpha = 0.1
+        # Adaptive EMA: speed up when user-visible change is needed
+        # If median differs from displayed by ≥1, use higher alpha for faster response
+        try:
+            current_display = getattr(self, '_last_displayed_hr', int(self._hr_ema_metrics))
+        except Exception:
+            current_display = int(self._hr_ema_metrics)
+        diff_for_ema = abs(median_hr - current_display)
+        alpha = 0.5 if diff_for_ema >= 1 else 0.1
         self._hr_ema_metrics = (1 - alpha) * self._hr_ema_metrics + alpha * median_hr
         smoothed_hr = int(round(self._hr_ema_metrics))
         
@@ -1821,12 +1827,12 @@ class ECGTestPage(QWidget):
         # Calculate difference between smoothed and displayed value
         diff = abs(smoothed_hr - self._last_displayed_hr)
         
-        # STRICT DEAD ZONE: Only update if change is ≥3 BPM (prevents 98-103 flickering)
-        if diff < 3:
+        # STRICT DEAD ZONE: Only update if change is ≥1 BPM
+        if diff < 1:
             # Change too small: Keep old value (prevents flickering)
             heart_rate = self._last_displayed_hr
             self._pending_hr_value = None
-        elif diff >= 3 and diff <= 8:
+        elif diff >= 1 and diff <= 8:
             # Medium change (3-8 BPM): Wait for stability before updating
             current_time = time.time()
             if self._pending_hr_value is None:
@@ -1838,7 +1844,7 @@ class ECGTestPage(QWidget):
                 # Check if the new value is consistent with what we are waiting for
                 if abs(smoothed_hr - self._pending_hr_value) <= 2:
                     # It's consistent. Check how long we've been waiting.
-                    wait_time = 2.0  # Wait 2 seconds for stability
+                    wait_time = 0.3
                     if current_time - self._pending_hr_start_time >= wait_time:
                         # Waited long enough! Update to new value.
                         self._last_displayed_hr = smoothed_hr
@@ -1987,16 +1993,42 @@ class ECGTestPage(QWidget):
                 self._pending_pr_value = smoothed_pr
                 self._pending_pr_start_time = current_time
             else:
-                if abs(smoothed_pr - self._pending_pr_value) <= 5:  # Allow ±5 ms jitter
-                    if current_time - self._pending_pr_start_time >= 3.0:  # Stable for 3 seconds
+                if abs(smoothed_pr - self._pending_pr_value) <= 5:
+                    if current_time - self._pending_pr_start_time >= 0.5:
                         self._last_displayed_pr = smoothed_pr
                         self._pending_pr_value = None
                 else:
                     # Value changed again, reset timer
                     self._pending_pr_value = smoothed_pr
                     self._pending_pr_start_time = current_time
+        try:
+            if 'fallback_used' in locals() and fallback_used:
+                self._last_displayed_pr = smoothed_pr
+                self._pending_pr_value = None
+        except Exception:
+            pass
         
         self.pr_interval = self._last_displayed_pr
+        
+        pass
+        
+        if not hasattr(self, '_pr_stuck_last_value'):
+            self._pr_stuck_last_value = self.pr_interval
+            self._pr_stuck_last_time = time.time()
+            self._pr_last_hr_on_change = heart_rate
+            self._pr_stuck_count = 0
+        else:
+            if self._pr_stuck_last_value != self.pr_interval:
+                self._pr_stuck_last_value = self.pr_interval
+                self._pr_stuck_last_time = time.time()
+                self._pr_last_hr_on_change = heart_rate
+                self._pr_stuck_count = 0
+            else:
+                self._pr_stuck_count = getattr(self, '_pr_stuck_count', 0) + 1
+                elapsed = time.time() - getattr(self, '_pr_stuck_last_time', time.time())
+                hr_diff = abs(heart_rate - getattr(self, '_pr_last_hr_on_change', heart_rate))
+                if elapsed >= 6.0 and hr_diff >= 3:
+                    pass
         
         # REAL MODE: Calculate QRS Complex duration from median beat (standardized function)
         qrs_duration_raw = measure_qrs_duration_from_median_beat(median_beat_ii, time_axis, fs, tp_baseline_ii)
@@ -4769,7 +4801,7 @@ class ECGTestPage(QWidget):
                     for r in r_peaks:
                         q_start = max(0, r - int(0.06 * sampling_rate))
                         q_end = r
-                        if q_end > q_start:
+                        if q_end > q_start:  
                             q_idx = np.argmin(ecg_signal[q_start:q_end]) + q_start
                             q_peaks.append(q_idx)
                         s_start = r

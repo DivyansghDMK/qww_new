@@ -6,9 +6,13 @@ def bandpass(x, fs):
     """
     Apply 0.5-40Hz bandpass filter as per user specification.
     """
+    if not np.isfinite(fs) or fs <= 0:
+        return x
     nyquist = fs / 2.0
-    low = 0.5 / nyquist
-    high = 40.0 / nyquist
+    low = max(0.5 / nyquist, 0.001)
+    high = min(40.0 / nyquist, 0.99)
+    if not np.isfinite(low) or not np.isfinite(high) or low <= 0 or high >= 1 or low >= high:
+        return x
     b, a = butter(2, [low, high], 'band')
     return filtfilt(b, a, x)
 
