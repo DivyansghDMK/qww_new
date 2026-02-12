@@ -39,7 +39,7 @@ OPCODE_VERSION = 0x14
 OPCODE_CLOSE = 0x15
 
 # Timeout for waiting for responses (seconds)
-RESPONSE_TIMEOUT = 2.0
+RESPONSE_TIMEOUT = 0.5  # Reduced from 2.0 for instant connection
 
 
 class HardwareCommandHandler:
@@ -533,7 +533,7 @@ class HardwareCommandHandler:
         print("📥 STOP ACK ←", ack.hex(" ").upper())
         return True
     
-    def send_version_command(self, counter: int = 0, timeout: float = 2.0) -> Tuple[bool, Optional[str], Optional[Dict]]:
+    def send_version_command(self, counter: int = 0, timeout: float = 0.5) -> Tuple[bool, Optional[str], Optional[Dict]]:
         """
         Hardware protocol:
         App → 0x14

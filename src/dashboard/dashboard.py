@@ -757,11 +757,108 @@ class Dashboard(QWidget):
         schedule_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         schedule_layout.addWidget(schedule_label)
         
+        
+        # Create custom navigation header for calendar
+        calendar_nav = QFrame()
+        calendar_nav.setStyleSheet("background: #f9f9f9; border-radius: 8px; border: 1px solid #e0e0e0;")
+        calendar_nav_layout = QHBoxLayout(calendar_nav)
+        calendar_nav_layout.setContentsMargins(8, 8, 8, 8)
+        calendar_nav_layout.setSpacing(10)
+        
+        # Previous month button
+        self.prev_month_btn = QPushButton("◀")
+        self.prev_month_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ff8533, stop:1 #ff6600);
+                color: white;
+                border: 1px solid #ff6600;
+                border-radius: 15px;
+                min-width: 30px;
+                max-width: 30px;
+                min-height: 30px;
+                max-height: 30px;
+                font-size: 14px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ffaa66, stop:1 #ff8533);
+            }
+            QPushButton:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ff6600, stop:1 #ff5500);
+            }
+        """)
+        self.prev_month_btn.clicked.connect(self.go_to_prev_month)
+        calendar_nav_layout.addWidget(self.prev_month_btn)
+        
+        # Month label with rounded background
+        self.month_label = QLabel("February")
+        self.month_label.setAlignment(Qt.AlignCenter)
+        self.month_label.setStyleSheet("""
+            QLabel {
+                background: #ffffff;
+                color: #222;
+                border: 1px solid #e0e0e0;
+                border-radius: 8px;
+                padding: 6px 12px;
+                font-size: 13px;
+                font-weight: 600;
+                min-width: 80px;
+            }
+        """)
+        calendar_nav_layout.addWidget(self.month_label)
+        
+        # Year label with rounded background
+        self.year_label = QLabel("2026")
+        self.year_label.setAlignment(Qt.AlignCenter)
+        self.year_label.setStyleSheet("""
+            QLabel {
+                background: #ffffff;
+                color: #222;
+                border: 1px solid #e0e0e0;
+                border-radius: 8px;
+                padding: 6px 12px;
+                font-size: 13px;
+                font-weight: 600;
+                min-width: 60px;
+            }
+        """)
+        calendar_nav_layout.addWidget(self.year_label)
+        
+        # Next month button
+        self.next_month_btn = QPushButton("▶")
+        self.next_month_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ff8533, stop:1 #ff6600);
+                color: white;
+                border: 1px solid #ff6600;
+                border-radius: 15px;
+                min-width: 30px;
+                max-width: 30px;
+                min-height: 30px;
+                max-height: 30px;
+                font-size: 14px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ffaa66, stop:1 #ff8533);
+            }
+            QPushButton:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #ff6600, stop:1 #ff5500);
+            }
+        """)
+        self.next_month_btn.clicked.connect(self.go_to_next_month)
+        calendar_nav_layout.addWidget(self.next_month_btn)
+        
+        schedule_layout.addWidget(calendar_nav)
+        
+        # Calendar widget (hide default navigation)
         self.schedule_calendar = QCalendarWidget()
         self.schedule_calendar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        self.schedule_calendar.setMinimumHeight(180)
-        self.schedule_calendar.setMaximumHeight(250)
-
+        self.schedule_calendar.setMinimumHeight(200)
+        self.schedule_calendar.setMaximumHeight(260)
+        self.schedule_calendar.setMinimumWidth(280)
+        self.schedule_calendar.setNavigationBarVisible(False)  # Hide default navigation
+        
         self.schedule_calendar.setStyleSheet("""
         QCalendarWidget QWidget { 
             background: #ffffff; 
@@ -772,6 +869,7 @@ class Dashboard(QWidget):
             color: #222;
             selection-background-color: #ff6600; 
             selection-color: #fff;
+            font-size: 12px;
         }
         QCalendarWidget QToolButton { 
             color: #222; 
@@ -780,85 +878,6 @@ class Dashboard(QWidget):
             margin: 2px;
         }
         QCalendarWidget QToolButton:hover {
-            background: #ffe6cc;
-            border-radius: 4px;
-        }
-        QCalendarWidget QSpinBox { 
-            color: #222;
-            background: transparent;
-            border: none;
-            padding: 0px;
-        }
-        QCalendarWidget QSpinBox::up-button {
-            subcontrol-origin: border;
-            subcontrol-position: top right;
-            width: 20px;
-            height: 15px;
-            border: none;
-            background: transparent;
-            padding: 0px;
-            margin: 0px;
-        }
-        QCalendarWidget QSpinBox::up-button:hover {
-            background: transparent;
-            border: none;
-            padding: 0px;
-            margin: 0px;
-        }
-        QCalendarWidget QSpinBox::up-arrow {
-            width: 0px;
-            height: 0px;
-            border-left: 7px solid transparent;
-            border-right: 7px solid transparent;
-            border-bottom: 9px solid #ffb366;
-            margin: 2px;
-        }
-        QCalendarWidget QSpinBox::up-arrow:hover {
-            border-bottom-color: #ff6600;
-        }
-        QCalendarWidget QSpinBox::down-button {
-            subcontrol-origin: border;
-            subcontrol-position: bottom right;
-            width: 20px;
-            height: 15px;
-            border: none;
-            background: transparent;
-            padding: 0px;
-            margin: 0px;
-        }
-        QCalendarWidget QSpinBox::down-button:hover {
-            background: transparent;
-            border: none;
-            padding: 0px;
-            margin: 0px;
-        }
-        QCalendarWidget QSpinBox::down-arrow {
-            width: 0px;
-            height: 0px;
-            border-left: 7px solid transparent;
-            border-right: 7px solid transparent;
-            border-top: 9px solid #ffb366;
-            margin: 2px;
-        }
-        QCalendarWidget QSpinBox::down-arrow:hover {
-            border-top-color: #ff6600;
-        }
-        QCalendarWidget QWidget#qt_calendar_navigationbar {
-            background: #f7f7f7;
-        }
-        QCalendarWidget QWidget#qt_calendar_navigationbar QHBoxLayout {
-            alignment: center;
-        }
-        QCalendarWidget QWidget#qt_calendar_navigationbar QToolButton {
-            min-width: 30px;
-            min-height: 30px;
-            color: #222;
-            background: transparent;
-            border: none;
-            padding: 4px;
-            margin: 2px;
-        }
-        QCalendarWidget QWidget#qt_calendar_navigationbar QToolButton:hover {
             background: #ffe6cc;
             border-radius: 4px;
         }
@@ -896,8 +915,14 @@ class Dashboard(QWidget):
         self.schedule_calendar.clicked.connect(self.on_calendar_date_selected)
         self.schedule_calendar.selectionChanged.connect(self.on_calendar_selection_changed)
         
+        # Update labels when calendar page changes
+        self.schedule_calendar.currentPageChanged.connect(self.update_calendar_labels)
+        
         # Connect to page change to track month navigation
         self.schedule_calendar.currentPageChanged.connect(self.on_calendar_page_changed)
+        
+        # Initialize calendar labels
+        self.update_calendar_labels()
         
         # Disable double-click activation (prevents popup window)
         try:
@@ -1144,6 +1169,37 @@ class Dashboard(QWidget):
         self.page_stack.setCurrentWidget(self.dashboard_page)
 
     # Calendar date selection
+    
+    def update_calendar_labels(self):
+        """Update the custom month and year labels based on current calendar date."""
+        try:
+            current_date = self.schedule_calendar.selectedDate()
+            month_names = ["January", "February", "March", "April", "May", "June",
+                          "July", "August", "September", "October", "November", "December"]
+            self.month_label.setText(month_names[current_date.month() - 1])
+            self.year_label.setText(str(current_date.year()))
+        except Exception as e:
+            print(f"Error updating calendar labels: {e}")
+    
+    def go_to_prev_month(self):
+        """Navigate to previous month."""
+        try:
+            current_date = self.schedule_calendar.selectedDate()
+            new_date = current_date.addMonths(-1)
+            self.schedule_calendar.setSelectedDate(new_date)
+            self.update_calendar_labels()
+        except Exception as e:
+            print(f"Error navigating to previous month: {e}")
+    
+    def go_to_next_month(self):
+        """Navigate to next month."""
+        try:
+            current_date = self.schedule_calendar.selectedDate()
+            new_date = current_date.addMonths(1)
+            self.schedule_calendar.setSelectedDate(new_date)
+            self.update_calendar_labels()
+        except Exception as e:
+            print(f"Error navigating to next month: {e}")
 
     def on_calendar_date_selected(self, qdate):
         try:

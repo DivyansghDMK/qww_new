@@ -301,7 +301,7 @@ class HistoryWindow(QDialog):
         layout.addWidget(search_frame)
 
         self.table = QTableWidget()
-        self.table.setColumnCount(10)
+        self.table.setColumnCount(11)  # Added Review Status column
         self.table.setHorizontalHeaderLabels(
             [
                 "Date",
@@ -314,6 +314,7 @@ class HistoryWindow(QDialog):
                 "Height (cm)",
                 "Weight (kg)",
                 "Report Type",
+                "Review Status",  # New column
             ]
         )
         self.table.setSortingEnabled(True)
@@ -333,6 +334,9 @@ class HistoryWindow(QDialog):
 
         # Connect double-click signal to open report
         self.table.cellDoubleClicked.connect(self.on_row_double_clicked)
+        
+        # Connect single-click signal for status column
+        self.table.cellClicked.connect(self.on_status_cell_clicked)
 
         # Enhanced buttons row with responsive design
         buttons_frame = QFrame()
@@ -650,6 +654,7 @@ class HistoryWindow(QDialog):
         gender = entry.get("gender", "")
         height = str(entry.get("height", ""))
         weight = str(entry.get("weight", ""))
+        review_status = entry.get("review_status", "Pending")  # Default to Pending
 
         values = [
             date_str,
@@ -662,11 +667,26 @@ class HistoryWindow(QDialog):
             height,
             weight,
             report_type,
+            review_status,  # New column
         ]
 
         for col, val in enumerate(values):
             item = QTableWidgetItem(val)
             item.setTextAlignment(Qt.AlignCenter)
+            
+            # Apply color coding to Review Status column (column 10)
+            if col == 10:  # Review Status column
+                from PyQt5.QtGui import QColor
+                if val == "Pending":
+                    item.setBackground(QColor("#e9ecef"))
+                    item.setForeground(QColor("#6c757d"))
+                elif val == "Under Review":
+                    item.setBackground(QColor("#fff3cd"))
+                    item.setForeground(QColor("#856404"))
+                elif val == "Reviewed":
+                    item.setBackground(QColor("#d4edda"))
+                    item.setForeground(QColor("#155724"))
+            
             self.table.setItem(row, col, item)
 
         # Store report filename (if any) as row data for later open
@@ -680,6 +700,215 @@ class HistoryWindow(QDialog):
     def on_row_double_clicked(self, row, column):
         """Handle double-click on a table row to open the report."""
         self.open_report_by_row(row)
+    
+    def on_status_cell_clicked(self, row, column):
+        """Handle click on Review Status column to change status."""
+        # Only handle clicks on Review Status column (column 10)
+        if column != 10:
+            return
+        
+        from PyQt5.QtWidgets import QMenu
+        from PyQt5.QtGui import QCursor
+        
+        # Get current status
+        status_item = self.table.item(row, 10)
+        if not status_item:
+            return
+        
+        current_status = status_item.text()
+        
+        # Create context menu with status options
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: white;
+                border: 2px solid #007bff;
+                border-radius: 6px;
+                padding: 5px;
+            }
+            QMenu::item {
+                padding: 8px 20px;
+                border-radius: 4px;
+            }
+            QMenu::item:selected {
+                background-color: #007bff;
+                color: white;
+            }
+        """)
+        
+        # Add status options
+        pending_action = menu.addAction("⚪ Pending")
+        review_action = menu.addAction("🟡 Under Review")
+        reviewed_action = menu.addAction("🟢 Reviewed")
+        
+        # Mark current status
+        if current_status == "Pending":
+            pending_action.setEnabled(False)
+        elif current_status == "Under Review":
+            review_action.setEnabled(False)
+        elif current_status == "Reviewed":
+            reviewed_action.setEnabled(False)
+        
+        # Show menu and get selection
+        action = menu.exec_(QCursor.pos())
+        
+        # Update status based on selection
+        if action == pending_action:
+            self.update_review_status(row, "Pending")
+        elif action == review_action:
+            self.update_review_status(row, "Under Review")
+        elif action == reviewed_action:
+            self.update_review_status(row, "Reviewed")
+
+    def update_review_status(self, row, new_status):
+        """Update review status for a report and save to file and backend."""
+        from PyQt5.QtGui import QColor
+        
+        try:
+            # Update table cell
+            status_item = self.table.item(row, 10)
+            if not status_item:
+                return
+            
+            status_item.setText(new_status)
+            
+            # Update cell styling
+            if new_status == "Pending":
+                status_item.setBackground(QColor("#e9ecef"))
+                status_item.setForeground(QColor("#6c757d"))
+            elif new_status == "Under Review":
+                status_item.setBackground(QColor("#fff3cd"))
+                status_item.setForeground(QColor("#856404"))
+            elif new_status == "Reviewed":
+                status_item.setBackground(QColor("#d4edda"))
+                status_item.setForeground(QColor("#155724"))
+            
+            # Get patient name to find entry in all_history_entries
+            patient_item = self.table.item(row, 4)  # Patient Name column
+            date_item = self.table.item(row, 0)  # Date column
+            
+            if not patient_item or not date_item:
+                return
+            
+            patient_name = patient_item.text()
+            date_str = date_item.text()
+            
+            # Update in all_history_entries
+            for entry in self.all_history_entries:
+                if (entry.get("patient_name") == patient_name and 
+                    entry.get("date") == date_str):
+                    entry["review_status"] = new_status
+                    entry["review_updated_at"] = datetime.datetime.now().isoformat()
+                    entry["review_updated_by"] = self.username or "unknown"
+                    break
+            
+            # Save to ecg_history.json
+            self._save_history_to_file()
+            
+            # Send update to backend API
+            self._send_status_update_to_backend(row, new_status)
+            
+            print(f"✅ Review status updated to '{new_status}' for {patient_name}")
+            
+        except Exception as e:
+            print(f"❌ Error updating review status: {e}")
+            QMessageBox.warning(
+                self,
+                "Update Failed",
+                f"Failed to update review status: {str(e)}"
+            )
+    
+    def _save_history_to_file(self):
+        """Save all_history_entries back to ecg_history.json."""
+        try:
+            # Load existing history file
+            if os.path.exists(HISTORY_FILE):
+                with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+                    all_entries = json.load(f)
+            else:
+                all_entries = []
+            
+            if not isinstance(all_entries, list):
+                all_entries = []
+            
+            # Update entries with review status
+            for entry in self.all_history_entries:
+                patient_name = entry.get("patient_name", "")
+                date_str = entry.get("date", "")
+                
+                # Find matching entry in all_entries
+                found = False
+                for saved_entry in all_entries:
+                    if (saved_entry.get("patient_name") == patient_name and
+                        saved_entry.get("date") == date_str):
+                        # Update review status fields
+                        saved_entry["review_status"] = entry.get("review_status", "Pending")
+                        saved_entry["review_updated_at"] = entry.get("review_updated_at", "")
+                        saved_entry["review_updated_by"] = entry.get("review_updated_by", "")
+                        found = True
+                        break
+                
+                # If not found, add new entry
+                if not found:
+                    all_entries.append(entry)
+            
+            # Save back to file
+            with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+                json.dump(all_entries, f, indent=2)
+            
+            print(f"💾 Saved review status to {HISTORY_FILE}")
+            
+        except Exception as e:
+            print(f"❌ Error saving history to file: {e}")
+    
+    def _send_status_update_to_backend(self, row, new_status):
+        """Send review status update to backend API."""
+        try:
+            # Get report data
+            report_data = self.get_report_data_from_row(row)
+            if not report_data:
+                return
+            
+            # Add review status
+            report_data["review_status"] = new_status
+            report_data["review_updated_at"] = datetime.datetime.now().isoformat()
+            report_data["review_updated_by"] = self.username or "unknown"
+            
+            # Prepare payload
+            payload = {
+                "action": "update_review_status",
+                "report": report_data,
+                "metadata": {
+                    "source": "ecg_monitor",
+                    "version": "1.0",
+                    "updated_by": self.username or "unknown"
+                }
+            }
+            
+            # Make API request (non-blocking)
+            try:
+                response = requests.post(
+                    BACKEND_API_URL,
+                    json=payload,
+                    headers={
+                        "Content-Type": "application/json",
+                        "User-Agent": "ECG-Monitor/1.0"
+                    },
+                    timeout=5  # Short timeout for status updates
+                )
+                
+                if response.status_code == 200:
+                    print(f"📤 Review status sent to backend: {new_status}")
+                else:
+                    print(f"⚠️ Backend API returned status {response.status_code}")
+                    
+            except requests.exceptions.Timeout:
+                print("⚠️ Backend API timeout (status update)")
+            except requests.exceptions.RequestException as e:
+                print(f"⚠️ Backend API error: {e}")
+                
+        except Exception as e:
+            print(f"❌ Error sending status to backend: {e}")
 
     def open_selected_report(self):
         """Open the PDF report for the selected row, if available."""
@@ -948,6 +1177,7 @@ class HistoryWindow(QDialog):
             height_item = self.table.item(row, 7)
             weight_item = self.table.item(row, 8)
             report_type_item = self.table.item(row, 9)
+            review_status_item = self.table.item(row, 10)  # New: Review Status column
 
             # Get report file path from stored data
             first_item = self.table.item(row, 0)
@@ -972,6 +1202,7 @@ class HistoryWindow(QDialog):
                 "height": height_item.text() if height_item else "",
                 "weight": weight_item.text() if weight_item else "",
                 "report_type": report_type_item.text() if report_type_item else "",
+                "review_status": review_status_item.text() if review_status_item else "Pending",  # New field
                 "report_file_path": report_file,
                 "username": self.username,
                 "timestamp": datetime.datetime.now().isoformat()
@@ -981,7 +1212,9 @@ class HistoryWindow(QDialog):
             if history_entry:
                 report_data.update({
                     "report_file": history_entry.get("report_file", ""),
-                    "original_entry": history_entry
+                    "original_entry": history_entry,
+                    "review_updated_at": history_entry.get("review_updated_at", ""),
+                    "review_updated_by": history_entry.get("review_updated_by", "")
                 })
 
             return report_data
@@ -1060,6 +1293,9 @@ def append_history_entry(patient_details, report_file_path, report_type="ECG", u
         "report_type": report_type,
         "username": username,
         "report_file": os.path.abspath(report_file_path) if report_file_path else "",
+        "review_status": "Pending",  # Default status for new reports
+        "review_updated_at": "",
+        "review_updated_by": "",
     }
     if isinstance(patient_details, dict):
         base.update(patient_details)

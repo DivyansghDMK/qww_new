@@ -175,12 +175,31 @@ def calculate_heart_rate_from_signal(lead_data, sampling_rate=None, sampler=None
             print(f" Error calculating R-R intervals: {e}")
             return _fallback_value()
 
-        # Filter physiologically reasonable intervals (200-6000 ms)
+        # Filter physiologically reasonable intervals (200-6000 ms = 10-300 BPM)
         try:
             valid_intervals = rr_intervals_ms[(rr_intervals_ms >= 200) & (rr_intervals_ms <= 6000)]
-            if len(valid_intervals) == 0:
-                print(" No valid R-R intervals found")
+            
+            if len(valid_intervals) < 2:
+                print(" No valid R-R intervals found after initial filter")
                 return _fallback_value()
+            
+            # WARNING FIX #4: Ectopic beat rejection (PVC filtering)
+            # Remove RR intervals >20% from median to exclude premature beats
+            if len(valid_intervals) >= 3:
+                median_rr_initial = np.median(valid_intervals)
+                tolerance = 0.20 * median_rr_initial  # 20% tolerance
+                normal_intervals = valid_intervals[
+                    np.abs(valid_intervals - median_rr_initial) <= tolerance
+                ]
+                
+                # Use filtered intervals if we have enough data
+                if len(normal_intervals) >= 2:
+                    valid_intervals = normal_intervals
+            
+            if len(valid_intervals) == 0:
+                print(" No valid R-R intervals found after ectopic beat rejection")
+                return _fallback_value()
+
         except Exception as e:
             print(f" Error filtering intervals: {e}")
             return _fallback_value()

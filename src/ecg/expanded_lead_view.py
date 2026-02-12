@@ -1239,6 +1239,125 @@ class ExpandedLeadView(QDialog):
         except Exception as e:
             print(f"Error updating live data: {e}")
     
+    def calculate_p_duration(self, p_peaks, filtered_signal):
+        """Calculate P wave duration from detected P peaks
+        
+        Args:
+            p_peaks: Array of P-peak indices
+            filtered_signal: Filtered ECG signal
+        
+        Returns:
+            int: Median P duration in milliseconds
+        """
+        if len(p_peaks) == 0:
+            return 0
+        
+        p_durations = []
+        for p_idx in p_peaks:
+            try:
+                # Examine ±80 ms window around P-peak
+                half_win = int(0.08 * self.sampling_rate)
+                start = max(0, p_idx - half_win)
+                end = min(len(filtered_signal) - 1, p_idx + half_win)
+                
+                if end <= start:
+                    continue
+                
+                segment = filtered_signal[start:end]
+                baseline = np.median(segment)
+                
+                # CRITICAL FIX: Define peak_rel correctly as relative index within segment
+                peak_rel = p_idx - start  # Relative index within segment
+                
+                if peak_rel < 0 or peak_rel >= len(segment):
+                    continue
+                
+                peak_val = segment[peak_rel]
+                amp = np.abs(peak_val - baseline)
+                
+                if amp < 1e-6:  # Too small amplitude
+                    continue
+                
+                # Threshold at 20% of peak amplitude
+                thresh = 0.2 * amp
+                
+                # Find onset (search left from peak)
+                left = peak_rel
+                while left > 0 and np.abs(segment[left] - baseline) > thresh:
+                    left -= 1
+                
+                # Find offset (search right from peak)
+                right = peak_rel
+                while right < len(segment) - 1 and np.abs(segment[right] - baseline) > thresh:
+                    right += 1
+                
+                # Calculate duration in milliseconds
+                dur_samples = max(1, right - left)
+                p_dur_ms = dur_samples * 1000.0 / self.sampling_rate
+                
+                # Validate physiological range (40-120 ms)
+                if 40 <= p_dur_ms <= 120:
+                    p_durations.append(p_dur_ms)
+            
+            except Exception as e:
+                print(f" Error calculating P duration for peak at {p_idx}: {e}")
+                continue
+        
+        if len(p_durations) > 0:
+            return int(round(np.median(p_durations)))
+        else:
+            return 0
+    
+    def analyze_ecg(self):
+        """Analyze the current ECG data segment for PQRST features and arrhythmias."""
+        if len(self.ecg_data) == 0:
+            return
+
+        try:
+            # Use the full ecg_data for analysis, not just the visible window
+            # Apply a display-like bandpass filter for analysis to remove DC drift and high-freq noise
+            # This is a copy of the display filter, but applied to the full data for consistency
+            filtered_signal = self._apply_display_bandpass(self.ecg_data, self.sampling_rate)
+            
+            # Perform PQRST analysis
+            p_peaks, q_peaks, r_peaks, s_peaks, t_peaks = self.analyzer.find_pqrst(filtered_signal)
+            
+            # Update markers for display
+            self.p_peaks = p_peaks
+            self.q_peaks = q_peaks
+            self.r_peaks = r_peaks
+            self.s_peaks = s_peaks
+            self.t_peaks = t_peaks
+
+            # Calculate metrics
+            rr_intervals = np.diff(r_peaks) / self.sampling_rate * 1000 # in ms
+            if len(rr_intervals) > 0:
+                self.update_metric('rr_interval', int(np.median(rr_intervals)))
+            else:
+                self.update_metric('rr_interval', 0)
+
+            pr_intervals = self.analyzer.calculate_pr_interval(p_peaks, r_peaks)
+            if len(pr_intervals) > 0:
+                self.update_metric('pr_interval', int(np.median(pr_intervals)))
+            else:
+                self.update_metric('pr_interval', 0)
+
+            qrs_durations = self.analyzer.calculate_qrs_duration(q_peaks, s_peaks)
+            if len(qrs_durations) > 0:
+                self.update_metric('qrs_duration', int(np.median(qrs_durations)))
+            else:
+                self.update_metric('qrs_duration', 0)
+            
+            p_duration = self.calculate_p_duration(p_peaks, filtered_signal)
+            self.update_metric('p_duration', p_duration)
+
+            # Detect arrhythmias
+            arrhythmias = self.arrhythmia_detector.detect_arrhythmias(r_peaks, rr_intervals)
+            self.update_arrhythmia_display(arrhythmias)
+
+        except Exception as e:
+            print(f" Error during ECG analysis: {e}")
+    
     def get_lead_index(self):
         """Get the lead index for this lead name"""
         lead_mapping = {
@@ -1420,7 +1539,24 @@ class ExpandedLeadView(QDialog):
             if end_idx - start_idx <= 1:
                 return
 
-            window_signal = self.ecg_data[start_idx:end_idx]
+            # To avoid filter edge artifacts at the very start/end of the visible box
+            # (especially when 50 Hz AC filter is enabled), we apply all display‑only
+            # filters on a slightly larger padded segment, then crop back to the
+            # requested [start_idx, end_idx) window.
+            pad_seconds = 0.5  # 500 ms padding on each side
+            pad_samples = int(pad_seconds * self.sampling_rate)
+            padded_start = max(0, start_idx - pad_samples)
+            padded_end = min(total_samples, end_idx + pad_samples)
+
+            padded_signal = self.ecg_data[padded_start:padded_end]
+            if len(padded_signal) <= 1:
+                return
+
+            # This is the portion we will actually display after filtering
+            visible_len = end_idx - start_idx
+            visible_offset = start_idx - padded_start
+
+            window_signal = padded_signal  # use padded for filtering
             
             # Ensure we have valid data
             if len(window_signal) == 0:
@@ -1466,6 +1602,15 @@ class ExpandedLeadView(QDialog):
             except Exception as _ac_err:
                 print(f" Expanded view AC filter error: {_ac_err}")
             
+            # After all filters, crop back to the exact visible window to remove
+            # edge transients introduced by filtering the padded segment.
+            try:
+                if visible_len > 0 and len(display_signal) >= visible_offset + visible_len:
+                    display_signal = display_signal[visible_offset:visible_offset + visible_len]
+            except Exception:
+                # In case of any indexing issues, fall back to the original (unpadded) slice
+                display_signal = self.ecg_data[start_idx:end_idx]
+
             # ---------------- DISPLAY SCALING (apply gain ONCE, last) ----------------
             wave_gain_mm = 10.0
             try:
@@ -2235,35 +2380,10 @@ class ExpandedLeadView(QDialog):
                 if len(p_peaks) > 0:
                     filtered = self.analyzer._filter_signal(self.ecg_data)
                     p_durations = []
-                    for p_idx in p_peaks:
-                        # Examine a window of ±80 ms around the P-peak
-                        half_win = int(0.08 * self.sampling_rate)
-                        start = max(0, p_idx - half_win)
-                        end = min(len(filtered) - 1, p_idx + half_win)
-                        if end <= start + 2:
-                            continue
-                        segment = filtered[start:end]
-                        # Local baseline and peak amplitude
-                        baseline = np.median(segment)
-                        peak_rel = int(np.argmax(np.abs(segment - baseline)))
-                        peak_val = segment[peak_rel]
-                        amp = np.abs(peak_val - baseline)
-                        if amp <= 0:
-                            continue
-                        # Threshold at 20% of peak above baseline
-                        thresh = 0.2 * amp
-                        # Search left for onset
-                        left = peak_rel
-                        while left > 0 and np.abs(segment[left] - baseline) > thresh:
-                            left -= 1
-                        # Search right for offset
-                        right = peak_rel
-                        while right < len(segment) - 1 and np.abs(segment[right] - baseline) > thresh:
-                            right += 1
-                        dur_samples = max(1, right - left)
-                        p_durations.append(dur_samples * 1000.0 / self.sampling_rate)
-                    if p_durations:
-                        self.update_metric('p_duration', int(round(np.median(p_durations))))
+                filtered = self.analyzer._filter_signal(self.ecg_data)
+                p_duration_val = self.calculate_p_duration(p_peaks, filtered)
+                if p_duration_val > 0:
+                    self.update_metric('p_duration', p_duration_val)
             except Exception as _:
                 # Fallback if anything fails; do not block other metrics
                 pass

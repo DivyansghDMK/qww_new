@@ -1,35 +1,5 @@
 [
   {
-    "timestamp": "2026-01-10T16:07:04.223002",
-    "message": "Packet parsing error: device reports readiness to read but returned no data (device disconnected or multiple access on port?)",
-    "category": "SERIAL_ERROR",
-    "error_count": 3,
-    "session_duration": "0:00:10.883813",
-    "exception_type": "SerialException",
-    "exception_message": "device reports readiness to read but returned no data (device disconnected or multiple access on port?)",
-    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/Downloads/19_noc code  duplicate/modularecg/src/ecg/twelve_lead_test.py\", line 412, in read_packets\n    chunk = self.ser.read(4096)  # Increased from default (usually 1024)\n  File \"/Users/deckmount/Downloads/19_noc code  duplicate/modularecg/.venv/lib/python3.13/site-packages/serial/serialposix.py\", line 595, in read\n    raise SerialException(\n        'device reports readiness to read but returned no data '\n        '(device disconnected or multiple access on port?)')\nserial.serialutil.SerialException: device reports readiness to read but returned no data (device disconnected or multiple access on port?)\n"
-  },
-  {
-    "timestamp": "2026-01-10T16:07:04.231877",
-    "message": "Packet parsing error: device reports readiness to read but returned no data (device disconnected or multiple access on port?)",
-    "category": "SERIAL_ERROR",
-    "error_count": 7,
-    "session_duration": "0:05:54.870631",
-    "exception_type": "SerialException",
-    "exception_message": "device reports readiness to read but returned no data (device disconnected or multiple access on port?)",
-    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/Downloads/19_noc code  duplicate/modularecg/src/ecg/twelve_lead_test.py\", line 412, in read_packets\n    chunk = self.ser.read(4096)  # Increased from default (usually 1024)\n            ^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 595, in read\n    raise SerialException(\nserial.serialutil.SerialException: device reports readiness to read but returned no data (device disconnected or multiple access on port?)\n"
-  },
-  {
-    "timestamp": "2026-01-10T16:07:04.289998",
-    "message": "Packet parsing error: device reports readiness to read but returned no data (device disconnected or multiple access on port?)",
-    "category": "SERIAL_ERROR",
-    "error_count": 8,
-    "session_duration": "0:05:54.928750",
-    "exception_type": "SerialException",
-    "exception_message": "device reports readiness to read but returned no data (device disconnected or multiple access on port?)",
-    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/Downloads/19_noc code  duplicate/modularecg/src/ecg/twelve_lead_test.py\", line 412, in read_packets\n    chunk = self.ser.read(4096)  # Increased from default (usually 1024)\n            ^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 595, in read\n    raise SerialException(\nserial.serialutil.SerialException: device reports readiness to read but returned no data (device disconnected or multiple access on port?)\n"
-  },
-  {
     "timestamp": "2026-01-10T16:07:04.324899",
     "message": "Packet parsing error: device reports readiness to read but returned no data (device disconnected or multiple access on port?)",
     "category": "SERIAL_ERROR",
@@ -998,5 +968,35 @@
     "exception_type": "SerialException",
     "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
     "traceback": "Traceback (most recent call last):\n  File \"c:\\Users\\DELL\\Documents\\merge\\merge\\src\\ecg\\serial\\serial_reader.py\", line 387, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\DELL\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python311\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
+  },
+  {
+    "timestamp": "2026-02-12T11:40:53.528030",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 1,
+    "session_duration": "0:05:40.661031",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/merge/merge/src/ecg/serial/serial_reader.py\", line 387, in read_packets\n    We read up to max_packets to prevent buffer overflow and packet loss.\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/merge/merge/.venv/lib/python3.13/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-02-12T11:50:17.728308",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 1,
+    "session_duration": "0:00:32.553190",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/merge/merge/src/ecg/serial/serial_reader.py\", line 396, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/merge/merge/.venv/lib/python3.13/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-02-12T13:58:42.825506",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 1,
+    "session_duration": "0:03:17.282696",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/merge/merge/src/ecg/serial/serial_reader.py\", line 400, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/merge/merge/.venv/lib/python3.13/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\nOSError: [Errno 6] Device not configured\n"
   }
 ]

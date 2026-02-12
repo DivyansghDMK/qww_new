@@ -10,7 +10,7 @@ from utils.crash_logger import get_crash_logger
 from utils.session_recorder import SessionRecorder
 from PyQt5.QtGui import QFont, QPixmap, QIntValidator
 
-# Import core modules
+# Import core modules  
 try:
     from core.logging_config import get_logger, log_function_call
     from core.exceptions import ECGError, ECGConfigError

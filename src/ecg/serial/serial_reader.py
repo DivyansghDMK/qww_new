@@ -3,6 +3,9 @@ import time
 from typing import List, Dict, Optional
 from PyQt5.QtWidgets import QMessageBox
 
+# Configuration: Skip VERSION command if device doesn't support it or times out
+SKIP_VERSION_CHECK = True  # Set to False to enable VERSION command
+
 try:
     import serial
     import serial.tools.list_ports
@@ -49,13 +52,13 @@ class SerialStreamReader:
     """Packet-based serial reader for ECG data - NEW IMPLEMENTATION"""
     
     @staticmethod
-    def scan_and_detect_port(baudrate: int = 115200, timeout: float = 0.1) -> Optional[tuple]:
+    def scan_and_detect_port(baudrate: int = 115200, timeout: float = 0.05) -> Optional[tuple]:
         """
         Scan all available COM ports and detect which one responds to START command
         
         Args:
             baudrate: Baud rate to use for scanning (default: 115200)
-            timeout: Timeout per port in seconds (default: 0.1 = 100ms)
+            timeout: Timeout per port in seconds (default: 0.05 = 50ms for instant detection)
             
         Returns:
             tuple: (port_name: str, serial_port: Serial) if found, or None if none found
@@ -236,6 +239,12 @@ class SerialStreamReader:
         Returns:
             str or None: Version string if available, otherwise None.
         """
+        # Check if VERSION command is disabled
+        if SKIP_VERSION_CHECK:
+            print("⏭️  VERSION COMMAND: Skipped (disabled via SKIP_VERSION_CHECK flag)")
+            print("   Set SKIP_VERSION_CHECK = False in serial_reader.py to enable")
+            return None
+        
         # Only available when serial + HardwareCommandHandler are available
         if not hasattr(self, "command_handler") or not self.command_handler:
             print("❌ VERSION COMMAND: Command handler not available")
@@ -302,12 +311,16 @@ class SerialStreamReader:
 
         # First: optionally request and print device version while device is IDLE
         # (send STOP + VERSION, then we will START streaming below)
-        try:
-            version = self.get_device_version()
-            if version:
-                print(f" 🧬 ECG Device Version: {version}")
-        except Exception as e:
-            print(f" ⚠️ VERSION COMMAND skipped due to error: {e}")
+        # SKIP VERSION if flag is set to prevent UI freezing
+        if not SKIP_VERSION_CHECK:
+            try:
+                version = self.get_device_version()
+                if version:
+                    print(f" 🧬 ECG Device Version: {version}")
+            except Exception as e:
+                print(f" ⚠️ VERSION COMMAND skipped due to error: {e}")
+        else:
+            print(" ⏭️  VERSION COMMAND: Skipped (SKIP_VERSION_CHECK = True)")
 
         # Now send hardware START command to begin ECG streaming
         if hasattr(self, "command_handler") and self.command_handler:
@@ -559,8 +572,8 @@ class SerialECGReader:
         print(" Starting ECG data acquisition...")
         self.ser.reset_input_buffer()
         self.ser.write(b'1\r\n')
-        # INSTANT START: Reduced delay for immediate wave display
-        time.sleep(0.1)  # Reduced from 0.5s to 0.1s for faster startup
+        # INSTANT START: Removed delay for immediate wave display
+        # time.sleep(0.1)  # Removed for instant startup
         self.running = True
         print(" ECG device started - waiting for data...")
 

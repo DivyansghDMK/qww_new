@@ -177,7 +177,8 @@ def apply_ac_filter(signal: np.ndarray, sampling_rate: float, ac_filter: str) ->
         
         # Design notch filter (bandstop filter)
         nyquist = sampling_rate / 2.0
-        quality_factor = 25.0  # Quality factor for notch filter (reduced from 30 to avoid ringing)
+        quality_factor = 35.0  # INFO FIX #12: Increased from 25 to 35 for sharper rejection
+        # Quality factor for notch filter (reduced from 30 to avoid ringing)
         
         # Normalize frequency
         w0 = notch_freq / nyquist

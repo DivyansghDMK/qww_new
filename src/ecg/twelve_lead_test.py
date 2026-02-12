@@ -46,9 +46,12 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtGui import QFont, QColor
 from PyQt5.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QDateTime 
-# --- CHANGED: Removed Matplotlib imports ---
 
-# --- ADDED: PyQtGraph is now used for all plotting ---
+# Matplotlib imports (still used for detailed/overlay views)
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+
+# PyQtGraph is used for the main real-time plotting grid
 import pyqtgraph as pg
 import re
 from collections import deque
@@ -80,6 +83,12 @@ from .signal.signal_processing import (
     apply_adaptive_gain, apply_realtime_smoothing
 )
 from .plotting.plot_widgets import create_plot_grid, LEAD_COLORS_PLOT
+
+# Import lead-off detection (CRITICAL FIX #3)
+from .lead_off_detection import detect_lead_off, check_all_leads_quality
+
+# Import smooth display module for jitter-free wave plotting
+from .smooth_display import SmoothECGDisplay
 
 # Import constants from utils module
 from .utils.constants import HISTORY_LENGTH, NORMAL_HR_MIN, NORMAL_HR_MAX, LEAD_LABELS, LEAD_COLORS, LEADS_MAP
@@ -2002,13 +2011,6 @@ class ECGTestPage(QWidget):
                     # Value changed again, reset timer
                     self._pending_pr_value = smoothed_pr
                     self._pending_pr_start_time = current_time
-        try:
-            if 'fallback_used' in locals() and fallback_used:
-                self._last_displayed_pr = smoothed_pr
-                self._pending_pr_value = None
-        except Exception:
-            pass
-        
         self.pr_interval = self._last_displayed_pr
         
         pass
@@ -3245,6 +3247,8 @@ class ECGTestPage(QWidget):
             
             # Get sampling rate
             from scipy.signal import butter, filtfilt, find_peaks
+            from ecg.clinical_measurements import detect_t_wave_end_tangent_method
+            
             fs = 186.5
             if hasattr(self, 'sampler') and hasattr(self.sampler, 'sampling_rate') and self.sampler.sampling_rate > 10:
                 fs = float(self.sampler.sampling_rate)
@@ -3282,13 +3286,17 @@ class ECGTestPage(QWidget):
                     else:
                         q_point = r_peak
                     
-                    # Find T-wave end (return to baseline after R)
-                    # GE/Philips standard: T-end is where signal returns to TP baseline after T-peak
+                    # CRITICAL FIX: Use tangent method for T-end detection (AHA standard)
+                    # This replaces the simple baseline crossing method which was ~100ms too short
+                    
+                    # Find T-wave search window
                     t_search_start = r_peak + int(0.08 * fs)  # After QRS
-                    t_search_end = min(len(filtered_signal), r_peak + int(0.4 * fs))  # 400ms max (shorter window)
+                    t_search_end = min(len(filtered_signal), r_peak + int(0.5 * fs))  # 500ms max
+                    
                     if t_search_end > t_search_start:
                         t_segment = filtered_signal[t_search_start:t_search_end]
-                        # TP baseline: isoelectric segment before QRS (150-350ms before R)
+                        
+                        # TP baseline: isoelectric segment before QRS
                         tp_baseline_start = max(0, r_peak - int(0.35 * fs))
                         tp_baseline_end = max(0, r_peak - int(0.15 * fs))
                         if tp_baseline_end > tp_baseline_start:
@@ -3296,35 +3304,45 @@ class ECGTestPage(QWidget):
                         else:
                             baseline = np.mean(filtered_signal[max(0, r_peak - int(0.15 * fs)):max(0, r_peak - int(0.05 * fs))])
                         
+                        # Baseline-correct the signal
+                        signal_corrected = filtered_signal - baseline
+                        
                         # Find T-peak first (max in T segment)
                         t_peak_idx = t_search_start + np.argmax(np.abs(t_segment))
                         
-                        # Find FIRST point after T-peak where signal returns to baseline
-                        # Use tighter threshold: 0.1 * std (GE/Philips standard)
-                        post_t_segment = filtered_signal[t_peak_idx:t_search_end]
-                        if len(post_t_segment) > 0:
-                            t_end_candidates = np.where(np.abs(post_t_segment - baseline) < 0.1 * std_height)[0]
-                            if len(t_end_candidates) > 0:
-                                # Use FIRST candidate after T-peak, not last
-                                t_end = t_peak_idx + t_end_candidates[0]
-                            else:
-                                # Fallback: use T-peak + estimated T duration (typically 100-200ms)
-                                t_end = t_peak_idx + int(0.15 * fs)  # 150ms after T-peak
-                            
-                            qt_ms = (t_end - q_point) / fs * 1000.0
+                        # Use tangent method to find T-end (CRITICAL FIX)
+                        t_end_idx = detect_t_wave_end_tangent_method(
+                            signal_corrected, 
+                            t_peak_idx, 
+                            t_search_end, 
+                            fs, 
+                            tp_baseline=0.0  # Already baseline-corrected
+                        )
+                        
+                        if t_end_idx is not None:
+                            # Calculate QT interval
+                            qt_ms = (t_end_idx - q_point) / fs * 1000.0
                             if 200 <= qt_ms <= 600:  # Reasonable QT interval
                                 qt_intervals.append(qt_ms)
                         else:
-                            # No T-segment found, skip this beat
-                            continue
-                except Exception:
+                            # Fallback: use T-peak + estimated T duration
+                            t_end = t_peak_idx + int(0.15 * fs)  # 150ms after T-peak
+                            qt_ms = (t_end - q_point) / fs * 1000.0
+                            if 200 <= qt_ms <= 600:
+                                qt_intervals.append(qt_ms)
+                    else:
+                        # No T-segment found, skip this beat
+                        continue
+                except Exception as e:
+                    print(f" Error calculating QT for beat: {e}")
                     continue
                 
             if qt_intervals:
                 return int(round(np.mean(qt_intervals)))
             
             return 0
-        except:
+        except Exception as e:
+            print(f" Error in calculate_qt_interval: {e}")
             return 0
 
     def calculate_qtc_interval(self, heart_rate, qt_interval):
@@ -6618,10 +6636,31 @@ class ECGTestPage(QWidget):
                 widget.setParent(None)
 
     def show_sequential_view(self):
-        from ecg.lead_sequential_view import LeadSequentialView
-        win = LeadSequentialView(self.leads, self.data, buffer_size=500)
-        win.show()
-        self._sequential_win = win
+        """
+        Open sequential 12‑lead view window.
+        Import is wrapped in try/except so the dashboard keeps working even if the
+        optional module is missing on a given install.
+        """
+        try:
+            from ecg.lead_sequential_view import LeadSequentialView
+        except Exception as e:
+            QMessageBox.warning(
+                self,
+                "Sequential View Unavailable",
+                f"The sequential view module could not be loaded.\n\nDetails: {e}"
+            )
+            return
+
+        try:
+            win = LeadSequentialView(self.leads, self.data, buffer_size=500)
+            win.show()
+            self._sequential_win = win
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Sequential View Error",
+                f"Failed to open sequential view window.\n\nDetails: {e}"
+            )
 
     # ------------------------------------ 12 leads overlay --------------------------------------------
 
@@ -7855,11 +7894,16 @@ class ECGTestPage(QWidget):
                         if i < len(self.data):
                             raw = np.asarray(self.data[i])
                             
-                            # --- PIPELINE STEP 1: 50Hz Notch Filter ---
+                            # --- PIPELINE STEP 1: Optional 50/60 Hz AC filter (respect Set Filter) ---
                             try:
-                                if len(raw) > 30: # Only filter if enough data
-                                    raw = filtfilt(self.b_notch, self.a_notch, raw)
-                            except Exception as e:
+                                from ecg.ecg_filters import apply_ac_filter
+                                ac_setting = None
+                                if hasattr(self, "settings_manager"):
+                                    ac_setting = str(self.settings_manager.get_setting("filter_ac", "50")).strip()
+                                if ac_setting in ("50", "60") and len(raw) > 30:
+                                    raw = apply_ac_filter(raw, float(fs), ac_setting)
+                            except Exception:
+                                # On any error, fall back to unfiltered raw so display never breaks
                                 pass
                             
                             # --- PIPELINE STEP 2: Gaussian Smoothing ---
@@ -7910,6 +7954,14 @@ class ECGTestPage(QWidget):
                                     fs = float(self.sampler.sampling_rate)
                                 except Exception:
                                     fs = 500
+                            # Trim small margins from both ends to reduce filter edge artefacts
+                            try:
+                                edge_trim = int(0.2 * fs)  # ~200ms on each side at 500 Hz
+                                if len(raw) > 2 * edge_trim:
+                                    raw = raw[edge_trim:-edge_trim]
+                            except Exception:
+                                pass
+
                             window_len = int(max(50, min(len(raw), seconds_to_show * fs)))
                             
                             # Handle Display Mode: Scroll vs Sweep
@@ -8302,17 +8354,40 @@ class ECGTestPage(QWidget):
                                 # Fallback: use original signal (baseline anchor handles it, no mean subtraction)
                                 pass  # Silently handle errors to avoid console spam
                             
-                            # Optional AC notch filtering based on "Set Filter" selection.
-                            # Keeps wave peaks intact while removing 50/60 Hz power noise for machine serial data.
-
-                            # --- PIPELINE STEP 1: 50Hz Notch Filter (Standalone) ---
-                            # Matches standalone_ecg_plot.py configuration (w0=50.0, Q=30.0)
+                            # ---------------- DISPLAY FILTERS (match 12:1 / 6:2 overlays) ----------------
+                            # Apply EMG first, then AC (unless EMG cutoff is so low it would suppress AC),
+                            # so "muscular" filtering behaves the same in the 12‑box grid and overlays.
+                            emg_applied = False
+                            emg_suppresses_ac = False
                             try:
-                                if len(filtered_slice) > 30:
-                                    filtered_slice = filtfilt(self.b_notch, self.a_notch, filtered_slice)
+                                from ecg.ecg_filters import apply_emg_filter
+                                emg_setting = None
+                                if hasattr(self, "settings_manager"):
+                                    emg_setting = str(self.settings_manager.get_setting("filter_emg", "150")).strip()
+                                if emg_setting and emg_setting.lower() != "off" and len(filtered_slice) >= 10:
+                                    filtered_slice = apply_emg_filter(filtered_slice, float(self.SAMPLE_RATE), emg_setting)
+                                    emg_applied = True
+                                    try:
+                                        if float(emg_setting) < 60:
+                                            emg_suppresses_ac = True
+                                    except Exception:
+                                        pass
                             except Exception:
+                                # Keep display running even if EMG filter fails
                                 pass
-                            # -------------------------------------------------------
+
+                            # Optional AC notch filtering based on "Set Filter" selection.
+                            # Keeps wave peaks intact while removing 50/60 Hz power line noise.
+                            try:
+                                from ecg.ecg_filters import apply_ac_filter
+                                ac_setting = None
+                                if hasattr(self, "settings_manager"):
+                                    ac_setting = str(self.settings_manager.get_setting("filter_ac", "50")).strip()
+                                if (not emg_applied or not emg_suppresses_ac) and ac_setting in ("50", "60") and len(filtered_slice) > 30:
+                                    filtered_slice = apply_ac_filter(filtered_slice, float(self.SAMPLE_RATE), ac_setting)
+                            except Exception:
+                                # If anything fails, fall back to unfiltered slice so UI never crashes
+                                pass
                             
                             # Apply wave gain to zero-centered signal (only amplifies variations, baseline stays at zero)
                             gain_factor = get_display_gain(self.settings_manager.get_wave_gain())
@@ -8351,6 +8426,14 @@ class ECGTestPage(QWidget):
                             # --- PIPELINE STEP 3: Interpolation (Standalone) ---
                             try:
                                 scaled_data = self.interpolate(scaled_data, self.INTERP_FACTOR)
+                            except Exception:
+                                pass
+
+                            # Trim small margins from both ends to reduce filter edge artefacts
+                            try:
+                                edge_trim = int(0.2 * self.SAMPLE_RATE)  # ~200ms on each side at 500 Hz
+                                if len(scaled_data) > 2 * edge_trim:
+                                    scaled_data = scaled_data[edge_trim:-edge_trim]
                             except Exception:
                                 pass
 
