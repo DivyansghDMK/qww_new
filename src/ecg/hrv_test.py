@@ -580,15 +580,8 @@ class HRVTestWindow(QWidget):
                     self.data = np.roll(self.data, -1)
                     self.data[-1] = lead_value
                     
-                    # Keep sampling rate in sync with dashboard logic (packet‑based estimation)
-                    if self.ecg_calculator and hasattr(self.ecg_calculator, "sampler") and self.ecg_calculator.sampler:
-                        try:
-                            sr = self.ecg_calculator.sampler.add_sample()
-                            # Only update if a valid new rate is returned (don't reset to 0)
-                            if sr and sr > 0:
-                                self.sampling_rate = sr
-                        except Exception:
-                            pass
+                    # Fixed sampling rate for medical device (do not estimate from packet timing)
+                    self.sampling_rate = 500.0
                     
                     # Store data point with timestamp for final report generation
                     elapsed = time.time() - self.start_time
@@ -961,98 +954,45 @@ class HRVTestWindow(QWidget):
                 print(f" Error in signal filtering: {e}, using unfiltered signal")
                 signal = np.array([d['value'] for d in self.captured_data], dtype=float)
 
-            # Detect R‑peaks using robust parameters (same strategy as 12-lead test)
-            signal_mean = np.mean(signal)
             signal_std = np.std(signal)
             if signal_std == 0:
                 return None
-            
-            height_threshold = signal_mean + 0.5 * signal_std
-            prominence_threshold = signal_std * 0.4
-            
-            # Use adaptive peak detection with multiple strategies
-            detection_results = []
-            
-            # Strategy 1: Conservative (best for 40-120 BPM)
-            peaks_conservative, _ = find_peaks(
+            peaks, _ = find_peaks(
                 signal,
-                height=height_threshold,
-                distance=int(0.5 * fs),  # 400ms - wider distance for low BPM
-                prominence=prominence_threshold
+                distance=int(0.25 * fs),
+                prominence=signal_std * 0.6
             )
-            if len(peaks_conservative) >= 2:
-                rr_cons = np.diff(peaks_conservative) * (1000.0 / fs)
-                valid_cons = rr_cons[(rr_cons >= 200) & (rr_cons <= 2000)]
-                if len(valid_cons) > 0:
-                    bpm_cons = 60000 / np.median(valid_cons)
-                    std_cons = np.std(valid_cons)
-                    detection_results.append(('conservative', peaks_conservative, bpm_cons, std_cons))
-            
-            # Strategy 2: Normal (best for 100-180 BPM)
-            peaks_normal, _ = find_peaks(
-                signal,
-                height=height_threshold,
-                distance=int(0.3 * fs),  # 240ms - medium distance
-                prominence=prominence_threshold
-            )
-            if len(peaks_normal) >= 2:
-                rr_norm = np.diff(peaks_normal) * (1000.0 / fs)
-                valid_norm = rr_norm[(rr_norm >= 200) & (rr_norm <= 2000)]
-                if len(valid_norm) > 0:
-                    bpm_norm = 60000 / np.median(valid_norm)
-                    std_norm = np.std(valid_norm)
-                    detection_results.append(('normal', peaks_normal, bpm_norm, std_norm))
-            
-            # Strategy 3: Tight (best for 160-300 BPM)
-            peaks_tight, _ = find_peaks(
-                signal,
-                height=height_threshold,
-                distance=int(0.2 * fs),  # 160ms - tight distance for high BPM
-                prominence=prominence_threshold
-            )
-            if len(peaks_tight) >= 2:
-                rr_tight = np.diff(peaks_tight) * (1000.0 / fs)
-                valid_tight = rr_tight[(rr_tight >= 200) & (rr_tight <= 2000)]
-                if len(valid_tight) > 0:
-                    bpm_tight = 60000 / np.median(valid_tight)
-                    std_tight = np.std(valid_tight)
-                    detection_results.append(('tight', peaks_tight, bpm_tight, std_tight))
-            
-            # Select best detection based on consistency (lowest std deviation)
-            if detection_results:
-                detection_results.sort(key=lambda x: x[3])  # Sort by std
-                best_method, peaks, best_bpm, best_std = detection_results[0]
-            else:
-                # Fallback to conservative parameters
-                peaks, _ = find_peaks(
-                    signal,
-                    height=height_threshold,
-                    distance=int(0.4 * fs),
-                    prominence=prominence_threshold
-                )
 
             if len(peaks) < 3:
                 return None
 
+            # Proceed with detected peaks directly
+
             # R‑R intervals in milliseconds
             rr_intervals = np.diff(peaks) * (1000.0 / fs)
 
-            # Keep physiologically reasonable intervals (200–2000 ms => 300–30 BPM)
-            # Matching the range used in 12-lead test for consistency
-            valid_rr = rr_intervals[(rr_intervals >= 200.0) & (rr_intervals <= 2000.0)]
-            if valid_rr.size < 2:
+            rr = rr_intervals[(rr > 300.0) & (rr < 1500.0)]
+            print(rr[:50])
+            print(np.abs(np.diff(rr))[:50])
+            if rr.size < 2:
                 return None
 
-            # Successive differences of RR intervals
-            diff_rr = np.diff(valid_rr)
-            if diff_rr.size == 0:
+            median_rr = np.median(rr)
+            mask = np.abs(rr - median_rr) < 0.2 * median_rr
+            rr_clean = rr[mask]
+            if rr_clean.size < 2:
+                return None
+            rr_diff = np.abs(np.diff(rr_clean))
+            rr_final = rr_clean[1:][rr_diff < 100.0]
+            if rr_final.size < 2:
                 return None
 
-            mean_rr_ms = float(np.mean(valid_rr))
-            sdnn_ms = float(np.std(valid_rr))
+            diff_rr = np.diff(rr_final)
+            mean_rr_ms = float(np.mean(rr_final))
+            sdnn_ms = float(np.std(rr_final, ddof=1))
             rmssd_ms = float(np.sqrt(np.mean(diff_rr ** 2)))
             nn50 = int(np.sum(np.abs(diff_rr) > 50.0))
-            pnn50 = float((nn50 / diff_rr.size) * 100.0) if diff_rr.size > 0 else 0.0
+            pnn50 = float((nn50 / len(diff_rr)) * 100.0) if len(diff_rr) > 0 else 0.0
 
             return {
                 "mean_rr_ms": mean_rr_ms,
@@ -1080,18 +1020,8 @@ class HRVTestWindow(QWidget):
             return
         
         try:
-            # Use the SAME sampling‑rate source as the 12‑lead ECG page:
-            # SamplingRateCalculator inside ecg_calculator, updated in update_plot()
-            # Default to 500.0 Hz (Windows/Standard hardware default) for better robustness
             current_fs = 500.0
-            if self.ecg_calculator and hasattr(self.ecg_calculator, "sampler") and self.ecg_calculator.sampler:
-                try:
-                    fs = float(getattr(self.ecg_calculator.sampler, "sampling_rate", 0) or 0)
-                    if 40.0 <= fs <= 1000.0:
-                        current_fs = fs
-                        self.sampling_rate = fs
-                except Exception:
-                    pass
+            self.sampling_rate = 500.0
             
             if self.ecg_calculator:
                 # Ensure the calculator's sampler is in sync
@@ -1173,4 +1103,3 @@ class HRVTestWindow(QWidget):
                 event.ignore()
         else:
             event.accept()
-

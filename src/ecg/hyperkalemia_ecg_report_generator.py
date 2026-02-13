@@ -978,9 +978,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
         saved_data_file_path = ecg_data_file
         saved_ecg_data = load_ecg_data_from_file(ecg_data_file)
         if saved_ecg_data:
-            # Override sampling rate from saved data
-            saved_sampling_rate = saved_ecg_data.get('sampling_rate', computed_sampling_rate)
-            computed_sampling_rate = int(saved_sampling_rate)
+            computed_sampling_rate = 500
             print(f" Using sampling rate from provided file: {computed_sampling_rate} Hz")
     elif ecg_test_page and hasattr(ecg_test_page, 'data'):
         # ALWAYS save current data to file before generating report (REQUIRED for calculation-based beats)
@@ -989,8 +987,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
         if saved_data_file_path:
             saved_ecg_data = load_ecg_data_from_file(saved_data_file_path)
             if saved_ecg_data:
-                saved_sampling_rate = saved_ecg_data.get('sampling_rate', computed_sampling_rate)
-                computed_sampling_rate = int(saved_sampling_rate)
+                computed_sampling_rate = 500
                 print(f" Using sampling rate from saved file: {computed_sampling_rate} Hz")
             else:
                 print(" Warning: Could not load saved ECG data file")

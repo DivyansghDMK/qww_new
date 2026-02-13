@@ -203,7 +203,7 @@ def save_ecg_data_to_file(ecg_test_page, output_file=None):
     
     saved_data = {
         "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        "sampling_rate": 80.0,  # Default, will be updated if available
+        "sampling_rate": 500.0,
         "leads": {}
     }
     
@@ -276,7 +276,7 @@ def save_ecg_data_to_file(ecg_test_page, output_file=None):
         print(f" Buffer analysis: Max samples={max_samples}, Min samples={min_samples}")
         
         # Calculate expected samples for 13.2s window at current sampling rate
-        sampling_rate = saved_data.get("sampling_rate", 80.0)
+        sampling_rate = saved_data.get("sampling_rate", 500.0)
         expected_samples_for_13_2s = int(13.2 * sampling_rate)
         
         if max_samples < expected_samples_for_13_2s:
@@ -307,7 +307,7 @@ def load_ecg_data_from_file(file_path):
     
     Example:
         data = load_ecg_data_from_file('reports/ecg_data/ecg_data_20241119_143022.json')
-        # Returns: {'leads': {'I': [...], 'II': [...]}, 'sampling_rate': 80.0, ...}
+        # Returns: {'leads': {'I': [...], 'II': [...]}, 'sampling_rate': 500.0, ...}
     """
     try:
         with open(file_path, 'r') as f:
@@ -321,7 +321,7 @@ def load_ecg_data_from_file(file_path):
         
         print(f" Loaded ECG data from: {file_path}")
         print(f"   Leads loaded: {list(data.get('leads', {}).keys())}")
-        print(f"   Sampling rate: {data.get('sampling_rate', 80.0)} Hz")
+        print(f"   Sampling rate: {data.get('sampling_rate', 500.0)} Hz")
         return data
     except Exception as e:
         print(f" Error loading ECG data: {e}")
@@ -344,18 +344,6 @@ def calculate_time_window_from_bpm_and_wave_speed(hr_bpm, wave_speed_mm_s, desir
         - Beats = (BPM / 60) × time_window
         - Final window clamped maximum 20 seconds (NO minimum clamp)
     
-    Examples:
-        # Example 1: BPM 80, wave_speed 12.5 mm/s
-        #   Time window: 165 / 12.5 = 13.2 seconds
-        #   Beats: (80/60) × 13.2 = 1.33 × 13.2 = 17.6 ≈ 18 beats
-        
-        # Example 2: BPM 80, wave_speed 25 mm/s
-        #   Time window: 165 / 25 = 6.6 seconds
-        #   Beats: (80/60) × 6.6 = 1.33 × 6.6 = 8.8 ≈ 9 beats
-        
-        # Example 3: BPM 80, wave_speed 50 mm/s
-        #   Time window: 165 / 50 = 3.3 seconds
-        #   Beats: (80/60) × 3.3 = 1.33 × 3.3 = 4.4 ≈ 4 beats
     
     Returns: (time_window_seconds, num_samples)
     """
@@ -369,8 +357,8 @@ def calculate_time_window_from_bpm_and_wave_speed(hr_bpm, wave_speed_mm_s, desir
     # Only clamp maximum to 20 seconds (NO minimum clamp)
     calculated_time_window = min(calculated_time_window, 20.0)
     
-    # Calculate number of samples (assuming 80 Hz default, will be adjusted by actual sampling rate)
-    num_samples = int(calculated_time_window * 80.0)  # Will be recalculated with actual sampling rate
+    # Calculate number of samples (assuming 500 Hz default)
+    num_samples = int(calculated_time_window * 500.0)
     
     # Calculate expected beats: beats = (BPM / 60) × time_window
     # Formula: beats per second = BPM / 60, then multiply by time window
@@ -383,7 +371,7 @@ def calculate_time_window_from_bpm_and_wave_speed(hr_bpm, wave_speed_mm_s, desir
     print(f"   Time Window: {ecg_graph_width_mm:.2f} / {effective_wave_speed_mm_s:.2f} = {calculated_time_window:.2f}s")
     print(f"   BPM: {hr_bpm} → Beats per second: {hr_bpm}/60 = {beats_per_second:.2f} beats/sec")
     print(f"   Expected Beats: {beats_per_second:.2f} × {calculated_time_window:.2f} = {expected_beats:.1f} beats")
-    print(f"   Estimated Samples: {num_samples} (at 80Hz)")
+    print(f"   Estimated Samples: {num_samples} (at 500Hz)")
     
     return calculated_time_window, num_samples
 
@@ -3814,4 +3802,3 @@ def generate_ecg_report(
 #     
 #     # Generate report
 #     generate_ecg_report("test_ecg_report.pdf")
-

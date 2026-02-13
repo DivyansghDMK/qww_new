@@ -70,14 +70,20 @@ def save_ecg_data_to_file(ecg_test_page, output_file=None):
     
     saved_data = {
         "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        "sampling_rate": 80.0,  # Default, will be updated if available
+        "sampling_rate": 500.0,
         "leads": {}
     }
     
     # Get sampling rate if available
     if hasattr(ecg_test_page, 'sampler') and hasattr(ecg_test_page.sampler, 'sampling_rate'):
         if ecg_test_page.sampler.sampling_rate:
-            saved_data["sampling_rate"] = float(ecg_test_page.sampler.sampling_rate)
+            try:
+                sampled_rate = float(ecg_test_page.sampler.sampling_rate)
+                if sampled_rate < 50.0 or sampled_rate > 1000.0:
+                    sampled_rate = 500.0
+                saved_data["sampling_rate"] = sampled_rate
+            except Exception:
+                saved_data["sampling_rate"] = 500.0
     
     # Save each lead's data - use FULL buffer (ecg_buffers if available, otherwise data)
     # Priority: Use ecg_buffers (5000 samples) if available, otherwise use data (1000 samples)
@@ -139,7 +145,7 @@ def save_ecg_data_to_file(ecg_test_page, output_file=None):
         print(f"📊 Buffer analysis: Max samples={max_samples}, Min samples={min_samples}")
         
         # Calculate expected samples for 13.2s window at current sampling rate
-        sampling_rate = saved_data.get("sampling_rate", 80.0)
+        sampling_rate = saved_data.get("sampling_rate", 500.0)
         expected_samples_for_13_2s = int(13.2 * sampling_rate)
         
         if max_samples < expected_samples_for_13_2s:
@@ -170,7 +176,7 @@ def load_ecg_data_from_file(file_path):
     
     Example:
         data = load_ecg_data_from_file('reports/ecg_data/ecg_data_20241119_143022.json')
-        # Returns: {'leads': {'I': [...], 'II': [...]}, 'sampling_rate': 80.0, ...}
+            # Returns: {'leads': {'I': [...], 'II': [...]}, 'sampling_rate': 500.0, ...}
     """
     try:
         with open(file_path, 'r') as f:
@@ -184,7 +190,7 @@ def load_ecg_data_from_file(file_path):
         
         print(f" Loaded ECG data from: {file_path}")
         print(f"   Leads loaded: {list(data.get('leads', {}).keys())}")
-        print(f"   Sampling rate: {data.get('sampling_rate', 80.0)} Hz")
+        print(f"   Sampling rate: {data.get('sampling_rate', 500.0)} Hz")
         return data
     except Exception as e:
         print(f" Error loading ECG data: {e}")
@@ -207,18 +213,6 @@ def calculate_time_window_from_bpm_and_wave_speed(hr_bpm, wave_speed_mm_s, desir
         - Beats = (BPM / 60) × time_window
         - Final window clamped maximum 20 seconds (NO minimum clamp)
     
-    Examples:
-        # Example 1: BPM 80, wave_speed 12.5 mm/s
-        #   Time window: 165 / 12.5 = 13.2 seconds
-        #   Beats: (80/60) × 13.2 = 1.33 × 13.2 = 17.6 ≈ 18 beats
-        
-        # Example 2: BPM 80, wave_speed 25 mm/s
-        #   Time window: 165 / 25 = 6.6 seconds
-        #   Beats: (80/60) × 6.6 = 1.33 × 6.6 = 8.8 ≈ 9 beats
-        
-        # Example 3: BPM 80, wave_speed 50 mm/s
-        #   Time window: 165 / 50 = 3.3 seconds
-        #   Beats: (80/60) × 3.3 = 1.33 × 3.3 = 4.4 ≈ 4 beats
     
     Returns: (time_window_seconds, num_samples)
     """
@@ -231,8 +225,8 @@ def calculate_time_window_from_bpm_and_wave_speed(hr_bpm, wave_speed_mm_s, desir
     # Only clamp maximum to 20 seconds (NO minimum clamp)
     calculated_time_window = min(calculated_time_window, 20.0)
     
-    # Calculate number of samples (assuming 80 Hz default, will be adjusted by actual sampling rate)
-    num_samples = int(calculated_time_window * 80.0)  # Will be recalculated with actual sampling rate
+    # Calculate number of samples (assuming 500 Hz default)
+    num_samples = int(calculated_time_window * 500.0)
     
     # Calculate expected beats: beats = (BPM / 60) × time_window
     # Formula: beats per second = BPM / 60, then multiply by time window
@@ -245,7 +239,7 @@ def calculate_time_window_from_bpm_and_wave_speed(hr_bpm, wave_speed_mm_s, desir
     print(f"   Time Window: 165 / {wave_speed_mm_s} = {calculated_time_window:.2f}s")
     print(f"   BPM: {hr_bpm} → Beats per second: {hr_bpm}/60 = {beats_per_second:.2f} beats/sec")
     print(f"   Expected Beats: {beats_per_second:.2f} × {calculated_time_window:.2f} = {expected_beats:.1f} beats")
-    print(f"   Estimated Samples: {num_samples} (at 80Hz)")
+    print(f"   Estimated Samples: {num_samples} (at 500Hz)")
     
     return calculated_time_window, num_samples
 
@@ -932,8 +926,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     wave_speed_mm_s = _safe_float(wave_speed_setting, 25.0)  # Default: 25.0 mm/s
     wave_gain_mm_mv = _safe_float(wave_gain_setting, 10.0)   # Default: 10.0 mm/mV
     print(f" Using wave_speed from ecg_settings.json: {wave_speed_mm_s} mm/s (for calculation-based beats)")
-    computed_sampling_rate = int(150 * (wave_speed_mm_s / 25.0)) if wave_speed_mm_s > 0 else 150
-    computed_sampling_rate = max(80, min(computed_sampling_rate, 400))
+    computed_sampling_rate = 500
 
     data["wave_speed_mm_s"] = wave_speed_mm_s
     data["wave_gain_mm_mv"] = wave_gain_mm_mv
@@ -958,9 +951,8 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
         saved_ecg_data = load_ecg_data_from_file(ecg_data_file)
         if saved_ecg_data:
             # Override sampling rate from saved data
-            saved_sampling_rate = saved_ecg_data.get('sampling_rate', computed_sampling_rate)
-            computed_sampling_rate = int(saved_sampling_rate)
-            print(f" Using sampling rate from provided file: {computed_sampling_rate} Hz")
+            computed_sampling_rate = 500
+            print(f" Using sampling rate from provided file: {computed_sampling_rate} Hz (forced)")
     elif ecg_test_page and hasattr(ecg_test_page, 'data'):
         # ALWAYS save current data to file before generating report (REQUIRED for calculation-based beats)
         print(" Saving ECG data to file (required for calculation-based beats)...")
@@ -968,9 +960,8 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
         if saved_data_file_path:
             saved_ecg_data = load_ecg_data_from_file(saved_data_file_path)
             if saved_ecg_data:
-                saved_sampling_rate = saved_ecg_data.get('sampling_rate', computed_sampling_rate)
-                computed_sampling_rate = int(saved_sampling_rate)
-                print(f" Using sampling rate from saved file: {computed_sampling_rate} Hz")
+                computed_sampling_rate = 500
+                print(f" Using sampling rate from saved file: {computed_sampling_rate} Hz (forced)")
             else:
                 print(" Warning: Could not load saved ECG data file")
         else:
@@ -2861,7 +2852,9 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     # Calculate average Heart Rate from 5 minutes of data (to use in report)
     hr_per_minute_for_report = []
     segment_duration = 11.0  # Same as ECG graphs: 11 seconds per strip
-    num_segments = 5  # Always 5 strips
+    import math
+    total_duration_pre = max(d['time'] for d in captured_data) if captured_data else 0
+    num_segments = max(1, min(5, int(math.ceil(total_duration_pre / 60.0))))
     
     # Helper function to calculate RR intervals from segment data
     def calculate_rr_from_segment_early(segment_data, sampling_rate=500.0):
@@ -2876,14 +2869,16 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
                 return None, None, []
             
             values_norm = (values - np.mean(values)) / (np.std(values) + 1e-6)
-            min_distance = int(0.4 * sampling_rate)
+            seg_duration = (segment_data[-1]['time'] - segment_data[0]['time']) if len(segment_data) > 1 else 60.0
+            sr_dynamic = sampling_rate
+            min_distance = int(0.25 * sr_dynamic)
             peaks, _ = find_peaks(values_norm, distance=min_distance, height=0.3)
             
             if len(peaks) < 2:
                 return None, None, []
             
-            rr_intervals = np.diff(peaks) * (1000.0 / sampling_rate)
-            rr_intervals = rr_intervals[(rr_intervals > 300) & (rr_intervals < 2000)]
+            rr_intervals = np.diff(peaks) * (1000.0 / sr_dynamic)
+            rr_intervals = rr_intervals[(rr_intervals > 250) & (rr_intervals < 2000)]
             
             if len(rr_intervals) == 0:
                 return None, None, []
@@ -2896,14 +2891,7 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
             return None, None, []
     
     # Get sampling rate from settings
-    sampling_rate = 500.0  # Default
-    if settings_manager:
-        try:
-            wave_speed = float(settings_manager.get_setting("wave_speed", "25"))
-            computed_sampling_rate = int(150 * (wave_speed / 25.0)) if wave_speed > 0 else 150
-            sampling_rate = max(80, min(computed_sampling_rate, 400))
-        except Exception:
-            pass
+    sampling_rate = 500.0
     
     # Calculate HR for each minute AND collect average RR per minute
     avg_rr_per_minute = []  # Collect average RR for each of the 5 minutes
@@ -2911,11 +2899,8 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
         for seg_idx in range(num_segments):
             minute_start = seg_idx * 60.0
             seg_start = minute_start
-            seg_end = minute_start + segment_duration
+            seg_end = minute_start + 60.0
             seg_data = [d for d in captured_data if seg_start <= d['time'] < seg_end]
-            
-            if len(seg_data) > 6400:
-                seg_data = seg_data[:6400]
             
             if len(seg_data) > 100:
                 avg_rr, hr_val, rr_intervals_list = calculate_rr_from_segment_early(seg_data, sampling_rate)
@@ -2924,42 +2909,38 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
                     # Collect average RR for this minute (not all individual intervals)
                     avg_rr_per_minute.append(avg_rr)
                 else:
-                    hr_per_minute_for_report.append(data.get('HR_avg', 80))
+                    hr_per_minute_for_report.append(data.get('HR_avg', ))
                     # Use fallback RR value
-                    fallback_rr = 60000 / data.get('HR_avg', 80) if data.get('HR_avg', 80) > 0 else 750
+                    fallback_rr = 60000 / data.get('HR_avg', ) if data.get('HR_avg', ) > 0 else 750
                     avg_rr_per_minute.append(fallback_rr)
             else:
-                hr_per_minute_for_report.append(data.get('HR_avg', 80))
+                hr_per_minute_for_report.append(data.get('HR_avg', ))
                 # Use fallback RR value
-                fallback_rr = 60000 / data.get('HR_avg', 80) if data.get('HR_avg', 80) > 0 else 750
+                fallback_rr = 60000 / data.get('HR_avg', ) if data.get('HR_avg', ) > 0 else 750
                 avg_rr_per_minute.append(fallback_rr)
     else:
         # Use default if no data
         hr_per_minute_for_report = [data.get('HR_avg', 80)] * 5
-        fallback_rr = 60000 / data.get('HR_avg', 80) if data.get('HR_avg', 80) > 0 else 750
+        fallback_rr = 60000 / data.get('HR_avg', 80) if data.get('HR_avg', ) > 0 else 750
         avg_rr_per_minute = [fallback_rr] * 5
     
-    # Ensure we have 5 values
-    while len(hr_per_minute_for_report) < 5:
-        hr_per_minute_for_report.append(data.get('HR_avg', 80))
-        fallback_rr = 60000 / data.get('HR_avg', 80) if data.get('HR_avg', 80) > 0 else 750
-        avg_rr_per_minute.append(fallback_rr)
+    # Use available minutes only (no padding to 5)
     
-    # NEW CALCULATION: HR = 300000 / sum_of_avg_rr_per_minute
-    # Sum of 5 average RR values (one per minute)
-    if len(avg_rr_per_minute) >= 5:
-        sum_of_avg_rr = sum(avg_rr_per_minute[:5])  # Sum of 5 average RR values
-        # 5 minutes = 300 seconds = 300000 milliseconds
-        avg_hr_from_5_minutes = 300000 / sum_of_avg_rr if sum_of_avg_rr > 0 else data.get('HR_avg')
+    # NEW CALCULATION: HR = (N * 60000) / sum_of_avg_rr_per_minute
+    # N = number of available minutes
+    if len(avg_rr_per_minute) >= 1:
+        sum_of_avg_rr = sum(avg_rr_per_minute)  # Sum of available average RR values
+        minutes_count = len(avg_rr_per_minute)
+        avg_hr_from_5_minutes = (minutes_count * 60000) / sum_of_avg_rr if sum_of_avg_rr > 0 else data.get('HR_avg')
         
         print(f"📊 HRV-Specific Heart Rate Calculation (NEW METHOD - 300000 / sum of avg RR per minute):")
         print(f"   Original HR_bpm from metrics.json (12-lead ECG): {original_hr_bpm_from_metrics} bpm (NOT CHANGED)")
         print(f"   ─────────────────────────────────────────────────────────────")
-        print(f"   Average RR per minute: {[round(r, 1) for r in avg_rr_per_minute[:5]]} ms")
-        print(f"   Sum of 5 average RR values: {sum_of_avg_rr:.2f} ms")
+        print(f"   Average RR per minute: {[round(r, 1) for r in avg_rr_per_minute]} ms")
+        print(f"   Sum of {minutes_count} average RR values: {sum_of_avg_rr:.2f} ms")
         print(f"   ─────────────────────────────────────────────────────────────")
-        print(f"   NEW Formula: HR = 300000 / sum_of_avg_rr_per_minute")
-        print(f"   Calculation: 300000 / {sum_of_avg_rr:.2f} = {avg_hr_from_5_minutes:.2f} bpm")
+        print(f"   NEW Formula: HR = ({minutes_count} * 60000) / sum_of_avg_rr_per_minute")
+        print(f"   Calculation: ({minutes_count}*60000) / {sum_of_avg_rr:.2f} = {avg_hr_from_5_minutes:.2f} bpm")
         print(f"   ─────────────────────────────────────────────────────────────")
         print(f"   Per-minute HR values (for reference):")
         for i, hr_val in enumerate(hr_per_minute_for_report):
@@ -2969,9 +2950,10 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
         print(f"   ✅ Original 12-lead ECG HR_bpm: {original_hr_bpm_from_metrics} bpm (saved as Original_HR_bpm for reference)\n")
     else:
         # Fallback to old method if no average RR values found
-        if len(avg_rr_per_minute) >= 5:
-            sum_of_avg_rr = sum(avg_rr_per_minute[:5])
-            avg_hr_from_5_minutes = 300000 / sum_of_avg_rr if sum_of_avg_rr > 0 else data.get('HR_avg', 80)
+        if len(avg_rr_per_minute) >= 1:
+            sum_of_avg_rr = sum(avg_rr_per_minute)
+            minutes_count = len(avg_rr_per_minute)
+            avg_hr_from_5_minutes = (minutes_count * 60000) / sum_of_avg_rr if sum_of_avg_rr > 0 else data.get('HR_avg', 80)
         else:
             avg_hr_from_5_minutes = np.mean(hr_per_minute_for_report) if len(hr_per_minute_for_report) > 0 else data.get('HR_avg', 80)
         print(f"⚠️ Using fallback method: {avg_hr_from_5_minutes:.2f} bpm")
@@ -2981,7 +2963,7 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
             print(f"   Min {i+1}: {hr_val:.2f} bpm")
         print(f"   ─────────────────────────────────────────────────────────────")
         print(f"   HRV Average HR (fallback): {avg_hr_from_5_minutes:.2f} bpm")
-        print(f"   Calculation: ({hr_per_minute_for_report[0]:.1f} + {hr_per_minute_for_report[1]:.1f} + {hr_per_minute_for_report[2]:.1f} + {hr_per_minute_for_report[3]:.1f} + {hr_per_minute_for_report[4]:.1f}) / 5 = {avg_hr_from_5_minutes:.2f} bpm")
+        print(f"   Calculation: mean(per-minute HR values) = {avg_hr_from_5_minutes:.2f} bpm")
         print(f"   ─────────────────────────────────────────────────────────────")
         print(f"   ✅ HRV-Specific BPM: {round(avg_hr_from_5_minutes)} bpm (WILL BE SAVED to metrics.json as HR_bpm)")
         print(f"   ✅ Original 12-lead ECG HR_bpm: {original_hr_bpm_from_metrics} bpm (saved as Original_HR_bpm for reference)\n")
@@ -3233,13 +3215,13 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     # First graph y=400 means top at 400+75=475, safely below settings at 490 (15pt gap)
     y_positions = [350, 270, 190, 110, 30]  # 5 graphs (80pt spacing) with proper spacing from params - SHIFTED DOWN 50 points total (25+25)
     
-    # 🎯 FIXED CONFIGURATION: Plot exactly 5,500 ADC samples per strip (first 11 seconds)
-    samples_per_strip = 6400  # FIXED: 6,400 ADC samples per strip
-    segment_duration = 11.0  # Target: 11 seconds per strip (first 11s of each minute)
+    # 🎯 Configuration: Fixed 6400 ADC samples per strip (device standard)
+    samples_per_strip = 6400
+    segment_duration = (samples_per_strip / float(sampling_rate)) if 'sampling_rate' in locals() else 11.0
     num_segments = 5  # Always 5 strips
     
     print(f"📊 HRV Report Configuration:")
-    print(f"   Samples per strip: {samples_per_strip} ADC samples")
+    print(f"   Samples per strip: {samples_per_strip} ADC samples (sampling_rate={sampling_rate} Hz)")
     print(f"   Duration per strip: {segment_duration}s (first 11 seconds)")
     print(f"   Total strips: {num_segments}")
      
@@ -3275,7 +3257,7 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
         # Filter data for this segment (first 10 seconds of each minute)
         full_segment_data = [d for d in captured_data if segment_start <= d['time'] < segment_end]
         
-        # LIMIT: Use only first 5,500 samples per strip
+        # LIMIT: Use only first N samples per strip based on sampling_rate
         if len(full_segment_data) > samples_per_strip:
             segment_data = full_segment_data[:samples_per_strip]
             print(f"📊 Strip {segment_idx + 1} ({int(segment_start)}s-{int(segment_end)}s): Plotting first {samples_per_strip} samples (trimmed from {len(full_segment_data)})")
@@ -3479,42 +3461,47 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     master_drawing.add(time_label)
     
     # ==================== VITAL PARAMETERS (LANDSCAPE MODE - 2 COLUMNS SIDE BY SIDE) ====================
-    # Page 1: Use HRV-specific average HR (5 minutes), but keep other metrics from metrics.json
-    # HR should match Page 1 (HRV-specific average from 5 minutes)
+    # Page 1 vitals: Use arithmetic averages from per-minute values (chart-aligned)
+    # RR_top = average of minute RR values
+    # HR_top = average of minute HR values derived from RR (60000/RR_i)
     if 'original_metrics_from_json' in locals() and original_metrics_from_json:
-        # Use HRV-specific average HR for Page 2 (same as Page 1)
-        if 'hrv_specific_bpm' in locals() and hrv_specific_bpm > 0:
-            HR = hrv_specific_bpm  # HRV-specific average (5 minutes)
-        else:
-            HR = original_metrics_from_json.get('HR', 0)
-        
         PR = original_metrics_from_json.get('PR', 0)
         QRS = original_metrics_from_json.get('QRS', 0)
         QT = original_metrics_from_json.get('QT', 0)
         QTc = original_metrics_from_json.get('QTc', 0)
         ST = original_metrics_from_json.get('ST', 0)
         
-        # Calculate RR from HRV-specific HR
-        if HR > 0:
-            RR = int(60000 / HR)
+        if 'avg_rr_per_minute' in locals() and isinstance(avg_rr_per_minute, list) and len(avg_rr_per_minute) > 0:
+            rr_count = len(avg_rr_per_minute)
+            rr_avg_float = (sum(avg_rr_per_minute) / rr_count)
+            rr_decimal = rr_avg_float - int(rr_avg_float)
+            RR = int(rr_avg_float) + 1 if rr_decimal >= 0.50 else int(rr_avg_float)
+            hr_values = [60000 / r for r in avg_rr_per_minute if r and r > 0]
+            HR = int(round(sum(hr_values) / len(hr_values))) if len(hr_values) > 0 else original_metrics_from_json.get('HR', 0)
         else:
-            RR = original_metrics_from_json.get('RR_ms', 0)
+            HR = original_metrics_from_json.get('HR', 0)
+            RR = original_metrics_from_json.get('RR_ms', int(60000 / HR) if HR else 0)
         
-        print(f"📊 Page 1 (ECG waves): HR={HR} bpm (HRV-specific average, 5 minutes) - Same as Page 1")
-        print(f"   Other metrics from metrics.json: PR={PR}, QRS={QRS}, QT={QT}, QTc={QTc}, ST={ST}, RR={RR}")
+        print(f"📊 Page 1 (ECG waves): HR={HR} bpm (arithmetic avg of per-minute HR)")
+        print(f"   RR={RR} ms (arithmetic avg of per-minute RR)")
+        print(f"   Other metrics from metrics.json: PR={PR}, QRS={QRS}, QT={QT}, QTc={QTc}, ST={ST}")
     else:
-        # Fallback to data values if original_metrics_from_json not available
-        if 'hrv_specific_bpm' in locals() and hrv_specific_bpm > 0:
-            HR = hrv_specific_bpm
-        else:
-            HR = data.get('HR_avg', 0)
         PR = data.get('PR', 0)
         QRS = data.get('QRS', 0)
         QT = data.get('QT', 0)
         QTc = data.get('QTc', 0)
         ST = data.get('ST', 0)
-        RR = int(60000 / HR) if HR and HR > 0 else 0
-        print(f"⚠️ Page 1 (ECG waves): Using fallback values - HR={HR} bpm")
+        if 'avg_rr_per_minute' in locals() and isinstance(avg_rr_per_minute, list) and len(avg_rr_per_minute) > 0:
+            rr_count = len(avg_rr_per_minute)
+            rr_avg_float = (sum(avg_rr_per_minute) / rr_count)
+            rr_decimal = rr_avg_float - int(rr_avg_float)
+            RR = int(rr_avg_float) + 1 if rr_decimal >= 0.50 else int(rr_avg_float)
+            hr_values = [60000 / r for r in avg_rr_per_minute if r and r > 0]
+            HR = int(round(sum(hr_values) / len(hr_values))) if len(hr_values) > 0 else data.get('HR_avg', 0)
+        else:
+            HR = data.get('HR_avg', 0)
+            RR = int(60000 / HR) if HR and HR > 0 else 0
+        print(f"⚠️ Page 1 (ECG waves): Using arithmetic averages - HR={HR} bpm, RR={RR} ms")
     
     # LEFT COLUMN (130, y) - HR, PR, QRS, RR (SHIFTED UP BY 20 POINTS)
     _add_label_column(
@@ -3653,10 +3640,11 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     # ==================== TIME DOMAIN ANALYSIS CONTAINER ====================
     
     # Calculate per-minute RR intervals and HR for bar charts
-    # 🎯 CONSISTENCY: Use same configuration as ECG graphs (5,500 samples, 11 seconds)
-    segment_duration = 11.0  # Same as ECG graphs: 11 seconds per strip
+    # 🎯 Minutes available based on captured duration
+    import math
+    segment_duration = 11.0  # Strip display remains 11s per strip
     total_duration = max(d['time'] for d in captured_data) if captured_data else 0
-    num_segments = 5  # Always 5 strips
+    num_segments = max(1, min(5, int(total_duration // 60.0) + (1 if total_duration % 60.0 >= 1.0 else 0)))
     
     rr_per_minute = []
     hr_per_minute = []
@@ -3682,7 +3670,9 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
             # Improved R-peak detection with adaptive parameters
             # Minimum distance = 0.35 seconds (for HR up to 170 bpm, more sensitive)
             # This allows detection of higher heart rates
-            min_distance = int(0.35 * sampling_rate)
+            segment_duration_sec = (segment_data[-1]['time'] - segment_data[0]['time']) if len(segment_data) > 1 else 60.0
+            local_sr = sampling_rate
+            min_distance = int(0.25 * local_sr)
             
             # Adaptive height threshold - use percentile-based approach for better detection
             height_threshold = np.percentile(values_norm, 75)  # Use 75th percentile as threshold
@@ -3708,11 +3698,11 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
                 return None, None, []
             
             # Calculate RR intervals from peaks (in milliseconds)
-            rr_intervals = np.diff(peaks) * (1000.0 / sampling_rate)
+            rr_intervals = np.diff(peaks) * (1000.0 / local_sr)
             
             # Filter valid RR intervals (300ms to 2000ms) - wider range for accuracy
             # 300ms = 200 bpm max, 2000ms = 30 bpm min
-            rr_intervals = rr_intervals[(rr_intervals > 300) & (rr_intervals < 2000)]
+            rr_intervals = rr_intervals[(rr_intervals > 250) & (rr_intervals < 2000)]
             
             # Additional filtering: Remove outliers (intervals that are > 2x or < 0.5x the median)
             if len(rr_intervals) > 2:
@@ -3731,12 +3721,13 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
             hr_from_mean = 60000 / mean_rr if mean_rr > 0 else None
             
             # Expected HR based on segment duration and number of peaks
-            segment_duration_sec = (segment_data[-1]['time'] - segment_data[0]['time']) if len(segment_data) > 1 else 11.0
             expected_hr_from_peaks = (len(peaks) / segment_duration_sec) * 60 if segment_duration_sec > 0 else None
             
             # Debug output to verify dynamic calculation
             print(f"      ✅ RR Interval Calculation (Improved Peak Detection):")
             print(f"         Segment duration: {segment_duration_sec:.2f} seconds")
+            print(f"         Dynamic sampling rate: {local_sr:.1f} Hz")
+            print(f"         Min peak distance: {min_distance/local_sr:.2f} s")
             print(f"         R-peaks detected: {len(peaks)}")
             print(f"         Expected HR from peak count: {expected_hr_from_peaks:.1f} bpm (if 11s segment)")
             print(f"         Valid RR intervals: {len(rr_intervals)}")
@@ -3752,27 +3743,15 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
             return None, None, []
     
     # Get sampling rate from settings or use default
-    sampling_rate = 500.0  # Default
-    if settings_manager:
-        try:
-            wave_speed = float(settings_manager.get_setting("wave_speed", "25"))
-            # Calculate sampling rate based on wave speed (same logic as main report)
-            computed_sampling_rate = int(150 * (wave_speed / 25.0)) if wave_speed > 0 else 150
-            sampling_rate = max(80, min(computed_sampling_rate, 400))
-        except Exception:
-            pass
+    sampling_rate = 500.0
     
     # Collect average RR per minute for Page 3 (rr_per_minute already has these values)
     for seg_idx in range(num_segments):
         # Use minute-based starts: 0s, 60s, 120s, 180s, 240s (first 11s of each minute)
         minute_start = seg_idx * 60.0
         seg_start = minute_start
-        seg_end = minute_start + segment_duration  # First 11 seconds
+        seg_end = minute_start + 60.0
         seg_data = [d for d in captured_data if seg_start <= d['time'] < seg_end]
-        
-        # LIMIT: Use only first 5,500 samples (consistent with ECG graphs)
-        if len(seg_data) > 6400:
-            seg_data = seg_data[:6400]
         
         if len(seg_data) > 100:
             # DYNAMIC: Calculate actual RR intervals from R-peaks in this segment
@@ -3809,23 +3788,21 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
             hr_per_minute.append(hr_val)
             print(f"⚠️ Minute {seg_idx + 1}: Using default values (insufficient data)")
     
-    # Ensure we have 5 values
-    while len(rr_per_minute) < 5:
-        rr_per_minute.append(750)
-        hr_per_minute.append(80)
+    # Do not pad to 5; use available minutes only
     
-    # NEW CALCULATION for Page 2: HR = 300000 / sum_of_avg_rr_per_minute
-    # Sum of 5 average RR values (one per minute) - same as Page 1
-    if len(rr_per_minute) >= 5:
-        sum_of_avg_rr_page2 = sum(rr_per_minute[:5])  # Sum of 5 average RR values
-        avg_hr_from_sum = 300000 / sum_of_avg_rr_page2 if sum_of_avg_rr_page2 > 0 else data.get('HR_avg', 80)
+    # NEW CALCULATION for Page 2: HR = (N * 60000) / sum_of_avg_rr_per_minute
+    # N = number of available minutes
+    if len(rr_per_minute) >= 1:
+        sum_of_avg_rr_page2 = sum(rr_per_minute)
+        minutes_count_page2 = len(rr_per_minute)
+        avg_hr_from_sum = (minutes_count_page2 * 60000) / sum_of_avg_rr_page2 if sum_of_avg_rr_page2 > 0 else data.get('HR_avg', 80)
         print(f"\n{'='*70}")
-        print(f"📊 PAGE 2: NEW Average HR Calculation (300000 / sum of avg RR per minute)")
+        print(f"📊 PAGE 2: NEW Average HR Calculation ((N*60000) / sum of avg RR per minute)")
         print(f"{'='*70}")
-        print(f"   Average RR per minute: {[round(r, 1) for r in rr_per_minute[:5]]} ms")
-        print(f"   Sum of 5 average RR values: {sum_of_avg_rr_page2:.2f} ms")
-        print(f"   NEW Formula: HR = 300000 / sum_of_avg_rr_per_minute")
-        print(f"   Calculation: 300000 / {sum_of_avg_rr_page2:.2f} = {avg_hr_from_sum:.2f} bpm")
+        print(f"   Average RR per minute: {[round(r, 1) for r in rr_per_minute]} ms")
+        print(f"   Sum of {minutes_count_page2} average RR values: {sum_of_avg_rr_page2:.2f} ms")
+        print(f"   NEW Formula: HR = ({minutes_count_page2}*60000) / sum_of_avg_rr_per_minute")
+        print(f"   Calculation: ({minutes_count_page2}*60000) / {sum_of_avg_rr_page2:.2f} = {avg_hr_from_sum:.2f} bpm")
         print(f"{'='*70}\n")
     
     # Print summary of all calculated values with verification
@@ -3834,7 +3811,7 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     print(f"{'='*70}")
     print(f"{'Min':<6} {'RR (ms)':<12} {'HR (bpm)':<12} {'Formula Check':<25} {'Status'}")
     print(f"{'-'*70}")
-    for i in range(5):
+    for i in range(len(rr_per_minute)):
         rr_val = rr_per_minute[i]
         hr_val = hr_per_minute[i]
         # Verify: HR should equal 60000 / RR_interval
@@ -3874,28 +3851,44 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     
     # Chart 1: Avg. RR Interval per minute (Bar Chart) - Standard professional colors
-    fig1, ax1 = plt.subplots(figsize=(6.5, 3.5))  # Increased size
-    minutes = [f"Min {i+1}" for i in range(len(rr_per_minute))]
-    # Medium-intensity blue as requested
-    bars1 = ax1.bar(minutes, rr_per_minute, color='#6497b1', edgecolor='#6497b1', linewidth=1.5, alpha=0.9)
+    fig1, ax1 = plt.subplots(figsize=(6.5, 3.5))
+    minutes = [f"Min {i+1}" for i in range(5)]
+    rr_source = avg_rr_per_minute if ('avg_rr_per_minute' in locals() and isinstance(avg_rr_per_minute, list)) else []
+    rr_values_plot = [(rr_source[i] if i < len(rr_source) else 0) for i in range(5)]
+    rr_colors = [('#6497b1' if i < len(rr_source) else (0,0,0,0)) for i in range(5)]
+    rr_edges = [('#6497b1' if i < len(rr_source) else (0,0,0,0)) for i in range(5)]
+    x_pos = np.arange(5)
+    bars1 = ax1.bar(x_pos, rr_values_plot, width=0.6, color=rr_colors, edgecolor=rr_edges, linewidth=1.5)
+    ax1.set_xticks(x_pos)
+    ax1.set_xticklabels(minutes)
     ax1.set_xlabel('Minutes', fontsize=10, fontweight='bold')
     ax1.set_ylabel('Milliseconds', fontsize=10, fontweight='bold')
     ax1.set_title('Avg. RR Interval per minute', fontsize=12, fontweight='bold')
     ax1.grid(axis='y', alpha=0.3)
-    ax1.set_ylim(0, max(rr_per_minute) * 1.2 if max(rr_per_minute) > 0 else 1000)
+    rr_max = max(rr_values_plot) if len(rr_values_plot) > 0 else 0
+    rr_upper = int(np.ceil(rr_max * 1.10)) if rr_max > 0 else 1000
+    rr_upper = max(800, min(1200, rr_upper))
+    ax1.set_ylim(0, rr_upper)
     
     # Add value labels above each bar (like in reference image)
-    for i, (bar, value) in enumerate(zip(bars1, rr_per_minute)):
-        height = bar.get_height()
-        # Format value with proper rounding (no decimals for RR interval display)
-        label_text = f"{round(value)}"
-        ax1.text(bar.get_x() + bar.get_width()/2., height,
-                label_text,
-                ha='center', va='bottom', fontsize=9, fontweight='bold')
+    for i, bar in enumerate(bars1):
+        if i < len(rr_source):
+            value = rr_source[i]
+            height = bar.get_height()
+            rr_dec = value - int(value)
+            rr_disp = int(value) + 1 if rr_dec >= 0.50 else int(value)
+            label_text = f"{rr_disp}"
+            label_y = min(height + (rr_upper * 0.02), rr_upper - 6)
+            ax1.text(bar.get_x() + bar.get_width()/2., label_y,
+                    label_text,
+                    ha='center', va='bottom', fontsize=9, fontweight='bold', clip_on=True)
     
-    print(f"📊 RR Interval Chart - Values above bars (rounded):")
-    for i, val in enumerate(rr_per_minute):
-        print(f"   Min {i+1}: {round(val)} ms (original: {val:.2f} ms)")
+    print(f"📊 RR Interval Chart - Values above bars (custom rounding 0.50 threshold):")
+    for i in range(len(rr_per_minute)):
+        val = rr_per_minute[i]
+        rr_dec = val - int(val)
+        rr_disp = int(val) + 1 if rr_dec >= 0.50 else int(val)
+        print(f"   Min {i+1}: {rr_disp} ms (original: {val:.2f} ms)")
     
     # Save chart 1 to reports directory
     temp_rr_chart_path = os.path.join(hrv_charts_dir, f'rr_interval_{timestamp}.png')
@@ -3903,44 +3896,52 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     plt.close(fig1)
     
     # Chart 2: Avg. Heart Rate per minute (Bar Chart) - Standard professional colors
-    fig2, ax2 = plt.subplots(figsize=(6.5, 3.5))  # Increased size
-    # Medium-intensity blue as requested
-    bars2 = ax2.bar(minutes, hr_per_minute, color='#6497b1', edgecolor='#6497b1', linewidth=1.5, alpha=0.9)
+    fig2, ax2 = plt.subplots(figsize=(6.5, 3.5))
+    hr_values_plot = [(60000 / rr_source[i] if i < len(rr_source) and rr_source[i] > 0 else 0) for i in range(5)]
+    hr_colors = [('#6497b1' if i < len(rr_source) else (0,0,0,0)) for i in range(5)]
+    hr_edges = [('#6497b1' if i < len(rr_source) else (0,0,0,0)) for i in range(5)]
+    x_pos2 = np.arange(5)
+    bars2 = ax2.bar(x_pos2, hr_values_plot, width=0.6, color=hr_colors, edgecolor=hr_edges, linewidth=1.5)
+    ax2.set_xticks(x_pos2)
+    ax2.set_xticklabels(minutes)
     ax2.set_xlabel('Minutes', fontsize=10, fontweight='bold')
     ax2.set_ylabel('Beats per minute', fontsize=10, fontweight='bold')
     ax2.set_title('Avg. Heart Rate per minute', fontsize=12, fontweight='bold')
     ax2.grid(axis='y', alpha=0.3)
-    ax2.set_ylim(0, max(hr_per_minute) * 1.2 if max(hr_per_minute) > 0 else 120)
+    hr_max = max(hr_values_plot) if len(hr_values_plot) > 0 else 0
+    hr_upper = int(np.ceil(hr_max * 1.10)) if hr_max > 0 else 120
+    hr_upper = max(80, min(220, hr_upper))
+    ax2.set_ylim(0, hr_upper)
     
     # Add value labels above each bar (like in reference image)
     # IMPORTANT: Recalculate HR from rounded RR to ensure consistency
     # If RR displays as 569 ms, HR should be calculated from 569, not from 568.5
-    for i, (bar, value) in enumerate(zip(bars2, hr_per_minute)):
-        height = bar.get_height()
-        # Recalculate HR from rounded RR value for display consistency
-        rounded_rr = round(rr_per_minute[i])
-        recalculated_hr = 60000 / rounded_rr if rounded_rr > 0 else value
-        # Custom rounding logic: < 0.50 → round down, >= 0.50 → round up
-        decimal_part = recalculated_hr - int(recalculated_hr)
-        if decimal_part < 0.50:
-            hr_display = int(recalculated_hr)  # Round down (105.44 → 105)
-        else:
-            hr_display = int(recalculated_hr) + 1  # Round up (105.50 → 106)
-        label_text = f"{hr_display}"
-        ax2.text(bar.get_x() + bar.get_width()/2., height,
-                label_text,
-                ha='center', va='bottom', fontsize=9, fontweight='bold')
+    for i, bar in enumerate(bars2):
+        if i < len(rr_source):
+            value = hr_values_plot[i]
+            height = bar.get_height()
+            rounded_rr = round(rr_source[i])
+            recalculated_hr = 60000 / rounded_rr if rounded_rr > 0 else value
+            decimal_part = recalculated_hr - int(recalculated_hr)
+            if decimal_part < 0.50:
+                hr_display = int(recalculated_hr)
+            else:
+                hr_display = int(recalculated_hr) + 1
+            label_text = f"{hr_display}"
+            label_y = min(height + (hr_upper * 0.02), hr_upper - 6)
+            ax2.text(bar.get_x() + bar.get_width()/2., label_y,
+                    label_text,
+                    ha='center', va='bottom', fontsize=9, fontweight='bold', clip_on=True)
     
     print(f"📊 Heart Rate Chart - Values above bars (recalculated from rounded RR with custom rounding):")
-    for i, val in enumerate(hr_per_minute):
-        rounded_rr = round(rr_per_minute[i])
-        recalculated_hr = 60000 / rounded_rr if rounded_rr > 0 else val
-        # Apply custom rounding logic
+    for i in range(len(rr_source)):
+        rounded_rr = round(rr_source[i])
+        recalculated_hr = 60000 / rounded_rr if rounded_rr > 0 else 0
         decimal_part = recalculated_hr - int(recalculated_hr)
         if decimal_part < 0.50:
-            hr_display = int(recalculated_hr)  # Round down
+            hr_display = int(recalculated_hr)
         else:
-            hr_display = int(recalculated_hr) + 1  # Round up
+            hr_display = int(recalculated_hr) + 1
         rounding_note = "rounded down" if decimal_part < 0.50 else "rounded up"
         print(f"   Min {i+1}: RR={rounded_rr} ms → HR={recalculated_hr:.4f} bpm → {hr_display} bpm ({rounding_note}, decimal={decimal_part:.2f})")
     
