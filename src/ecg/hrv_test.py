@@ -271,7 +271,7 @@ class HRVTestWindow(QWidget):
             ("HR", "00", "BPM", "heart_rate"),
             ("PR", "0", "ms", "pr_interval"),
             ("QRS Complex", "0", "ms", "qrs_duration"),
-            ("P", "0", "ms", "st_interval"),
+            # ("P", "0", "ms", "st_interval"),
             ("QT/Qtc", "0", "ms", "qtc_interval"),
         ]
         

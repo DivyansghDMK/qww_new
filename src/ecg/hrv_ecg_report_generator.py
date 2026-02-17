@@ -3712,6 +3712,7 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     
     rr_per_minute = []
     hr_per_minute = []
+    rr_all_for_hrv = []
     
     # Helper function to calculate RR intervals from segment data
     def calculate_rr_from_segment(segment_data, sampling_rate=500.0):
@@ -3873,6 +3874,7 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
                 rr_per_minute.append(rr_val)
                 hr_per_minute.append(hr_val)
                 continue
+            rr_all_for_hrv.extend(rr_final.tolist())
             low = float(np.percentile(rr_ms, 5))
             high = float(np.percentile(rr_ms, 95))
             rr_final = rr_ms[(rr_ms >= low) & (rr_ms <= high)]
@@ -4052,7 +4054,6 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     
     # Chart 3: HRV Metrics Radar Chart (like Spandan report)
     # Calculate HRV metrics for radar chart
-    from scipy import signal
     
     # Extract Lead II values for HRV calculation
     lead_ii_values = np.array([d['value'] for d in captured_data]) if captured_data else np.array([])
@@ -4060,64 +4061,60 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     # Initialize rr_intervals_calc and average_nn_intervals for later use in saving metrics
     rr_intervals_calc = None
     average_nn_intervals = None
-    sdann = None  # SDANN: Standard Deviation of Average NN intervals
+    sdann = None
     
-    if len(lead_ii_values) > 100:
-        # Detect R-peaks using simple peak detection
+    rr_intervals_source = None
+    if 'rr_all_for_hrv' in locals() and isinstance(rr_all_for_hrv, list) and len(rr_all_for_hrv) > 2:
+        rr_intervals_source = np.array(rr_all_for_hrv, dtype=float)
+        rr_intervals_source = rr_intervals_source[(rr_intervals_source > 300) & (rr_intervals_source < 2000)]
+    elif len(lead_ii_values) > 100:
         from scipy.signal import find_peaks
-        # Normalize data
+       
         lead_ii_norm = (lead_ii_values - np.mean(lead_ii_values)) / (np.std(lead_ii_values) + 1e-6)
-        # Find peaks (R-peaks)
+        
         peaks, _ = find_peaks(lead_ii_norm, distance=50, height=0.5)
         
-        # Calculate RR intervals from peaks
+        
         if len(peaks) > 1:
-            rr_intervals_calc = np.diff(peaks) * (1000.0 / 500.0)  # Convert to ms (assuming 500 Hz sampling)
-            rr_intervals_calc = rr_intervals_calc[(rr_intervals_calc > 300) & (rr_intervals_calc < 2000)]
-            
-            if len(rr_intervals_calc) > 2:
-                # Calculate average_nn_intervals (mean of all RR intervals)
-                average_nn_intervals = np.mean(rr_intervals_calc)
-                
-                # Calculate SDNN: Standard deviation of NN intervals
-                # Method 1: Direct std of RR intervals (standard method)
-                sdnn = float(np.std(rr_intervals_calc))
-                
-                # Calculate SDANN: Standard Deviation of Average NN intervals
-                # SDANN is calculated by dividing RR intervals into segments,
-                # calculating average for each segment, then std of those averages
-                # For 5-minute recording: use 1-minute segments (5 segments)
-                segment_length = max(1, len(rr_intervals_calc) // 5)  # Divide into 5 segments
-                segment_averages = []
-                for i in range(0, len(rr_intervals_calc), segment_length):
-                    segment = rr_intervals_calc[i:i + segment_length]
-                    if len(segment) > 0:
-                        segment_avg = np.mean(segment)
-                        segment_averages.append(segment_avg)
-                
-                if len(segment_averages) > 1:
-                    sdann = float(np.std(segment_averages))
-                else:
-                    # If not enough segments, use alternative: SDANN = SDNN / sqrt(number_of_intervals)
-                    # Or use a simpler approach
-                    sdann = sdnn / np.sqrt(len(rr_intervals_calc)) if len(rr_intervals_calc) > 0 else 0.0
-                
-                rmssd = float(np.sqrt(np.mean(np.diff(rr_intervals_calc)**2)))
-                nn50_count = np.sum(np.abs(np.diff(rr_intervals_calc)) > 50)
-                pnn50 = (nn50_count / len(rr_intervals_calc)) * 100 if len(rr_intervals_calc) > 0 else 0
-                mean_hr_calc = 60000 / average_nn_intervals if average_nn_intervals > 0 else 80
-            else:
-                sdnn, rmssd, nn50_count, pnn50, mean_hr_calc = 0.01, 0.22, 0, 0.0, 80
-                rr_intervals_calc = None
-                average_nn_intervals = None
-                sdann = None
+            rr_intervals_source = np.diff(peaks) * (1000.0 / 500.0)
+            rr_intervals_source = rr_intervals_source[(rr_intervals_source > 300) & (rr_intervals_source < 2000)]
+    
+    if rr_intervals_source is not None and len(rr_intervals_source) > 2:
+        rr_clean = rr_intervals_source.copy()
+        rr_clean = rr_clean[(rr_clean >= 300) & (rr_clean <= 2000)]
+        if len(rr_clean) > 2:
+            median_rr = np.median(rr_clean)
+            mask = np.ones(len(rr_clean), dtype=bool)
+            for i in range(1, len(rr_clean)):
+                if abs(rr_clean[i] - rr_clean[i-1]) > 0.10 * median_rr:
+                    mask[i] = False
+            rr_candidate = rr_clean[mask]
+            if len(rr_candidate) > 2:
+                rr_clean = rr_candidate
+        # Quantize RR intervals to 1 ms resolution to remove sub-millisecond noise
+        rr_intervals_calc = np.round(rr_clean)
+        # Apply 5-beat moving-average smoothing for HRV metrics (normalization)
+        rr_for_metrics = rr_intervals_calc
+        if len(rr_intervals_calc) >= 5:
+            kernel = np.ones(5, dtype=float) / 5.0
+            rr_for_metrics = np.convolve(rr_intervals_calc, kernel, mode='valid')
+        average_nn_intervals = float(np.mean(rr_for_metrics))
+        sdnn = float(np.std(rr_for_metrics, ddof=1))
+        segment_length = max(1, len(rr_for_metrics) // 5)
+        segment_averages = []
+        for i in range(0, len(rr_for_metrics), segment_length):
+            segment = rr_for_metrics[i:i + segment_length]
+            if len(segment) > 0:
+                segment_averages.append(float(np.mean(segment)))
+        if len(segment_averages) > 1:
+            sdann = float(np.std(segment_averages, ddof=1))
         else:
-            sdnn, rmssd, nn50_count, pnn50, mean_hr_calc = 0.01, 0.22, 0, 0.0, 80
-            rr_intervals_calc = None
-            average_nn_intervals = None
-            sdann = None
+            sdann = sdnn / np.sqrt(len(rr_for_metrics)) if len(rr_for_metrics) > 0 else 0.0
+        rmssd = float(np.sqrt(np.mean(np.diff(rr_for_metrics) ** 2)))
+        nn50_count = int(np.sum(np.abs(np.diff(rr_for_metrics)) > 50))
+        pnn50 = (nn50_count / len(rr_for_metrics)) * 100 if len(rr_for_metrics) > 0 else 0
+        mean_hr_calc = 60000 / average_nn_intervals if average_nn_intervals and average_nn_intervals > 0 else 80
     else:
-        # Default values if no data
         sdnn, rmssd, nn50_count, pnn50, mean_hr_calc = 0.01, 0.22, 0, 0.0, 80
         rr_intervals_calc = None
         average_nn_intervals = None
@@ -4263,7 +4260,7 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     metrics_table_data = [
         [Paragraph(f"<b>SDANN:</b> {sdann_display}", styles['Normal']),
          Paragraph(f"<b>SDDN:</b> {sdnn_display}", styles['Normal']),
-         Paragraph(f"<b>RMSSDN:</b> {rmssd_display}", styles['Normal']),
+         Paragraph(f"<b>RMSSD:</b> {rmssd_display}", styles['Normal']),
          Paragraph(f"<b>NN50:</b> {nn50_display}", styles['Normal'])]
     ]
     

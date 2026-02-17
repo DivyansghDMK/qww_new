@@ -125,6 +125,9 @@ class HyperkalemiaTestWindow(QWidget):
         
         # Track active sample count to avoid skewing stats with leading zeros
         self.active_samples = 0
+
+        # Store last displayed metrics so analysis dialog matches dashboard values
+        self.last_metrics = {}
         
         # Create a minimal ECGTestPage instance to reuse its calculation methods
         # This ensures we use the EXACT same functions as the 12-lead test
@@ -779,6 +782,7 @@ class HyperkalemiaTestWindow(QWidget):
 
                 # FETCH SMOOTHED METRICS
                 metrics = self.ecg_calculator.get_current_metrics()
+                self.last_metrics = dict(metrics) if isinstance(metrics, dict) else {}
                 print("metrics:", metrics)
                 
                 # Update UI labels
@@ -827,12 +831,15 @@ class HyperkalemiaTestWindow(QWidget):
             for idx, original in original_buffers.items():
                 self.ecg_calculator.data[idx] = original
                 
-            # Get latest clinical metrics
-            metrics = self.ecg_calculator.get_current_metrics()
+            # Get latest clinical metrics (last metrics stored)
+            metrics = self.last_metrics if getattr(self, "last_metrics", None) else self.ecg_calculator.get_current_metrics()
             
             # 2. EXTRACT MEASUREMENTS
             def safe_float(val):
                 try:
+                    # Strip common units before conversion
+                    if isinstance(val, str):
+                        val = val.replace("ms", "").replace("MS", "").strip()
                     return float(val)
                 except (ValueError, TypeError):
                     return 0.0
@@ -840,8 +847,43 @@ class HyperkalemiaTestWindow(QWidget):
             hr = safe_float(metrics.get('heart_rate', 0))
             pr = safe_float(metrics.get('pr_interval', 0))
             qrs = safe_float(metrics.get('qrs_duration', 0))
-            qt = safe_float(metrics.get('qt_interval', 0))
-            qtc = safe_float(metrics.get('qtc_interval', 0))
+            qt = 0.0
+            qtc = 0.0
+
+            qtqtc_text = None
+            # Prefer the Hyperkalemia dashboard label if present
+            if hasattr(self, 'metric_labels') and 'qtc_interval' in self.metric_labels:
+                try:
+                    qtqtc_text = self.metric_labels['qtc_interval'].text().strip()
+                except Exception:
+                    qtqtc_text = None
+
+            # Fallback to metrics dict if needed
+            if (not qtqtc_text) and metrics.get('qtc_interval') is not None:
+                qtqtc_text = str(metrics.get('qtc_interval')).strip()
+
+            if qtqtc_text:
+                clean = qtqtc_text.replace("ms", "").replace("MS", "").strip()
+                if "/" in clean:
+                    parts = [p.strip() for p in clean.split("/") if p.strip()]
+                    if len(parts) >= 1:
+                        qt = safe_float(parts[0])
+                    if len(parts) >= 2:
+                        qtc = safe_float(parts[1])
+                else:
+                    qtc = safe_float(clean)
+
+            # Final fallback: use calculator's last clinical values if parsing failed
+            if qt <= 0 and hasattr(self.ecg_calculator, 'last_qt_interval'):
+                try:
+                    qt = float(getattr(self.ecg_calculator, 'last_qt_interval') or 0)
+                except Exception:
+                    pass
+            if qtc <= 0 and hasattr(self.ecg_calculator, 'last_qtc_interval'):
+                try:
+                    qtc = float(getattr(self.ecg_calculator, 'last_qtc_interval') or 0)
+                except Exception:
+                    pass
             
             # 3. HYPERKALEMIA MORPHOLOGY LOGIC (GE/Philips standards)
             indicators = []

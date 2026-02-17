@@ -410,6 +410,9 @@ class Dashboard(QWidget):
         self.device_check_timer.timeout.connect(self.check_device_connection)
         self.device_check_timer.start(100) # Check every 0.1 second
 
+        self._device_scan_in_progress = False
+        self._last_device_scan_time = 0
+
         # Initialize UI as disconnected
         self.update_device_ui(False)
 
@@ -4147,7 +4150,21 @@ class Dashboard(QWidget):
                 pass
         else:
             # Not connected, scan for device
-            self.scan_for_device_version()
+            if sys.platform == "darwin":
+                now = time.time()
+                if getattr(self, "_device_scan_in_progress", False):
+                    return
+                last = getattr(self, "_last_device_scan_time", 0)
+                if now - last < 5.0:
+                    return
+                self._device_scan_in_progress = True
+                self._last_device_scan_time = now
+                try:
+                    self.scan_for_device_version()
+                finally:
+                    self._device_scan_in_progress = False
+            else:
+                self.scan_for_device_version()
 
         # Only skip scanning if NOT already connected and a test window is open
         # Skip if any test window is open (HRV or Hyperkalemia)
@@ -4164,6 +4181,8 @@ class Dashboard(QWidget):
         try:
             scan_start = time.time()
             ports = list(serial.tools.list_ports.comports())
+            if sys.platform == "darwin":
+                ports = [p for p in ports if ("usbserial" in p.device) or ("usbmodem" in p.device)]
             if not ports:
                 self.update_device_ui(False)
                 return
