@@ -1789,11 +1789,11 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     # RIGHT SIDE: Vital Parameters at SAME LEVEL as patient info (ABOVE ECG GRAPH)
     hr_val = data.get('HR') or data.get('HR_bpm') or data.get('Heart_Rate') or data.get('HR_avg', )
     HR = int(round(hr_val)) if hr_val else 0
-    PR = data.get('PR', 192) 
-    QRS = data.get('QRS', 93)
-    QT = data.get('QT', 354)
-    QTc = data.get('QTc', 260)
-    ST = data.get('ST', 114)
+    PR = data.get('PR', 0) 
+    QRS = data.get('QRS', 0)
+    QT = data.get('QT', 0)
+    QTc = data.get('QTc', 0)
+    ST = data.get('ST', 0)
     # DYNAMIC RR interval calculation from heart rate (instead of hard-coded 857)
     RR = int(60000 / HR) if HR and HR > 0 else 0  # RR interval in ms from heart rate
    
@@ -3473,7 +3473,17 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     # Page 1 vitals: Use arithmetic averages from per-minute values (chart-aligned)
     # RR_top = average of minute RR values
     # HR_top = average of minute HR values derived from RR (60000/RR_i)
-    if 'original_metrics_from_json' in locals() and original_metrics_from_json:
+    # If no valid HRV data (no RR intervals), force all vitals to zero
+    if 'rr_all_for_hrv' in locals() and isinstance(rr_all_for_hrv, list) and len(rr_all_for_hrv) <= 2:
+        HR = 0
+        RR = 0
+        PR = 0
+        QRS = 0
+        QT = 0
+        QTc = 0
+        ST = 0
+        print("⚠️ Page 1 (ECG waves): No valid HRV data detected, all vitals set to 0")
+    elif 'original_metrics_from_json' in locals() and original_metrics_from_json:
         PR = original_metrics_from_json.get('PR', 0)
         QRS = original_metrics_from_json.get('QRS', 0)
         QT = original_metrics_from_json.get('QT', 0)
@@ -3781,7 +3791,7 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
             rr_ms = rr_ms[(rr_ms >= 200.0) & (rr_ms <= 3000.0)]
             if rr_ms.size < 1:
                 continue
-            rr_all_for_hrv.extend(rr_final.tolist())
+            rr_all_for_hrv.extend(rr_ms.tolist())
             low = float(np.percentile(rr_ms, 5))
             high = float(np.percentile(rr_ms, 95))
             rr_final = rr_ms[(rr_ms >= low) & (rr_ms <= high)]
@@ -3876,8 +3886,8 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     ax1.grid(axis='y', alpha=0.3)
     ax1.set_xlim(-0.5, 4.5)
     rr_max = max(rr_values_plot) if len(rr_values_plot) > 0 else 0
-    rr_upper = int(np.ceil(rr_max * 1.10)) if rr_max > 0 else 1000
-    rr_upper = max(800, min(1200, rr_upper))
+    rr_upper = int(np.ceil(rr_max * 1.10)) if rr_max > 0 else 3000
+    rr_upper = max(200, min(3000, rr_upper))
     ax1.set_ylim(0, rr_upper)
     
     # Add value labels above each bar (like in reference image)
@@ -3918,8 +3928,8 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     ax2.grid(axis='y', alpha=0.3)
     ax2.set_xlim(-0.5, 4.5)
     hr_max = max(hr_values_plot) if len(hr_values_plot) > 0 else 0
-    hr_upper = int(np.ceil(hr_max * 1.10)) if hr_max > 0 else 120
-    hr_upper = max(80, min(220, hr_upper))
+    hr_upper = int(np.ceil(hr_max * 1.10)) if hr_max > 0 else 300
+    hr_upper = max(20, min(300, hr_upper))
     ax2.set_ylim(0, hr_upper)
     
     # Add value labels above each bar (like in reference image)
@@ -4022,10 +4032,14 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
         pnn50 = (nn50_count / len(rr_for_metrics)) * 100 if len(rr_for_metrics) > 0 else 0
         mean_hr_calc = 60000 / average_nn_intervals if average_nn_intervals and average_nn_intervals > 0 else 0
     else:
-        sdnn, rmssd, nn50_count, pnn50, mean_hr_calc = 0.00, 0.00, 0, 0.0, 0
+        sdnn = 0.0
+        rmssd = 0.0
+        nn50_count = 0
+        pnn50 = 0.0
+        mean_hr_calc = 0
         rr_intervals_calc = None
         average_nn_intervals = None
-        sdann = None
+        sdann = 0.0
     
     # ==================== SAVE HRV METRICS TO TEXT FILE (APPEND TO SINGLE FILE) ====================
     try:
