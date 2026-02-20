@@ -16,7 +16,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtGui import QFont, QColor
 from PyQt5.QtCore import Qt, QTimer
 import pyqtgraph as pg
-from scipy.signal import find_peaks
+from scipy.signal import find_peaks, butter, filtfilt
 
 # Try to import serial
 try:
@@ -716,6 +716,12 @@ class HyperkalemiaTestWindow(QWidget):
                 if len(self.lead_data[lead_name]) > 0:
                     # 25 mm/s → ~3 s window (wave speed logic disabled for Hyperkalemia test)
                     seconds_to_show = 3.0
+
+                    # Lead II: use a larger window for wave movement visibility
+                    if lead_name == 'II':
+                        seconds_to_show = 6.0
+
+
                     # try:
                     #     wave_speed = float(self.settings_manager.get_wave_speed())
                     #     seconds_to_show = 3.0 * (25.0 / max(1e-6, wave_speed))
@@ -814,6 +820,65 @@ class HyperkalemiaTestWindow(QWidget):
         except Exception as e:
             pass
 
+    def _compute_wave_amplitudes(self):
+        p_amp = 0.0
+        qrs_amp = 0.0
+        t_amp = 0.0
+        try:
+            fs = float(self.sampling_rate) if getattr(self, "sampling_rate", 0) else 500.0
+            if not self.ecg_calculator or not hasattr(self.ecg_calculator, "data") or len(self.ecg_calculator.data) <= 1:
+                return p_amp, qrs_amp, t_amp
+            lead_ii = self.ecg_calculator.data[1]
+            if isinstance(lead_ii, (list, tuple)):
+                lead_ii = np.asarray(lead_ii, dtype=np.float32)
+            arr = lead_ii
+            if self.active_samples > 0 and self.active_samples < len(arr):
+                arr = arr[-self.active_samples:]
+            max_len = int(10 * fs)
+            if len(arr) > max_len:
+                arr = arr[-max_len:]
+            if arr is None or len(arr) < int(2 * fs) or np.std(arr) < 0.1:
+                return p_amp, qrs_amp, t_amp
+            nyq = fs / 2.0
+            b, a = butter(2, [max(0.5 / nyq, 0.001), min(40.0 / nyq, 0.99)], btype="band")
+            x = filtfilt(b, a, arr)
+            squared = np.square(np.diff(x))
+            win = max(1, int(0.15 * fs))
+            env = np.convolve(squared, np.ones(win) / win, mode="same")
+            thr = np.mean(env) + 0.5 * np.std(env)
+            r_peaks, _ = find_peaks(env, height=thr, distance=int(0.6 * fs))
+            if len(r_peaks) < 3:
+                return p_amp, qrs_amp, t_amp
+            p_vals = []
+            qrs_vals = []
+            t_vals = []
+            for r in r_peaks[1:-1]:
+                p_start = max(0, r - int(0.20 * fs))
+                p_end = max(0, r - int(0.12 * fs))
+                if p_end > p_start:
+                    seg = x[p_start:p_end]
+                    base = np.mean(x[max(0, p_start - int(0.05 * fs)):p_start])
+                    p_vals.append(np.max(seg) - base)
+                qrs_start = max(0, r - int(0.08 * fs))
+                qrs_end = min(len(x), r + int(0.08 * fs))
+                if qrs_end > qrs_start:
+                    seg = x[qrs_start:qrs_end]
+                    qrs_vals.append(np.max(seg) - np.min(seg))
+                t_start = min(len(x), r + int(0.10 * fs))
+                t_end = min(len(x), r + int(0.30 * fs))
+                if t_end > t_start:
+                    seg = x[t_start:t_end]
+                    base = np.mean(x[r:t_start]) if t_start > r else 0.0
+                    t_vals.append(np.max(seg) - base)
+            def med(v):
+                return float(np.median(v)) if len(v) > 0 else 0.0
+            p_amp = med(p_vals)
+            qrs_amp = med(qrs_vals)
+            t_amp = med(t_vals)
+        except Exception:
+            pass
+        return p_amp, qrs_amp, t_amp
+
     def analyze_hyperkalemia(self, enable=False):
         """Analyze captured ECG data for hyperkalemia indicators using clinical standards"""
         if self.active_samples < 500:
@@ -893,6 +958,8 @@ class HyperkalemiaTestWindow(QWidget):
                     qtc = float(getattr(self.ecg_calculator, 'last_qtc_interval') or 0)
                 except Exception:
                     pass
+
+            p_amp, qrs_amp, t_amp = self._compute_wave_amplitudes()
             
             # 3. HYPERKALEMIA MORPHOLOGY LOGIC (GE/Philips standards)
             indicators = []
@@ -902,13 +969,15 @@ class HyperkalemiaTestWindow(QWidget):
             if pr > 200:
                 indicators.append(f"Prolonged PR Interval ({pr}ms)")
                 risk_score += 1
-                if pr > 240: risk_score += 1
+                if pr > 240:
+                    risk_score += 1
                 
             # Indicator 2: QRS Widening
             if qrs > 110:
                 indicators.append(f"Widened QRS Complex ({qrs}ms)")
                 risk_score += 1
-                if qrs > 120: risk_score += 2
+                if qrs > 120:
+                    risk_score += 2
                 
             # Indicator 3: Peaked T-waves (Estimated from amplitude variation)
             # We check precordial leads V2-V4 for maximum amplitude
@@ -924,11 +993,31 @@ class HyperkalemiaTestWindow(QWidget):
                         amp = np.percentile(sig, 99) - np.percentile(sig, 1)
                         max_t_amp = max(max_t_amp, amp)
                 
-                if max_t_amp > 800: # Threshold for "Tall/Peaked" in raw ADC units
-                    indicators.append("Tall/Peaked T-waves detected")
+                if max_t_amp > 800:
+                    indicators.append("Tall/Peaked T-waves detected (precordial leads)")
                     risk_score += 2
-            except:
+            except Exception:
                 pass
+
+            if qrs_amp > 0 and t_amp > 0 and (2.0 * t_amp) > qrs_amp:
+                indicators.append("T-wave amplitude exceeds R-wave amplitude (Lead II)")
+                risk_score += 2
+
+            if qrs_amp > 0:
+                if p_amp <= 0 or p_amp < 0.1 * qrs_amp:
+                    if p_amp <= 0:
+                        indicators.append("P-waves absent or extremely low amplitude (flattening)")
+                    else:
+                        indicators.append("P-wave flattening relative to QRS amplitude")
+                    risk_score += 1
+
+            sine_wave = False
+            if qrs >= 160 and qrs_amp > 0 and t_amp > 0:
+                if p_amp <= 0 or p_amp < 0.05 * qrs_amp:
+                    sine_wave = True
+            if sine_wave:
+                indicators.append("Sine-wave morphology (very wide QRS with merged T-wave)")
+                risk_score += 3
 
             # 4. DETERMINE RISK LEVEL
             risk_level = "Normal/Low"

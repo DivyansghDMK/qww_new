@@ -7136,44 +7136,27 @@ class ECGTestPage(QWidget):
         try:
             from matplotlib.lines import Line2D
 
-            # Determine overlay mode and grid density
-            # expected values (adapt to your own attribute / naming):
-            # self._overlay_mode in {"12x1", "6x2"}
-            mode = getattr(self, "_overlay_mode", "12x1")
-
-            # These are *figure* coordinates (0–1). We just change spacing to
-            # better visually match the container layout.
-            if mode == "12x1":
-                # Long, narrow strip: more vertical lines, slightly fewer horizontals
-                x_step_minor = 0.01   # every 1%
-                y_step_minor = 0.02   # every 2%
-            elif mode == "6x2":
-                # More square-ish layout: same density both directions
-                x_step_minor = 0.01
-                y_step_minor = 0.01
-            else:
-                # Fallback
-                x_step_minor = 0.01
-                y_step_minor = 0.01
-
-            # Set the outer container (overlay widget) background to light pink
+            bg_color = '#FFFFFF'
+            minor_color = '#ffd1d1'
+            major_color = '#ffb3b3'
+            
             if hasattr(self, '_overlay_widget'):
-                self._overlay_widget.setStyleSheet("""
-                    QWidget {
-                        background: #ffe4ec;
+                self._overlay_widget.setStyleSheet(f"""
+                    QWidget {{
+                        background: {bg_color};
                         border: 2px solid #ff6600;
                         border-radius: 15px;
-                    }
+                    }}
                 """)
 
             # Apply pink grid background to the figure using Line2D
             if hasattr(self, '_overlay_canvas') and self._overlay_canvas.figure:
                 fig = self._overlay_canvas.figure
 
-                # Set figure background to light pink
-                fig.patch.set_facecolor('#ffe4ec')
+                # Pink paper background
+                fig.patch.set_facecolor(bg_color)
 
-                # Remove any existing grid lines from figure
+                # Clear any previous grid/background
                 if hasattr(fig, '_grid_lines'):
                     for line in fig._grid_lines:
                         try:
@@ -7192,34 +7175,60 @@ class ECGTestPage(QWidget):
 
                 grid_lines = []
 
-                # We'll define "major" every 5 minor steps (approx, since step may not divide 1 exactly)
-                # and avoid drawing those here since you only asked to tune minor grid.
-                # If you later add majors, keep them consistent with these steps.
-                # Vertical minor lines
+                # --- True 1mm / 5mm grid based on figure physical size ---
+                mm_per_inch = 25.4
+                fig_width_in = fig.get_figwidth()
+                fig_height_in = fig.get_figheight()
+                width_mm = max(1.0, fig_width_in * mm_per_inch)
+                height_mm = max(1.0, fig_height_in * mm_per_inch)
+
+                # Fraction of figure for 1mm step in each direction
+                minor_step_x = 1.0 / width_mm
+                minor_step_y = 1.0 / height_mm
+                major_step_x = minor_step_x * 5.0  # 5mm
+                major_step_y = minor_step_y * 5.0
+
+                # Vertical lines (time axis)
                 x = 0.0
                 idx = 0
                 while x <= 1.0 + 1e-9:
-                    if idx % 5 != 0:  # skip where major would go
-                        line = Line2D([x, x], [0, 1],
-                                    transform=fig.transFigure,
-                                    color='#ffb6c1', linewidth=0.3, alpha=0.7)
-                        fig.add_artist(line)
+                    is_major = (idx % 5 == 0)
+                    color = major_color if is_major else minor_color
+                    width = 1.0 if is_major else 0.6
+                    for ax in getattr(self, '_overlay_axes', []):
+                        line = Line2D(
+                            [x, x], [0, 1],
+                            transform=fig.transFigure,
+                            color=color,
+                            linewidth=width,
+                            alpha=0.9,
+                            zorder=0,
+                        )
+                        ax.add_line(line)
                         grid_lines.append(line)
-                    x += x_step_minor
+                    x += minor_step_x
                     idx += 1
 
-                # Horizontal minor lines
+                # Horizontal lines (amplitude axis)
                 y = 0.0
-                idx = 0
+                jdx = 0
                 while y <= 1.0 + 1e-9:
-                    if idx % 5 != 0:
-                        line = Line2D([0, 1], [y, y],
-                                    transform=fig.transFigure,
-                                    color='#ffb6c1', linewidth=0.3, alpha=0.7)
-                        fig.add_artist(line)
+                    is_major = (jdx % 5 == 0)
+                    color = major_color if is_major else minor_color
+                    width = 1.0 if is_major else 0.6
+                    for ax in getattr(self, '_overlay_axes', []):
+                        line = Line2D(
+                            [0, 1], [y, y],
+                            transform=fig.transFigure,
+                            color=color,
+                            linewidth=width,
+                            alpha=0.9,
+                            zorder=0,
+                        )
+                        ax.add_line(line)
                         grid_lines.append(line)
-                    y += y_step_minor
-                    idx += 1
+                    y += minor_step_y
+                    jdx += 1
 
                 fig._grid_lines = grid_lines
 
@@ -7239,10 +7248,10 @@ class ECGTestPage(QWidget):
 
             # ECG line style
             for line in self._overlay_lines:
-                line.set_color('#800000')
+                line.set_color('#000000')
                 line.set_linewidth(0.7)
                 line.set_alpha(1.0)
-                line.set_zorder(10)
+                line.set_zorder(50)
 
             if hasattr(self, '_overlay_canvas'):
                 self._overlay_canvas.draw()
