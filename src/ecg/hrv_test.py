@@ -270,7 +270,7 @@ class HRVTestWindow(QWidget):
             ("PR", "0", "ms", "pr_interval"),
             ("QRS Complex", "0", "ms", "qrs_duration"),
             # ("P", "0", "ms", "st_interval"),
-            ("QT/Qtc", "0", "ms", "qtc_interval"),
+            ("QT/QTc", "0", "ms", "qtc_interval"),
         ]
         
         for title, value, unit, key in metric_info:
@@ -296,6 +296,7 @@ class HRVTestWindow(QWidget):
         # PyQtGraph plot
         self.plot_widget = pg.PlotWidget()
         self.plot_widget.setBackground('black')
+        self.plot_widget.setMenuEnabled(False)
 
         # Disable manual zoom/pan (amplitude lock)
         self.plot_widget.setMouseEnabled(x=False, y=False)
@@ -470,7 +471,7 @@ class HRVTestWindow(QWidget):
                 category="HRV_TEST_ERROR"
             )
     
-    def stop_capture(self):
+    def stop_capture(self, device_disconnected=False):
         """Stop capturing data"""
         # UPDATE STATE: Test stopped
         if hasattr(self, 'dashboard_instance') and self.dashboard_instance:
@@ -495,19 +496,26 @@ class HRVTestWindow(QWidget):
         if hasattr(self, 'metrics_timer'):
             self.metrics_timer.stop()
         
-        # Update UI
-        self.start_btn.setEnabled(True)
-        self.stop_btn.setEnabled(False)
-        self.lead_combo.setEnabled(True)
+        # Update UI based on reason
+        if device_disconnected:
+            self.start_btn.setEnabled(False)
+            self.stop_btn.setEnabled(False)
+            self.lead_combo.setEnabled(False)
+            self.report_btn.setEnabled(False)
+            self.status_label.setText("Status: Device disconnected")
+        else:
+            self.start_btn.setEnabled(True)
+            self.stop_btn.setEnabled(False)
+            self.lead_combo.setEnabled(True)
 
+            if len(self.captured_data) > 0:
+                self.report_btn.setEnabled(True)
+                self.status_label.setText(f"Status: Capture Complete")
+            else:
+                self.status_label.setText("Status: Capture Stopped (No data)")
+        
         # Re-enable display interaction after capture (optional, but allows inspection)
         self.plot_widget.setMouseEnabled(x=True, y=True)
-        
-        if len(self.captured_data) > 0:
-            self.report_btn.setEnabled(True)
-            self.status_label.setText(f"Status: Capture Complete")
-        else:
-            self.status_label.setText("Status: Capture Stopped (No data)")
         
         self.status_label.setStyleSheet("color: #666; padding: 5px;")
         self.timer_label.setText("Time: 00:00")
@@ -557,7 +565,7 @@ class HRVTestWindow(QWidget):
         # Check if device got disconnected suddenly
         if not self.serial_reader.running:
             print("⚠️ Device disconnected during HRV test!")
-            self.stop_capture()
+            self.stop_capture(device_disconnected=True)
             return
             
         

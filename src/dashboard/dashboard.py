@@ -219,6 +219,7 @@ class Dashboard(QWidget):
             "hrv_test": False,
             "hyperkalemia_test": False
         }
+        self.closed_by_sign_out = False
         
         # Initialize standard values flag
         self._use_standard_values = True
@@ -1005,6 +1006,9 @@ class Dashboard(QWidget):
         self.parameters_slider.setStyleSheet("QSlider::groove:horizontal { height: 6px; background: #ececec; border-radius: 3px; } QSlider::handle:horizontal { background: #ff6600; width: 14px; border-radius: 7px; margin: -5px 0; } QSlider::sub-page:horizontal { background: #ffd5b3; border-radius: 3px; }")
         notes_layout.addWidget(self.parameters_slider)
 
+        # Keep a reference so we can show/hide the METRICS panel based on user actions
+        self.metrics_notes_card = notes_card
+
         # Sync slider with the hidden horizontal scrollbar
         _hbar = self.parameters_text.horizontalScrollBar()
         _hbar.rangeChanged.connect(lambda _min, _max: self.parameters_slider.setMaximum(_max))
@@ -1012,6 +1016,9 @@ class Dashboard(QWidget):
         self.parameters_slider.valueChanged.connect(_hbar.setValue)
         # Make the Additional Notes card span all 3 columns (full row width)
         grid.addWidget(notes_card, 3, 0, 1, 3)
+
+        # Hide METRICS panel by default; it will be shown when a report is selected
+        self.metrics_notes_card.hide()
 
         # --- Recent Reports Card ---
         reports_card = QFrame()
@@ -1745,6 +1752,10 @@ class Dashboard(QWidget):
                 self.parameters_text.setHtml(line)
             else:
                 self.parameters_text.setPlainText(line)
+        
+        # Show METRICS panel when user selects/clicks a report in Recent Reports
+        if hasattr(self, "metrics_notes_card"):
+            self.metrics_notes_card.show()
 
     def update_live_metrics_panel(self):
         """Update METRICS panel with live data from ECG test page (if not viewing a report)"""
@@ -3966,6 +3977,7 @@ class Dashboard(QWidget):
         # User label removed per request
         # self.user_label.setText("Not signed in")
         self.sign_btn.setText("Sign In")
+        self.closed_by_sign_out = True
         try:
             recorder = getattr(self, '_session_recorder', None)
             if recorder:
@@ -4123,12 +4135,18 @@ class Dashboard(QWidget):
                     # If HRV or Hyperkalemia test window is open, show "Test Failed" and close it
                     if hasattr(self, 'hrv_window') and self.hrv_window and self.hrv_window.isVisible():
                         if hasattr(self.hrv_window, 'stop_capture'):
-                            self.hrv_window.stop_capture()
+                            try:
+                                self.hrv_window.stop_capture(device_disconnected=True)
+                            except TypeError:
+                                self.hrv_window.stop_capture()
                         QMessageBox.critical(self.hrv_window, "Test Failed", "Device disconnected. Test failed.")
                         self.hrv_window.close()
                     elif hasattr(self, 'hyperkalemia_window') and self.hyperkalemia_window and self.hyperkalemia_window.isVisible():
                         if hasattr(self.hyperkalemia_window, 'stop_capture'):
-                            self.hyperkalemia_window.stop_capture()
+                            try:
+                                self.hyperkalemia_window.stop_capture(device_disconnected=True)
+                            except TypeError:
+                                self.hyperkalemia_window.stop_capture()
                         QMessageBox.critical(self.hyperkalemia_window, "Test Failed", "Device disconnected. Test failed.")
                         self.hyperkalemia_window.close()
                     # If ECG 12 lead test is running (on the stacked widget), show "Test Failed" and go back to dashboard
@@ -4158,6 +4176,12 @@ class Dashboard(QWidget):
                 last = getattr(self, "_last_device_scan_time", 0)
                 if now - last < 5.0:
                     return
+
+                # Show searching status while scan is in progress
+                if hasattr(self, 'device_status_label'):
+                    self.device_status_label.setText("Searching for device...")
+                    self.device_status_label.setStyleSheet("color: orange; margin-right: 10px; font-weight: bold;")
+                
                 self._device_scan_in_progress = True
                 self._last_device_scan_time = now
                 try:
@@ -4165,6 +4189,11 @@ class Dashboard(QWidget):
                 finally:
                     self._device_scan_in_progress = False
             else:
+                # Non-macOS platforms: trigger scan immediately and show searching status
+                if hasattr(self, 'device_status_label'):
+                    self.device_status_label.setText("Searching for device...")
+                    self.device_status_label.setStyleSheet("color: orange; margin-right: 10px; font-weight: bold;")
+
                 self.scan_for_device_version()
 
         # Only skip scanning if NOT already connected and a test window is open
@@ -4651,6 +4680,16 @@ class Dashboard(QWidget):
                     self.ecg_test_page.serial_reader.close()
         except Exception as e:
             print(f"Error cleaning up dashboard resources: {e}")
+        try:
+            from ecg.serial.serial_reader import GlobalHardwareManager
+            GlobalHardwareManager().close_reader()
+        except Exception as e:
+            print(f"Error closing global serial reader: {e}")
+        try:
+            if hasattr(self, 'device_check_timer') and self.device_check_timer:
+                self.device_check_timer.stop()
+        except Exception:
+            pass
         event.accept()
     
     def update_layout_proportions(self):

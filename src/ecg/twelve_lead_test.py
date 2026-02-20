@@ -1684,6 +1684,11 @@ class ECGTestPage(QWidget):
         # Calculate BPM first (works with ≥2 beats) - needed for low BPM detection
         # This allows BPM calculation even when we don't have enough beats for median beat
         # CRITICAL: Use most recent R-peaks for accurate BPM calculation (matches Fluke device)
+        # Initialize RR interval with last known good value (or 1000 ms ≈ 60 BPM) so that
+        # downstream calculations always have a defined rr_ms, even if no valid intervals
+        # are found in the current window.
+        rr_ms = getattr(self, 'last_rr_interval', 1000.0)
+
         if len(r_peaks) >= 2:
             # Calculate RR intervals from consecutive R-peaks
             rr_intervals_ms = np.diff(r_peaks) / fs * 1000.0
@@ -1711,6 +1716,8 @@ class ECGTestPage(QWidget):
                     rr_ms = np.median(valid_rr)
                     estimated_bpm = 60000.0 / rr_ms if rr_ms > 0 else 60
             else:
+                # No valid RR intervals in the physiological range; keep previous rr_ms
+                # and fall back to a safe default BPM.
                 estimated_bpm = 60
         else:
             estimated_bpm = 60

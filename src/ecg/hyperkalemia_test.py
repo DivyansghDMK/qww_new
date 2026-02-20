@@ -364,6 +364,7 @@ class HyperkalemiaTestWindow(QWidget):
             # Create plot widget
             plot_widget = pg.PlotWidget()
             plot_widget.setBackground('w')
+            plot_widget.setMenuEnabled(False)
             plot_widget.showGrid(x=False, y=False)
             
             # Hide Y-axis labels for cleaner display (clinical standard)
@@ -550,7 +551,7 @@ class HyperkalemiaTestWindow(QWidget):
                 category="HYPERKALEMIA_TEST_ERROR"
             )
     
-    def stop_capture(self):
+    def stop_capture(self, device_disconnected=False):
         """Stop capturing data"""
         # UPDATE STATE: Test stopped
         if hasattr(self, 'dashboard_instance') and self.dashboard_instance:
@@ -575,15 +576,23 @@ class HyperkalemiaTestWindow(QWidget):
         if hasattr(self, 'metrics_timer'):
             self.metrics_timer.stop()
         
-        # Update UI
-        self.start_btn.setEnabled(True)
-        self.stop_btn.setEnabled(False)
-        
-        if len(self.lead_ii_data) > 0:
-            self.analyze_btn.setEnabled(True)
-            self.status_label.setText(f"Status: Capture Complete")
+        # Update UI based on reason
+        if device_disconnected:
+            self.start_btn.setEnabled(False)
+            self.stop_btn.setEnabled(False)
+            self.analyze_btn.setEnabled(False)
+            self.report_btn.setEnabled(False)
+            self.status_label.setText("Status: Device disconnected")
         else:
-            self.status_label.setText("Status: Capture Stopped (No data)")
+            self.start_btn.setEnabled(True)
+            self.stop_btn.setEnabled(False)
+            
+            if len(self.lead_ii_data) > 0:
+                self.analyze_btn.setEnabled(True)
+                self.report_btn.setEnabled(True)
+                self.status_label.setText(f"Status: Capture Complete")
+            else:
+                self.status_label.setText("Status: Capture Stopped (No data)")
         
         self.status_label.setStyleSheet("color: #666; padding: 5px;")
         self.timer_label.setText("Time: 00:00")
@@ -633,7 +642,7 @@ class HyperkalemiaTestWindow(QWidget):
         # Check if device got disconnected suddenly
         if not self.serial_reader.running:
             print("⚠️ Device disconnected during Hyperkalemia test!")
-            self.stop_capture()
+            self.stop_capture(device_disconnected=True)
             return
             
         
@@ -705,13 +714,13 @@ class HyperkalemiaTestWindow(QWidget):
             # Update all plots with stable display window
             for lead_name in self.lead_data.keys():
                 if len(self.lead_data[lead_name]) > 0:
-                    # 25 mm/s → ~3 s window; scale with speed if available
+                    # 25 mm/s → ~3 s window (wave speed logic disabled for Hyperkalemia test)
                     seconds_to_show = 3.0
-                    try:
-                        wave_speed = float(self.settings_manager.get_wave_speed())
-                        seconds_to_show = 3.0 * (25.0 / max(1e-6, wave_speed))
-                    except:
-                        pass
+                    # try:
+                    #     wave_speed = float(self.settings_manager.get_wave_speed())
+                    #     seconds_to_show = 3.0 * (25.0 / max(1e-6, wave_speed))
+                    # except:
+                    #     pass
 
                     times = [d['time'] for d in self.lead_data[lead_name]]
                     values = [d['value'] for d in self.lead_data[lead_name]]
@@ -805,7 +814,7 @@ class HyperkalemiaTestWindow(QWidget):
         except Exception as e:
             pass
 
-    def analyze_hyperkalemia(self):
+    def analyze_hyperkalemia(self, enable=False):
         """Analyze captured ECG data for hyperkalemia indicators using clinical standards"""
         if self.active_samples < 500:
             QMessageBox.warning(self, "Insufficient Data", 
@@ -948,22 +957,22 @@ class HyperkalemiaTestWindow(QWidget):
                 "risk_score": risk_score
             }
                 
-            self.status_label.setText(f"Status: Analysis Complete ({risk_level} Risk)")
+            self.status_label.setText(f"Status: Analysis Complete ")
             self.status_label.setStyleSheet(f"color: {risk_color}; font-weight: bold;")
             self.report_btn.setEnabled(True)
             
-            # Show detailed popup
-            msg = f"<b>Hyperkalemia Analysis Results</b><br><br>"
-            msg += f"Risk Level: <span style='color:{risk_color}; font-weight:bold;'>{risk_level}</span><br><br>"
-            msg += f"Heart Rate: {hr} BPM<br>"
-            msg += f"PR Interval: {pr} ms<br>"
-            msg += f"QRS Duration: {qrs} ms<br>"
-            msg += f"QT Interval: {qt} ms<br>"
-            msg += f"QTc Interval: {qtc} ms<br><br>"
-            if indicators:
-                msg += "<b>Indicators:</b><br>" + "<br>".join(["- " + i for i in indicators])
-            
-            QMessageBox.information(self, "Hyperkalemia Analysis", msg)
+            if not enable:
+                msg = f"<b>Hyperkalemia Analysis Results</b><br><br>"
+                msg += f"Risk Level: <span style='color:{risk_color}; font-weight:bold;'>{risk_level}</span><br><br>"
+                msg += f"Heart Rate: {hr} BPM<br>"
+                msg += f"PR Interval: {pr} ms<br>"
+                msg += f"QRS Duration: {qrs} ms<br>"
+                msg += f"QT Interval: {qt} ms<br>"
+                msg += f"QTc Interval: {qtc} ms<br><br>"
+                if indicators:
+                    msg += "<b>Indicators:</b><br>" + "<br>".join(["- " + i for i in indicators])
+                
+                QMessageBox.information(self, "Hyperkalemia Analysis", msg)
             
         except Exception as e:
             self.crash_logger.log_crash("analyze_hyperkalemia", e)
@@ -972,6 +981,14 @@ class HyperkalemiaTestWindow(QWidget):
 
     def generate_report(self):
         """Generate hyperkalemia detection report PDF"""
+        # If analysis has not been run yet but enough data is present, perform a silent analysis
+        if self.analysis_results is None and len(self.lead_ii_data) > 0 and self.active_samples >= 500:
+            try:
+                self.analyze_hyperkalemia(enable=True)
+            except Exception:
+                pass
+
+        # If analysis is still unavailable, fall back to the original warning
         if self.analysis_results is None:
             QMessageBox.warning(self, "No Analysis", 
                               "Please analyze the ECG data first.")

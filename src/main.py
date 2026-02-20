@@ -758,10 +758,13 @@ def main():
                     # Run application
                     app.exec_()
                     
-                    logger.info(f"User {login.username} logged out")
-                    
-                    # After dashboard closes (sign out), show login again
-                    login = LoginRegisterDialog()
+                    if getattr(dashboard, "closed_by_sign_out", False):
+                        logger.info(f"User {login.username} logged out")
+                        # After dashboard closes via sign out, show login again
+                        login = LoginRegisterDialog()
+                    else:
+                        logger.info("Application closed by user from dashboard")
+                        break
                 else:
                     logger.info("Application closed by user")
                     break

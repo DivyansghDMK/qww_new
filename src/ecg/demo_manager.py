@@ -272,33 +272,30 @@ class DemoManager:
                 self._previous_wave_speed = None
             
             try:
-                # Ensure outer dashboard shows the same demo metrics as the ECG page (if available)
-                # so Back navigation doesn't revert to old real values.
                 dashboard = getattr(self.ecg_test_page, 'dashboard_instance', None)
                 if dashboard is None:
                     dashboard = getattr(self.ecg_test_page, 'parent', None)
-                if hasattr(self.ecg_test_page, 'metric_labels') and dashboard is not None and hasattr(dashboard, 'metric_labels'):
-                    try:
-                        hr = self.ecg_test_page.metric_labels.get('heart_rate', QLabel()).text()
-                        pr = self.ecg_test_page.metric_labels.get('pr_interval', QLabel()).text()
-                        qrs = self.ecg_test_page.metric_labels.get('qrs_duration', QLabel()).text()
-                        st = self.ecg_test_page.metric_labels.get('st_interval', QLabel()).text() if 'st_interval' in self.ecg_test_page.metric_labels else None
-                        qtc = self.ecg_test_page.metric_labels.get('qtc_interval', QLabel()).text() if 'qtc_interval' in self.ecg_test_page.metric_labels else None
-                    except Exception:
-                        hr = pr = qrs = st = qtc = None
+                if hasattr(self.ecg_test_page, 'metric_labels'):
+                    ml = self.ecg_test_page.metric_labels
+                    ml.get('heart_rate', QLabel()).setText("0")
+                    ml.get('pr_interval', QLabel()).setText("0")
+                    ml.get('qrs_duration', QLabel()).setText("0")
+                    if 'st_interval' in ml:
+                        ml['st_interval'].setText("0")
+                    if 'qtc_interval' in ml:
+                        ml['qtc_interval'].setText("0/0")
 
-                    if hr:
-                        dashboard.metric_labels.get('heart_rate', QLabel()).setText(f"{hr} BPM")
-                    if pr:
-                        dashboard.metric_labels.get('pr_interval', QLabel()).setText(f"{pr} ms")
-                    if qrs:
-                        dashboard.metric_labels.get('qrs_duration', QLabel()).setText(f"{qrs} ms")
-                    if st is not None:
-                        dashboard.metric_labels.get('st_interval', QLabel()).setText(f"{st} ms")
-                    if qtc and 'qtc_interval' in dashboard.metric_labels:
-                        dashboard.metric_labels['qtc_interval'].setText(f"{qtc} ms")
+                if dashboard is not None and hasattr(dashboard, 'metric_labels'):
+                    dml = dashboard.metric_labels
+                    dml.get('heart_rate', QLabel()).setText("0 BPM")
+                    dml.get('pr_interval', QLabel()).setText("0 ms")
+                    dml.get('qrs_duration', QLabel()).setText("0 ms")
+                    if 'st_interval' in dml:
+                        dml['st_interval'].setText("0 ms")
+                    if 'qtc_interval' in dml:
+                        dml['qtc_interval'].setText("0/0 ms")
             except Exception as e:
-                print(f" Could not preserve demo metrics on dashboard: {e}")
+                print(f" Could not reset demo metrics on dashboard: {e}")
             
             # Reset time tracking variables to zero
             self._demo_started_at = None
