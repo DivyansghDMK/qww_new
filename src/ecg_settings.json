@@ -2,7 +2,7 @@
   "wave_speed": "25",
   "wave_gain": "10",
   "lead_sequence": "Standard",
-  "serial_port": "COM12",
+  "serial_port": "COM6",
   "baud_rate": "115200",
   "hardware_version": "TTECGM00V_010101",
   "printer_average_wave": "on",

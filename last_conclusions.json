@@ -1,13 +1,15 @@
 {
-  "timestamp": "2026-02-21 15:08:24",
+  "timestamp": "2026-02-21 16:22:51",
   "findings": [
-    "Normal heart rate",
+    "Tachycardia detected",
     "Normal PR interval",
     "Normal QRS duration",
     "Normal QTc interval",
     "Low HRV"
   ],
   "recommendations": [
+    "Monitor symptoms, consider medical evaluation if persistent",
+    "Ensure adequate hydration and rest",
     "Ensure adequate rest and stress management",
     "Consider relaxation techniques, adequate sleep, and regular exercise"
   ]
