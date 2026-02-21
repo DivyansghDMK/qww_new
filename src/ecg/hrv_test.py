@@ -622,8 +622,16 @@ class HRVTestWindow(QWidget):
                     self.data = np.roll(self.data, -1)
                     self.data[-1] = lead_value
                     
-                    # Fixed sampling rate for medical device (do not estimate from packet timing)
-                    self.sampling_rate = 500.0
+                    if self.ecg_calculator and hasattr(self.ecg_calculator, "sampler"):
+                        try:
+                            sr = self.ecg_calculator.sampler.add_sample()
+                        except Exception:
+                            sr = 0.0
+                        if sr and sr > 0:
+                            safe_sr = float(sr)
+                            if safe_sr < 50.0 or safe_sr > 1000.0:
+                                safe_sr = self.sampling_rate
+                            self.sampling_rate = safe_sr
                     
                     # Store data point with timestamp for final report generation
                     elapsed = time.time() - self.start_time
@@ -1057,8 +1065,7 @@ class HRVTestWindow(QWidget):
             return
         
         try:
-            current_fs = 500.0
-            self.sampling_rate = 500.0
+            current_fs = self.sampling_rate if self.sampling_rate > 0 else 500.0
             
             if self.ecg_calculator:
                 # Ensure the calculator's sampler is in sync

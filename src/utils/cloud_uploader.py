@@ -10,6 +10,7 @@ import requests
 from pathlib import Path
 from datetime import datetime
 from dotenv import load_dotenv
+import sys
 
 # Load environment variables
 # 1) Load from current working directory (if running from project root)
@@ -28,6 +29,21 @@ try:
             load_dotenv(dotenv_path=str(alt_env), override=False)
 except Exception:
     # Best-effort; silently continue if path resolution fails
+    pass
+
+# 3) PyInstaller: load .env from frozen app directory and unpack dir (sys._MEIPASS)
+try:
+    if getattr(sys, 'frozen', False):
+        app_dir = os.path.dirname(sys.executable)
+        app_env = os.path.join(app_dir, '.env')
+        if os.path.exists(app_env):
+            load_dotenv(dotenv_path=app_env, override=False)
+        meipass = getattr(sys, '_MEIPASS', None)
+        if meipass:
+            meipass_env = os.path.join(meipass, '.env')
+            if os.path.exists(meipass_env):
+                load_dotenv(dotenv_path=meipass_env, override=False)
+except Exception:
     pass
 
 # Final fallback: manually parse .env if python-dotenv misses it (rare edge cases)
@@ -53,6 +69,13 @@ def _manual_env_load(env_path: Path):
 
 try:
     _manual_env_load(root_env)
+    # Also try app dir and MEIPASS for manual parse
+    if getattr(sys, 'frozen', False):
+        app_dir = os.path.dirname(sys.executable)
+        _manual_env_load(Path(app_dir) / '.env')
+        meipass = getattr(sys, '_MEIPASS', None)
+        if meipass:
+            _manual_env_load(Path(meipass) / '.env')
 except Exception:
     pass
 

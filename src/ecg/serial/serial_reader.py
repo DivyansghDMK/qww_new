@@ -4,7 +4,7 @@ from typing import List, Dict, Optional
 from PyQt5.QtWidgets import QMessageBox
 
 # Configuration: Skip VERSION command if device doesn't support it or times out
-SKIP_VERSION_CHECK = True  # Set to False to enable VERSION command
+SKIP_VERSION_CHECK = False  # Enable VERSION command to populate Version panel
 
 try:
     import serial

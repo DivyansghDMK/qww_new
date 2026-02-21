@@ -23,11 +23,10 @@ from PyQt5.QtWidgets import (
 import sys
 import os
 try:
-    from src.utils.cloud_uploader import get_cloud_uploader
+    from utils.cloud_uploader import get_cloud_uploader
 except ImportError:
-    # Fallback if run directly or path issues
     sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
-    from src.utils.cloud_uploader import get_cloud_uploader
+    from utils.cloud_uploader import get_cloud_uploader
 from PyQt5.QtCore import Qt, QDate, QThread, pyqtSignal
 from PyQt5.QtGui import QFont
 import json

@@ -538,7 +538,7 @@ class HyperkalemiaTestWindow(QWidget):
             self.duration_timer.start(1000)  # Check duration every second
             self.metrics_timer = QTimer(self)
             self.metrics_timer.timeout.connect(self.update_metrics)
-            self.metrics_timer.start(1000)  # Update metrics every second
+            self.metrics_timer.start(200)
             
             # No success message needed - status label already shows the state
             
@@ -765,7 +765,9 @@ class HyperkalemiaTestWindow(QWidget):
 
     def update_metrics(self):
         """Calculate and update ECG metrics using same stable methods as 12-lead dashboard"""
-        if not self.is_capturing or len(self.lead_ii_data) < 2000:
+        if not self.is_capturing:
+            return
+        if self.active_samples < max(200, int((self.sampling_rate or 500.0) * 0.5)):
             return
         
         try:

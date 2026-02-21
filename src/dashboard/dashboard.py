@@ -70,37 +70,26 @@ def get_asset_path(asset_name):
     Returns:
         str: Absolute path to the asset file
     """
-    # Get the directory where this script is located
+    import sys
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    
-    # Try multiple possible locations for the assets folder
-    possible_paths = [
-        # Standard project structure: src/dashboard/dashboard.py -> assets/
+    possible_paths = []
+    if getattr(sys, "frozen", False):
+        bundle_dir = getattr(sys, "_MEIPASS", "")
+        exe_dir = os.path.dirname(sys.executable)
+        possible_paths.extend([
+            os.path.join(bundle_dir, "assets"),
+            os.path.join(exe_dir, "assets"),
+        ])
+    possible_paths.extend([
         os.path.join(os.path.dirname(os.path.dirname(script_dir)), "assets"),
-        # Alternative: if running from project root
         os.path.join(script_dir, "assets"),
-        # Alternative: if running from src/
         os.path.join(os.path.dirname(script_dir), "assets"),
-        # Alternative: if running from dashboard/
         os.path.join(script_dir, "..", "assets"),
-    ]
-    
-    # Find the first valid assets directory
-    assets_dir = None
+    ])
     for path in possible_paths:
         if os.path.exists(path) and os.path.isdir(path):
-            assets_dir = path
-            break
-    
-    if assets_dir is None:
-        print(f"Warning: Could not find assets directory. Tried paths: {possible_paths}")
-        # Return a default path as fallback
-        return os.path.join(os.path.dirname(script_dir), "..", "assets", asset_name)
-    
-    # Return the full path to the asset
-    asset_path = os.path.join(assets_dir, asset_name)
-    
-    return asset_path
+            return os.path.join(path, asset_name)
+    return os.path.join(os.path.dirname(script_dir), "..", "assets", asset_name)
 
 class MplCanvas(FigureCanvas):
     def __init__(self, width=4, height=2, dpi=100):

@@ -49,5 +49,22 @@
     "HRV_pNN50": 0.5841121495327103,
     "HRV_SDANN_ms": 20.639229657388,
     "Original_HR_bpm": 54
+  },
+  {
+    "timestamp": "2026-02-21 15:21:48",
+    "file": "C:\\Users\\DELL\\Downloads\\HRV_Report_20260221_152143.pdf",
+    "HR_bpm": 112,
+    "PR_ms": 182,
+    "QRS_ms": 88,
+    "QT_ms": 355,
+    "QTc_ms": 298,
+    "ST_ms": 0,
+    "RR_ms": 736,
+    "HRV_SDNN_ms": 57.10986455807147,
+    "HRV_RMSSD_ms": 29.9982932847854,
+    "HRV_NN50": 2,
+    "HRV_pNN50": 1.5873015873015872,
+    "HRV_SDANN_ms": 32.7711337043238,
+    "Original_HR_bpm": 40
   }
 ]

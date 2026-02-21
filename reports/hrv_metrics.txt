@@ -807,3 +807,36 @@ RR interval range: 38.00 ms
 SDANN Calculation Details:
    Segments used: 9
    Segment length: 1 intervals per segment
+
+
+==================================================
+==================================================
+==================================================
+HRV Metrics Report
+==================================================
+Generated: 2026-02-21 15:21:48
+--------------------------------------------------
+
+Average NN Intervals (mean RR interval): 653.17 ms
+   Formula: average_nn_intervals = mean(RR_intervals)
+SDNN (Standard Deviation of NN intervals): 57.11 ms
+   Formula: SDNN = std(RR_intervals)
+SDANN (Standard Deviation of Average NN intervals): 32.77 ms
+   Formula: SDANN = std(mean_segment_intervals)
+RMSSD (Root Mean Square of Successive Differences): 30.00 ms
+NN50 (Number of NN intervals > 50ms different): 2
+pNN50 (Percentage of NN50): 1.59%
+Mean Heart Rate: 91.86 bpm
+--------------------------------------------------
+
+Calculation Details:
+Total samples: 149808
+RR intervals used: 130
+Average NN Intervals: 653.17 ms
+Min RR interval: 378.00 ms
+Max RR interval: 1806.00 ms
+RR interval range: 1428.00 ms
+
+SDANN Calculation Details:
+   Segments used: 5
+   Segment length: 26 intervals per segment

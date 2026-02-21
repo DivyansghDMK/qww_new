@@ -1764,5 +1764,40 @@
       "machine_serial": "",
       "heart_rate": "149"
     }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads/ECG_Report_12_1_20260221_113504.pdf",
+    "uploaded_at": "2026-02-21T11:35:13.332438",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/02/21/ECG_Report_12_1_20260221_113504.pdf",
+      "key": "ecg-reports/2026/02/21/ECG_Report_12_1_20260221_113504.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260221_113504.pdf",
+      "uploaded_at": "2026-02-21T11:35:08.643138",
+      "file_size": 320267,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "40"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Downloads\\dfg\\merge\\reports\\ECG_Report_12_1_20260221_113504.pdf",
+    "uploaded_at": "2026-02-21T11:35:28.776813",
+    "service": "s3",
+    "result": {
+      "status": "success"
+    },
+    "metadata": {
+      "type": "doctor_review",
+      "doctor": "Dr_Divyansh"
+    }
   }
 ]

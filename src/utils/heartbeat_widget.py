@@ -4,22 +4,25 @@ from PyQt5.QtCore import Qt, QPropertyAnimation, pyqtProperty
 import os
 
 def get_asset_path(asset_name):
-    """
-    Get the absolute path to an asset file in a portable way.
-    """
+    import sys
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    possible_paths = [
+    possible_paths = []
+    if getattr(sys, "frozen", False):
+        bundle_dir = getattr(sys, "_MEIPASS", "")
+        exe_dir = os.path.dirname(sys.executable)
+        possible_paths.extend([
+            os.path.join(bundle_dir, "assets"),
+            os.path.join(exe_dir, "assets"),
+        ])
+    possible_paths.extend([
         os.path.join(os.path.dirname(os.path.dirname(script_dir)), "assets"),
         os.path.join(script_dir, "assets"),
         os.path.join(os.path.dirname(script_dir), "assets"),
         os.path.join(script_dir, "..", "assets"),
-    ]
-    
+    ])
     for path in possible_paths:
         if os.path.exists(path) and os.path.isdir(path):
             return os.path.join(path, asset_name)
-    
-    # Fallback
     return os.path.join(script_dir, "..", "assets", asset_name)
 
 class HeartbeatLabel(QLabel):
