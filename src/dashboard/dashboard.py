@@ -4249,6 +4249,7 @@ class Dashboard(QWidget):
         """Update UI elements based on device connection status"""
         if connected:
             self .device_status_label.setText( "Device Connected" )
+            self.device_status_label.setStyleSheet("color: green; margin-right: 10px; font-weight: bold;")
             
             # Enable test buttons
             if hasattr(self, 'hrv_test_btn'):
