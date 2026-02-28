@@ -231,7 +231,7 @@ class Dashboard(QWidget):
         
         self.setWindowTitle("ECG Monitor Dashboard")
         self.setGeometry(100, 100, 1300, 900)
-        self.setWindowFlags(self.windowFlags() | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint | Qt.WindowCloseButtonHint)
+        self.setWindowFlags(Qt.Window | Qt.CustomizeWindowHint | Qt.WindowTitleHint | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint)
         self.setWindowState(Qt.WindowMaximized)
         self.center_on_screen()
         
@@ -2632,9 +2632,49 @@ class Dashboard(QWidget):
                         print(" Invalid values (NaN/Inf) in Lead II data")
                         return self._fallback_wave_update(frame)
 
+                    # Choose settings source
+                    settings_src = self.settings_manager
+                    try:
+                        if hasattr(self.ecg_test_page, 'settings_manager') and self.ecg_test_page.settings_manager is not None:
+                            settings_src = self.ecg_test_page.settings_manager
+                    except Exception:
+                        settings_src = self.settings_manager
+
+                    # Apply same AC/EMG/DFT filters as 12-lead dashboard for DISPLAY ONLY
+                    try:
+                        from ecg.ecg_filters import apply_ecg_filters_from_settings
+                        display_data = apply_ecg_filters_from_settings(
+                            signal=original_data,
+                            sampling_rate=actual_sampling_rate,
+                            settings_manager=settings_src
+                        )
+                    except Exception as filter_err:
+                        print(f" Error applying ECG display filters: {filter_err}")
+                        display_data = original_data
+
+                    # Apply Gaussian smoothing to reduce corner noise
+                    try:
+                        from scipy.ndimage import gaussian_filter1d
+                        sigma = getattr(self.ecg_test_page, 'SMOOTH_SIGMA', 0.8)
+                        if len(display_data) > 5 and sigma > 0:
+                            sigma = max(sigma * 1.5, 1.3)
+                            display_data = gaussian_filter1d(display_data, sigma=sigma)
+
+                        # Trim filter edge artefacts (similar to inner grid: ~0.5s each side)
+                            try:
+                                fs = float(actual_sampling_rate)
+                                edge_trim = int(0.5 * fs)
+                                if edge_trim > 0 and len(display_data) > 2 * edge_trim:
+                                    display_data = display_data[edge_trim:-edge_trim]
+                            except Exception:
+                                pass
+
+                    except Exception as gauss_err:
+                        print(f" Error applying Gaussian smoothing to ECG display: {gauss_err}")
+
                     # Determine visible window based on wave speed (display feature only)
                     try:
-                        wave_speed = float(self.settings_manager.get_wave_speed())  # 12.5 / 25 / 50
+                        wave_speed = float(settings_src.get_wave_speed())  # 12.5 / 25 / 50
                         if wave_speed <= 0:
                             wave_speed = 25.0
                     except Exception as e:
@@ -2648,7 +2688,7 @@ class Dashboard(QWidget):
                     # Scale time window with wave speed:
                     #   12.5 mm/s → 6 s, 25 mm/s → 3 s, 50 mm/s → 1.5 s
                     seconds_to_show = baseline_seconds * (25.0 / max(1e-6, wave_speed))
-                    window_samples = int(max(50, min(len(original_data), seconds_to_show * actual_sampling_rate)))
+                    window_samples = int(max(50, min(len(display_data), seconds_to_show * actual_sampling_rate)))
 
                     # ── Direct mirror of 12-lead Lead II display ────────────────────────
                     # data[1] is already a rolling fixed-size buffer filled by the serial
@@ -2658,8 +2698,11 @@ class Dashboard(QWidget):
                     # no manual ring-buffer needed, no wrapping jump.
                     # ────────────────────────────────────────────────────────────────────
                     try:
-                        # Take the visible window slice (already filtered above)
-                        src = original_data[-window_samples:]
+                        src = display_data[-window_samples:]
+                        if len(src) > 0:
+                            # Hard-center baseline each frame to prevent upward drift
+                            current_dc = float(np.nanmean(src))
+                            src = src - current_dc + 2048.0
 
                         # Strip NaNs from the head (happens while buffer fills up)
                         valid_mask = ~np.isnan(src)
@@ -2687,11 +2730,15 @@ class Dashboard(QWidget):
                         if np.any(np.isnan(display_y)) or np.any(np.isinf(display_y)):
                             print(" Invalid display data generated")
                             return self._fallback_wave_update(frame)
-
-                        self.ecg_line.set_ydata(display_y)
+                        
+                        # Update both X and Y so the visible window matches the time scale exactly
+                        x_axis = np.linspace(0.0, seconds_to_show, display_len)
+                        self.ecg_line.set_data(x_axis, display_y)
+                        # Ensure axes are locked: 0–seconds_to_show in X, 0–4096 in Y
                         self.ecg_canvas.axes.set_autoscale_on(False)
-                        self.ecg_canvas.axes.set_ylim(0, 4095)
-
+                        self.ecg_canvas.axes.set_xlim(0.0, seconds_to_show)
+                        self.ecg_canvas.axes.set_ylim(0, 4096)
+                        
                     except Exception as e:
                         print(f" Error processing display data: {e}")
                         return self._fallback_wave_update(frame)

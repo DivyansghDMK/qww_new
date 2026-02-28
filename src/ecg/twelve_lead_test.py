@@ -1223,7 +1223,7 @@ class ECGTestPage(QWidget):
         # self.sequential_btn = QPushButton("Show All Leads Sequentially")  # Commented out
         self.twelve_leads_btn = QPushButton("12:1")
         self.six_leads_btn = QPushButton("6:2")
-        self.back_btn = QPushButton("Back")
+        self.back_btn = QPushButton("Return to Dashboard")
 
         # Make all buttons responsive and compact
         for btn in [self.start_btn, self.stop_btn, self.generate_report_btn, 
@@ -1479,7 +1479,7 @@ class ECGTestPage(QWidget):
             ('generate_report_btn', "Generate Report"),
             ('twelve_leads_btn', "12:1"),
             ('six_leads_btn', "6:2"),
-            ('back_btn', "Back"),
+            ('back_btn', "Return to Dashboard"),
         ]:
             btn = getattr(self, attr, None)
             if btn:
@@ -4808,7 +4808,7 @@ class ECGTestPage(QWidget):
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        back_btn = QPushButton("Back")
+        back_btn = QPushButton("Return to Dashboard")
         back_btn.setFixedHeight(40)
         back_btn.clicked.connect(lambda: self.page_stack.setCurrentIndex(0))
         layout.addWidget(back_btn, alignment=Qt.AlignLeft)

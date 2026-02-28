@@ -5,7 +5,7 @@ import json
 import numpy as np
 from datetime import datetime
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox, QMessageBox,
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox, QMessageBox,
     QSizePolicy, QFrame
 )
 from PyQt5.QtGui import QFont, QColor
@@ -21,6 +21,7 @@ matplotlib.use('Agg')  # Use non-interactive backend for PDF generation
 import matplotlib.pyplot as plt
 from io import BytesIO
 from scipy.signal import find_peaks
+from scipy.ndimage import gaussian_filter1d
 
 # Try to import serial
 try:
@@ -64,13 +65,22 @@ class HRVTestWindow(QWidget):
     
     def __init__(self, parent=None, username=None):
         super().__init__(parent)
+
+        # Full screen on open
+        self.showFullScreen()
+
+        # Only show close button, disable minimize/maximize/restore
+        self.setWindowFlags(Qt.Window | Qt.WindowCloseButtonHint | Qt.CustomizeWindowHint | Qt.MSWindowsFixedSizeDialogHint)
+        # Prevent window from being moved/draggable
+        self.setWindowFlag(Qt.WindowTitleHint, True)
+
         self.dashboard_instance = parent  # Store reference to dashboard
         self.username = username
         self.setWindowTitle("HRV Test - Lead II")
         self.setMinimumSize(1200, 700)
         self.setGeometry(100, 100, 1200, 700)
         # Set window flags to make it a separate window
-        self.setWindowFlags(Qt.Window | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint | Qt.WindowCloseButtonHint)
+        # self.setWindowFlags(Qt.Window | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint | Qt.WindowCloseButtonHint)
         self.setWindowModality(Qt.ApplicationModal)
         
         # Data storage - use circular buffer like 12-lead test
@@ -152,6 +162,14 @@ class HRVTestWindow(QWidget):
         self.capture_timer.timeout.connect(self.update_plot)
         self.duration_timer = QTimer(self)
         self.duration_timer.timeout.connect(self.check_duration)
+
+    def mousePressEvent(self, event):
+        # Block all mouse press events (left/right click) for dragging
+        event.ignore()
+
+    def mouseMoveEvent(self, event):
+        # Block all mouse move events for dragging
+        event.ignore()
         
     def init_ui(self):
         """Initialize the user interface"""
@@ -745,9 +763,9 @@ class HRVTestWindow(QWidget):
                     else:
                         buffer_data = padded_data
 
-                    edge_trim = int(0.5 * fs)
-                    if len(buffer_data) > 2 * edge_trim:
-                        buffer_data = buffer_data[edge_trim:-edge_trim]
+                    # edge_trim = int(0.5 * fs)
+                    # if len(buffer_data) > 2 * edge_trim:
+                    #     buffer_data = buffer_data[edge_trim:-edge_trim]
 
                 if len(buffer_data) > 0:
                     # Create time axis based on sampling rate
@@ -784,6 +802,11 @@ class HRVTestWindow(QWidget):
                     else:
                         display_times = []
                         display_values = []
+
+                # --- Add Gaussian smoothing here ---
+                if len(display_values) > 5:
+                    gaussian_sigma = 2  # You can adjust this value for more/less smoothing
+                    display_values = gaussian_filter1d(display_values, sigma=gaussian_sigma)
                 
                 if len(display_times) > 0:
                     # Plot RAW data directly without centering/scaling
