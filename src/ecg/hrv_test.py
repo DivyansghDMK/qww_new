@@ -135,6 +135,12 @@ class HRVTestWindow(QWidget):
                     self.ecg_calculator.sampler = SamplingRateCalculator()
                 self.ecg_calculator.sampler.sampling_rate = self.sampling_rate
                 
+                # CRITICAL: Assign a unique instance_id so this calculator
+                # never pollutes or reads from the 12-lead test's smoothing buffers.
+                # Without this, both share the 'twelve_lead' key in the module-level
+                # _pr_buffers / _qrs_buffers / _qt_buffers / _qtc_buffers dicts.
+                self.ecg_calculator._instance_id = 'hrv_test'
+
                 print(" ECG calculator initialized for HRV test")
             except Exception as e:
                 print(f" Could not create ECG calculator: {e}")
@@ -389,6 +395,33 @@ class HRVTestWindow(QWidget):
                               "Serial/ECG modules are not available. Please install pyserial and restart.")
             return
         
+        # FLUSH stale smoothing state from any previous capture.
+        # This prevents old 12-lead (or prior HRV) interval values from
+        # bleeding into the new session via module-level buffer dicts.
+        try:
+            from ecg.ecg_calculations import cleanup_instance
+            cleanup_instance('hrv_test')
+        except Exception:
+            pass
+        # Also clear instance-level smoothing buffers on the calculator
+        if self.ecg_calculator:
+            for attr in ('_pr_smooth_buffer_tl', '_qrs_smooth_buffer',
+                         '_qt_smooth_buffer', '_p_smooth_buffer',
+                         '_last_displayed_qrs', '_last_displayed_qt',
+                         '_last_displayed_qtc', '_last_displayed_p',
+                         '_pending_qrs_value', '_pending_qt_value',
+                         '_pending_p_value'):
+                if hasattr(self.ecg_calculator, attr):
+                    v = getattr(self.ecg_calculator, attr)
+                    if isinstance(v, list):
+                        v.clear()
+                    else:
+                        setattr(self.ecg_calculator, attr, 0)
+            self.ecg_calculator.pr_interval = 0
+            self.ecg_calculator.last_qrs_duration = 0
+            self.ecg_calculator.last_qt_interval = 0
+            self.ecg_calculator.last_qtc_interval = 0
+
         # Get port from settings or auto-detect
         port_to_use = self.settings_manager.get_serial_port()
         baudrate = int(self.settings_manager.get_setting("baud_rate", "115200"))

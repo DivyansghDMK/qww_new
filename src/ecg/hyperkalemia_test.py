@@ -162,6 +162,9 @@ class HyperkalemiaTestWindow(QWidget):
                     self.ecg_calculator.sampler = SamplingRateCalculator()
                 self.ecg_calculator.sampler.sampling_rate = self.sampling_rate
                 
+                # CRITICAL: unique instance_id prevents sharing 12-lead smoothing buffers
+                self.ecg_calculator._instance_id = 'hyperkalemia_test'
+
                 print(" ECG calculator initialized for Hyperkalemia test")
             except Exception as e:
                 print(f" Could not create ECG calculator: {e}")
@@ -472,6 +475,30 @@ class HyperkalemiaTestWindow(QWidget):
                               "Serial/ECG modules are not available. Please install pyserial and restart.")
             return
         
+        # FLUSH stale smoothing state from any previous capture (including 12-lead).
+        try:
+            from ecg.ecg_calculations import cleanup_instance
+            cleanup_instance('hyperkalemia_test')
+        except Exception:
+            pass
+        if self.ecg_calculator:
+            for attr in ('_pr_smooth_buffer_tl', '_qrs_smooth_buffer',
+                         '_qt_smooth_buffer', '_p_smooth_buffer',
+                         '_last_displayed_qrs', '_last_displayed_qt',
+                         '_last_displayed_qtc', '_last_displayed_p',
+                         '_pending_qrs_value', '_pending_qt_value',
+                         '_pending_p_value'):
+                if hasattr(self.ecg_calculator, attr):
+                    v = getattr(self.ecg_calculator, attr)
+                    if isinstance(v, list):
+                        v.clear()
+                    else:
+                        setattr(self.ecg_calculator, attr, 0)
+            self.ecg_calculator.pr_interval = 0
+            self.ecg_calculator.last_qrs_duration = 0
+            self.ecg_calculator.last_qt_interval = 0
+            self.ecg_calculator.last_qtc_interval = 0
+
         # Get port from settings or auto-detect
         port_to_use = self.settings_manager.get_serial_port()
         baudrate = int(self.settings_manager.get_setting("baud_rate", "115200"))
