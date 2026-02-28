@@ -393,13 +393,28 @@ class HRVTestWindow(QWidget):
         port_to_use = self.settings_manager.get_serial_port()
         baudrate = int(self.settings_manager.get_setting("baud_rate", "115200"))
 
-        # Check if we already have an active reader in GlobalHardwareManager
-        from ecg.serial.serial_reader import GlobalHardwareManager
-        existing_reader = GlobalHardwareManager().reader
-        if existing_reader and existing_reader.ser and existing_reader.ser.is_open:
-            if not port_to_use or port_to_use == "Select Port":
-                port_to_use = existing_reader.ser.port
-                print(f" Using existing active serial port: {port_to_use}")
+        # Check if Demo Mode is active on the dashboard's ECGTestPage
+        is_demo = False
+        try:
+            if hasattr(self, 'dashboard_instance') and self.dashboard_instance:
+                ecg_page = getattr(self.dashboard_instance, 'ecg_test_page', None)
+                if ecg_page and getattr(ecg_page, 'demo_toggle', None):
+                    is_demo = ecg_page.demo_toggle.isChecked()
+        except Exception:
+            pass
+
+        if is_demo:
+            print(" Starting HRV Test in Demo Mode...")
+            from ecg.demo_serial_reader import DemoSerialReader
+            self.serial_reader = DemoSerialReader(self)
+        else:
+            # Check if we already have an active reader in GlobalHardwareManager
+            from ecg.serial.serial_reader import GlobalHardwareManager
+            existing_reader = GlobalHardwareManager().reader
+            if existing_reader and existing_reader.ser and existing_reader.ser.is_open:
+                if not port_to_use or port_to_use == "Select Port":
+                    port_to_use = existing_reader.ser.port
+                    print(f" Using existing active serial port: {port_to_use}")
         
         # Check if port needs scanning (not set or not in available ports)
         scan_needed = (not port_to_use or port_to_use == "Select Port")
@@ -413,41 +428,46 @@ class HRVTestWindow(QWidget):
             except Exception:
                 pass
         
-        if scan_needed:
-            print(" No COM port configured or port not found – will auto‑scan all ports.")
-            try:
-                scan_result = SerialStreamReader.scan_and_detect_port(baudrate=baudrate, timeout=0.2)
-                if scan_result:
-                    detected_port, detected_serial = scan_result
-                    port_to_use = detected_port
-                    print(f" Auto‑detected ECG device on port {detected_port}")
-                    
-                    # Close the detected serial object
-                    try:
-                        if detected_serial and detected_serial.is_open:
-                            detected_serial.close()
-                    except Exception as e:
-                        print(f" Warning: Failed to close detected serial port: {e}")
+            
+            if scan_needed:
+                print(" No COM port configured or port not found – will auto‑scan all ports.")
+                try:
+                    scan_result = SerialStreamReader.scan_and_detect_port(baudrate=baudrate, timeout=0.2)
+                    if scan_result:
+                        detected_port, detected_serial = scan_result
+                        port_to_use = detected_port
+                        print(f" Auto‑detected ECG device on port {detected_port}")
+                        
+                        # Close the detected serial object
+                        try:
+                            if detected_serial and detected_serial.is_open:
+                                detected_serial.close()
+                        except Exception as e:
+                            print(f" Warning: Failed to close detected serial port: {e}")
 
-                    # Save to settings
-                    if hasattr(self, 'settings_manager'):
-                        self.settings_manager.set_setting("serial_port", detected_port)
-                        self.settings_manager.save_settings()
-                else:
-                    QMessageBox.warning(self, "No Device Found", 
-                                      "Could not auto-detect ECG device. Please check connection.")
-                    if hasattr(self, 'dashboard_instance') and self.dashboard_instance:
-                        self.dashboard_instance.update_test_state("hrv_test", False)
+                        # Save to settings
+                        if hasattr(self, 'settings_manager'):
+                            self.settings_manager.set_setting("serial_port", detected_port)
+                            self.settings_manager.save_settings()
+                    else:
+                        QMessageBox.warning(self, "No Device Found", 
+                                          "Could not auto-detect ECG device. Please check connection.")
+                        if hasattr(self, 'dashboard_instance') and self.dashboard_instance:
+                            self.dashboard_instance.update_test_state("hrv_test", False)
+                        return
+                except Exception as scan_err:
+                    print(f" Port scan failed: {scan_err}")
+                    QMessageBox.warning(self, "Scan Failed", f"Port scan failed: {scan_err}")
                     return
-            except Exception as scan_err:
-                print(f" Port scan failed: {scan_err}")
-                QMessageBox.warning(self, "Scan Failed", f"Port scan failed: {scan_err}")
-                return
-        
-        try:
-            # Use GlobalHardwareManager to get the shared SerialStreamReader
-            from ecg.serial.serial_reader import GlobalHardwareManager
-            self.serial_reader = GlobalHardwareManager().get_reader(port_to_use, baudrate)
+            
+            try:
+                # Use GlobalHardwareManager to get the shared SerialStreamReader
+                from ecg.serial.serial_reader import GlobalHardwareManager
+                self.serial_reader = GlobalHardwareManager().get_reader(port_to_use, baudrate)
+        except Exception as e:
+            print(f" Error setting up serial reader: {e}")
+            return
+
 
             # Start/Resume acquisition. The start() method now handles 
             # skipping hardware commands if already running.
