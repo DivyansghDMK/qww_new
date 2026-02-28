@@ -498,19 +498,18 @@ class HyperkalemiaTestWindow(QWidget):
                 if not port_to_use or port_to_use == "Select Port":
                     port_to_use = existing_reader.ser.port
                     print(f" Using existing active serial port: {port_to_use}")
-        
-        # Check if port needs scanning (not set or not in available ports)
-        scan_needed = (not port_to_use or port_to_use == "Select Port")
-        
-        if not scan_needed:
-            try:
-                available_ports = [p.device for p in serial.tools.list_ports.comports()]
-                if port_to_use not in available_ports:
-                    print(f" Configured port {port_to_use} not found in available ports. forcing scan.")
-                    scan_needed = True
-            except Exception:
-                pass
-        
+            
+            # Check if port needs scanning (not set or not in available ports)
+            scan_needed = (not port_to_use or port_to_use == "Select Port")
+            
+            if not scan_needed:
+                try:
+                    available_ports = [p.device for p in serial.tools.list_ports.comports()]
+                    if port_to_use not in available_ports:
+                        print(f" Configured port {port_to_use} not found in available ports. forcing scan.")
+                        scan_needed = True
+                except Exception:
+                    pass
             
             if scan_needed:
                 print(" No COM port configured or port not found – will auto‑scan all ports.")
@@ -520,20 +519,16 @@ class HyperkalemiaTestWindow(QWidget):
                         detected_port, detected_serial = scan_result
                         port_to_use = detected_port
                         print(f" Auto‑detected ECG device on port {detected_port}")
-                        
-                        # Close the detected serial object
                         try:
                             if detected_serial and detected_serial.is_open:
                                 detected_serial.close()
                         except Exception as e:
                             print(f" Warning: Failed to close detected serial port: {e}")
-
-                        # Save to settings
                         if hasattr(self, 'settings_manager'):
                             self.settings_manager.set_setting("serial_port", detected_port)
                             self.settings_manager.save_settings()
                     else:
-                        QMessageBox.warning(self, "No Device Found", 
+                        QMessageBox.warning(self, "No Device Found",
                                           "Could not auto-detect ECG device. Please check connection.")
                         return
                 except Exception as scan_err:
@@ -542,11 +537,14 @@ class HyperkalemiaTestWindow(QWidget):
                     return
             
             try:
-                # Use GlobalHardwareManager to get the shared SerialStreamReader
                 from ecg.serial.serial_reader import GlobalHardwareManager
                 self.serial_reader = GlobalHardwareManager().get_reader(port_to_use, baudrate)
-            
-            # Start/Resume acquisition. The start() method now handles 
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to open serial port: {e}")
+                return
+
+        try:
+            # Start/Resume acquisition. The start() method now handles
             # skipping hardware commands if already running.
             self.serial_reader.start()
             

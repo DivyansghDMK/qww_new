@@ -415,19 +415,18 @@ class HRVTestWindow(QWidget):
                 if not port_to_use or port_to_use == "Select Port":
                     port_to_use = existing_reader.ser.port
                     print(f" Using existing active serial port: {port_to_use}")
-        
-        # Check if port needs scanning (not set or not in available ports)
-        scan_needed = (not port_to_use or port_to_use == "Select Port")
-        
-        if not scan_needed:
-            try:
-                available_ports = [p.device for p in serial.tools.list_ports.comports()]
-                if port_to_use not in available_ports:
-                    print(f" Configured port {port_to_use} not found in available ports. forcing scan.")
-                    scan_needed = True
-            except Exception:
-                pass
-        
+            
+            # Check if port needs scanning (not set or not in available ports)
+            scan_needed = (not port_to_use or port_to_use == "Select Port")
+            
+            if not scan_needed:
+                try:
+                    available_ports = [p.device for p in serial.tools.list_ports.comports()]
+                    if port_to_use not in available_ports:
+                        print(f" Configured port {port_to_use} not found in available ports. forcing scan.")
+                        scan_needed = True
+                except Exception:
+                    pass
             
             if scan_needed:
                 print(" No COM port configured or port not found – will auto‑scan all ports.")
@@ -437,20 +436,16 @@ class HRVTestWindow(QWidget):
                         detected_port, detected_serial = scan_result
                         port_to_use = detected_port
                         print(f" Auto‑detected ECG device on port {detected_port}")
-                        
-                        # Close the detected serial object
                         try:
                             if detected_serial and detected_serial.is_open:
                                 detected_serial.close()
                         except Exception as e:
                             print(f" Warning: Failed to close detected serial port: {e}")
-
-                        # Save to settings
                         if hasattr(self, 'settings_manager'):
                             self.settings_manager.set_setting("serial_port", detected_port)
                             self.settings_manager.save_settings()
                     else:
-                        QMessageBox.warning(self, "No Device Found", 
+                        QMessageBox.warning(self, "No Device Found",
                                           "Could not auto-detect ECG device. Please check connection.")
                         if hasattr(self, 'dashboard_instance') and self.dashboard_instance:
                             self.dashboard_instance.update_test_state("hrv_test", False)
@@ -461,22 +456,21 @@ class HRVTestWindow(QWidget):
                     return
             
             try:
-                # Use GlobalHardwareManager to get the shared SerialStreamReader
                 from ecg.serial.serial_reader import GlobalHardwareManager
                 self.serial_reader = GlobalHardwareManager().get_reader(port_to_use, baudrate)
-        except Exception as e:
-            print(f" Error setting up serial reader: {e}")
-            return
+            except Exception as e:
+                print(f" Error setting up serial reader: {e}")
+                QMessageBox.critical(self, "Error", f"Failed to open serial port: {e}")
+                return
 
-
-            # Start/Resume acquisition. The start() method now handles 
-            # skipping hardware commands if already running.
+        try:
+            # Start/Resume acquisition.
             self.serial_reader.start()
             
-            # Reset data - use HISTORY_LENGTH for sufficient buffer size
-            HISTORY_LENGTH = 10000  # Match initialization size
-            self.data = np.zeros(HISTORY_LENGTH, dtype=np.float32)  # Reset circular buffer
-            self.captured_data = []  # Store all captured data with timestamps
+            # Reset data
+            HISTORY_LENGTH = 10000
+            self.data = np.zeros(HISTORY_LENGTH, dtype=np.float32)
+            self.captured_data = []
             self.sample_index = 0
             self.active_samples = 0
             self.start_time = time.time()
@@ -486,7 +480,6 @@ class HRVTestWindow(QWidget):
             if self.ecg_calculator:
                 if hasattr(self.ecg_calculator, 'smoothing_buffers'):
                     self.ecg_calculator.smoothing_buffers = {}
-                # Initialize calculator data buffers with sufficient size for calculations
                 if not hasattr(self.ecg_calculator, 'data') or len(self.ecg_calculator.data) < 12:
                     self.ecg_calculator.data = [np.zeros(HISTORY_LENGTH, dtype=np.float32) for _ in range(12)]
             
@@ -510,8 +503,6 @@ class HRVTestWindow(QWidget):
                         if self._bpm_ctrl.display_bar not in existing:
                             main_layout.insertWidget(0, self._bpm_ctrl.display_bar)
                         self._bpm_ctrl.display_bar.show()
-                        
-                        # Start 3-second BPM UI refresh timer
                         if not hasattr(self, '_bpm_refresh_timer'):
                             self._bpm_refresh_timer = QTimer()
                             self._bpm_refresh_timer.timeout.connect(self._refresh_holter_bpm_label)
@@ -527,17 +518,17 @@ class HRVTestWindow(QWidget):
             self.status_label.setStyleSheet("color: #28a745; padding: 5px;")
             
             # Start timers
-            self.capture_timer.start(50)  # Update plot every 50ms
-            self.duration_timer.start(1000)  # Check duration every second
+            self.capture_timer.start(50)
+            self.duration_timer.start(1000)
             self.metrics_timer = QTimer(self)
             self.metrics_timer.timeout.connect(self.update_metrics)
-            self.metrics_timer.start(200)  # Update metrics every 200ms
+            self.metrics_timer.start(200)
             
-            QMessageBox.information(self, "Capture Started", 
+            QMessageBox.information(self, "Capture Started",
                                   f"{self.selected_lead} capture started. It will automatically stop after 5 minutes.")
             
         except Exception as e:
-            QMessageBox.critical(self, "Error", 
+            QMessageBox.critical(self, "Error",
                                f"Failed to start capture: {str(e)}")
             self.crash_logger.log_error(
                 message=f"HRV test capture start error: {e}",
