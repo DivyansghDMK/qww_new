@@ -2926,13 +2926,10 @@ class Dashboard(QWidget):
                 print(f"🔄 FORCE SYNC: Dashboard -> ECG Page")
                 
             # Force sync metric values from dashboard to ECG test page
-            # Extract numeric values from dashboard labels (e.g., "100 BPM" -> "100")
-            if 'heart_rate' in self.metric_labels and 'heart_rate' in self.ecg_test_page.metric_labels:
-                hr_text = self.metric_labels['heart_rate'].text()
-                hr_value = hr_text.split()[0] if ' ' in hr_text else hr_text
-                self.ecg_test_page.metric_labels['heart_rate'].setText(hr_value)
-                if self._sync_count % 50 == 1:
-                    print(f"  HR: {hr_value}")
+            # IMPORTANT: Do NOT push heart_rate from dashboard -> ECG page.
+            # The ECG page (Holter/real-time engine) is the canonical HR source.
+            # Pushing back from dashboard can re-introduce stale/rounded BPM values
+            # and create different BPM between patient sessions.
                 
             if 'pr_interval' in self.metric_labels and 'pr_interval' in self.ecg_test_page.metric_labels:
                 pr_text = self.metric_labels['pr_interval'].text()
@@ -3000,7 +2997,13 @@ class Dashboard(QWidget):
                 return
             if hasattr(self, 'ecg_test_page') and hasattr(self.ecg_test_page, 'get_current_metrics'):
                 ecg_metrics = self.ecg_test_page.get_current_metrics()
-                hr_text = ecg_metrics.get('heart_rate', '0')
+                # Use ECG page live heart rate as single source of truth.
+                # Fallback to parsed metrics only when live value is unavailable.
+                live_hr = getattr(self.ecg_test_page, 'last_heart_rate', 0)
+                if isinstance(live_hr, (int, float)) and live_hr > 0:
+                    hr_text = str(int(round(live_hr)))
+                else:
+                    hr_text = ecg_metrics.get('heart_rate', '0')
                 pr_text = ecg_metrics.get('pr_interval', '0')
                 qrs_text = ecg_metrics.get('qrs_duration', '0')
                 p_text = ecg_metrics.get('st_interval', '0')
@@ -3087,15 +3090,12 @@ class Dashboard(QWidget):
             except Exception:
                 return default
 
-        # Gather ECG data from dashboard metrics
+        # Gather ECG data from ECG engine + dashboard labels (engine first for medical correctness)
         HR_text = _extract_metric('heart_rate', "0")
         PR_text = _extract_metric('pr_interval', "0")
         QRS_text = _extract_metric('qrs_duration', "0")
-        qtc_label_text = _extract_metric('qtc_interval', "400/430", strip_units=False)
-        st_label_text = _extract_metric('st_interval', "", strip_units=False)
-        if not st_label_text or st_label_text == "":
-            st_label_text = _extract_metric('st_segment', "0.0 mV", strip_units=False)
-        
+        qtc_label_text = _extract_metric('qtc_interval', "", strip_units=False)
+
         QT_text = "0"
         QTc_text = "0"
         if '/' in qtc_label_text:
@@ -3105,40 +3105,81 @@ class Dashboard(QWidget):
             if len(parts) >= 2:
                 QTc_text = parts[1]
         else:
-            QTc_text = qtc_label_text.strip()
+            QTc_text = qtc_label_text.strip() or "0"
 
-        ST_text = st_label_text.replace("mV", "").strip()
-        
-        HR = _to_int(HR_text, 0)
-        PR = _to_int(PR_text, 0)
-        QRS = _to_int(QRS_text, 0)
-        QT = _to_int(QT_text, 0)
-        QTc = _to_int(QTc_text, 0)
-        ST = _to_float(ST_text, 0.0)
+        # Parse dashboard values
+        hr_from_label = _to_int(HR_text, 0)
+        pr_from_label = _to_int(PR_text, 0)
+        qrs_from_label = _to_int(QRS_text, 0)
+        qt_from_label = _to_int(QT_text, 0)
+        qtc_from_label = _to_int(QTc_text, 0)
 
-        if QT <= 0 and hasattr(self, 'ecg_test_page') and getattr(self.ecg_test_page, '_last_qt_ms', None):
-            QT = int(self.ecg_test_page._last_qt_ms)
-        if QTc <= 0 and hasattr(self, 'ecg_test_page') and getattr(self.ecg_test_page, '_last_qtc_ms', None):
-            QTc = int(self.ecg_test_page._last_qtc_ms)
-        QTcF = 0
-        if hasattr(self, 'ecg_test_page') and getattr(self.ecg_test_page, '_last_qtcf_ms', None):
-            QTcF = int(self.ecg_test_page._last_qtcf_ms or 0)
-        
-        print(f" PDF Report ECG Values - HR: {HR}, PR: {PR}, QRS: {QRS}, QT: {QT}, QTc: {QTc}, QTcF: {QTcF}, ST: {ST}")
+        # Prefer raw ECG-page internal values (closest to actual medical calculations)
+        ecg_page = getattr(self, 'ecg_test_page', None)
+        ecg_page_metrics = {}
+        if ecg_page and hasattr(ecg_page, 'get_current_metrics'):
+            try:
+                ecg_page_metrics = ecg_page.get_current_metrics() or {}
+            except Exception:
+                ecg_page_metrics = {}
 
-        # Prepare data for the report generator
+        def _safe_attr_int(obj, attr, default=0):
+            try:
+                v = getattr(obj, attr, default)
+                return int(round(float(v))) if v is not None else default
+            except Exception:
+                return default
+
+        def _safe_dict_int(dct, key, default=0):
+            try:
+                v = dct.get(key, default)
+                if isinstance(v, str) and '/' in v:
+                    v = v.split('/')[0].strip()
+                return int(round(float(v))) if v not in (None, '', '--') else default
+            except Exception:
+                return default
+
+        HR = _safe_attr_int(ecg_page, 'last_heart_rate', hr_from_label) if ecg_page else hr_from_label
+        PR = _safe_attr_int(ecg_page, 'pr_interval', _safe_dict_int(ecg_page_metrics, 'pr_interval', pr_from_label)) if ecg_page else pr_from_label
+        QRS = _safe_attr_int(ecg_page, 'last_qrs_duration', _safe_dict_int(ecg_page_metrics, 'qrs_duration', qrs_from_label)) if ecg_page else qrs_from_label
+        QT = _safe_attr_int(ecg_page, 'last_qt_interval', qt_from_label) if ecg_page else qt_from_label
+        QTc = _safe_attr_int(ecg_page, 'last_qtc_interval', qtc_from_label) if ecg_page else qtc_from_label
+        QTcF = _safe_attr_int(ecg_page, 'last_qtcf_interval', 0) if ecg_page else 0
+        RR = _safe_attr_int(ecg_page, 'last_rr_interval', 0) if ecg_page else 0
+
+        # Ensure RR and QT/QTc are coherent if any value is missing
+        if RR <= 0 and HR > 0:
+            RR = int(round(60000.0 / HR))
+        if QT <= 0:
+            QT = _safe_dict_int(ecg_page_metrics, 'qt_interval', qt_from_label)
+        if QTc <= 0:
+            QTc = _safe_dict_int(ecg_page_metrics, 'qtc_interval', qtc_from_label)
+
+        # ST in this app pipeline is not consistently available as true deviation on dashboard cards.
+        # Keep safe numeric default for report compatibility unless explicitly provided.
+        ST = 0.0
+
+        print(
+            f"📋 PDF Report ECG Values - HR: {HR}, PR: {PR}, QRS: {QRS}, QT: {QT}, QTc: {QTc}, "
+            f"QTcF: {QTcF}, RR: {RR}, ST: {ST}"
+        )
+
+        # Prepare data for the report generator (single, medically coherent source)
         ecg_data = {
-            "HR": 4833,  # Total heartbeats
-            "beat": HR if HR > 0 else 88,  # Current heart rate
-            "PR": PR if PR > 0 else 160,
-            "QRS": QRS if QRS > 0 else 90,
-            "QT": QT if QT > 0 else 400,
-            "QTc": QTc if QTc > 0 else 400,
-            "QTcF": QTcF if QTcF > 0 else QTc if QTc > 0 else 400,
+            "HR": HR,
+            "Heart_Rate": HR,
+            "HR_bpm": HR,
+            "beat": HR,
+            "PR": PR,
+            "QRS": QRS,
+            "QT": QT,
+            "QTc": QTc,
+            "QTcF": QTcF if QTcF > 0 else QTc,
+            "RR_ms": RR,
             "ST": ST,
-            "HR_max": 136,
-            "HR_min": 74,
-            "HR_avg": HR if HR > 0 else 88,
+            "HR_max": HR if HR > 0 else 0,
+            "HR_min": HR if HR > 0 else 0,
+            "HR_avg": HR if HR > 0 else 0,
         }
 
         # --- Capture last 10 seconds of live ECG data ---
