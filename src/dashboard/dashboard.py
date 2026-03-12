@@ -2926,13 +2926,10 @@ class Dashboard(QWidget):
                 print(f"🔄 FORCE SYNC: Dashboard -> ECG Page")
                 
             # Force sync metric values from dashboard to ECG test page
-            # Extract numeric values from dashboard labels (e.g., "100 BPM" -> "100")
-            if 'heart_rate' in self.metric_labels and 'heart_rate' in self.ecg_test_page.metric_labels:
-                hr_text = self.metric_labels['heart_rate'].text()
-                hr_value = hr_text.split()[0] if ' ' in hr_text else hr_text
-                self.ecg_test_page.metric_labels['heart_rate'].setText(hr_value)
-                if self._sync_count % 50 == 1:
-                    print(f"  HR: {hr_value}")
+            # IMPORTANT: Do NOT push heart_rate from dashboard -> ECG page.
+            # The ECG page (Holter/real-time engine) is the canonical HR source.
+            # Pushing back from dashboard can re-introduce stale/rounded BPM values
+            # and create different BPM between patient sessions.
                 
             if 'pr_interval' in self.metric_labels and 'pr_interval' in self.ecg_test_page.metric_labels:
                 pr_text = self.metric_labels['pr_interval'].text()
@@ -3000,7 +2997,13 @@ class Dashboard(QWidget):
                 return
             if hasattr(self, 'ecg_test_page') and hasattr(self.ecg_test_page, 'get_current_metrics'):
                 ecg_metrics = self.ecg_test_page.get_current_metrics()
-                hr_text = ecg_metrics.get('heart_rate', '0')
+                # Use ECG page live heart rate as single source of truth.
+                # Fallback to parsed metrics only when live value is unavailable.
+                live_hr = getattr(self.ecg_test_page, 'last_heart_rate', 0)
+                if isinstance(live_hr, (int, float)) and live_hr > 0:
+                    hr_text = str(int(round(live_hr)))
+                else:
+                    hr_text = ecg_metrics.get('heart_rate', '0')
                 pr_text = ecg_metrics.get('pr_interval', '0')
                 qrs_text = ecg_metrics.get('qrs_duration', '0')
                 p_text = ecg_metrics.get('st_interval', '0')
