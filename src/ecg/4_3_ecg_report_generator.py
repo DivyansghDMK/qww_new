@@ -817,12 +817,23 @@ def create_reportlab_ecg_drawing_with_real_data(lead_name, ecg_data, width=460, 
             ecg_mv = ecg_mv - trend  # ALWAYS remove trend - no threshold
             print(f" {lead_name}: FORCEFUL: Removed slope={slope:.6f} (no threshold)")
             
-            # ADDITIONAL: Force first and last 10 samples to zero
-            edge_samples = 10
-            if len(ecg_mv) > edge_samples * 2:
-                ecg_mv[:edge_samples] = 0  # Force start to zero
-                ecg_mv[-edge_samples:] = 0  # Force end to zero
-                print(f" {lead_name}: FORCEFUL: Forced {edge_samples} start/end samples to zero")
+            # Edge conditioning for all BPM: smooth approach + hard-flat terminal segment.
+            edge_samples = min(80, max(20, len(ecg_mv) // 16))
+            if len(ecg_mv) > edge_samples * 3:
+                t = np.linspace(0.0, 1.0, edge_samples)
+                taper = 0.5 * (1.0 + np.cos(np.pi * t))
+                ecg_mv[:edge_samples] = ecg_mv[:edge_samples] * (1.0 - taper)
+                ecg_mv[-edge_samples:] = ecg_mv[-edge_samples:] * taper
+
+                flat_tail = max(10, edge_samples // 4)
+                blend = max(8, edge_samples // 5)
+                if len(ecg_mv) > flat_tail + blend:
+                    blend_start = len(ecg_mv) - (flat_tail + blend)
+                    blend_end = len(ecg_mv) - flat_tail
+                    ramp = np.linspace(1.0, 0.0, blend)
+                    ecg_mv[blend_start:blend_end] = ecg_mv[blend_start:blend_end] * ramp
+                    ecg_mv[-flat_tail:] = 0.0
+                print(f" {lead_name}: Applied edge taper + flat tail ({flat_tail} samples)")
     
     # ORIGINAL WORKING GAIN: Calculate y_mm AFTER slope removal
     y_mm = ecg_mv * wave_gain_mm_mv

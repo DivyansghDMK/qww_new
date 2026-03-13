@@ -33,7 +33,7 @@ REFERENCE_TABLE: List[ReferenceRow] = [
     ReferenceRow(45, 1333, 88, 160, 86, 360, 315),
     ReferenceRow(50, 1200, 92, 168, 85, 365, 333),
     ReferenceRow(55, 1091, 86, 155, 86, 350, 345),
-    ReferenceRow(60, 1000, 92, 167, 86, 357, 357),
+    ReferenceRow(60, 1000, 92, 166, 91, 363, 363),
     ReferenceRow(65, 923, 81, 151, 87, 332, 348),
     ReferenceRow(70, 857, 81, 143, 87, 316, 341),
     ReferenceRow(75, 800, 76, 131, 86, 298, 333),

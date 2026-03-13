@@ -762,15 +762,21 @@ def create_reportlab_ecg_drawing_with_real_data(lead_name, ecg_data, width=460, 
             ecg_normalized = center_y + (local - baseline)
         except Exception:
             pass
-        edge = max(30, int(0.25 * len(ecg_normalized)))
-        if len(ecg_normalized) > edge * 2:
+        edge = min(120, max(24, int(0.18 * len(ecg_normalized))))
+        if len(ecg_normalized) > edge * 3:
             r = np.sin(np.linspace(0.0, np.pi / 2.0, edge)) ** 2
             ecg_normalized[:edge] = center_y + (ecg_normalized[:edge] - center_y) * r
             ecg_normalized[-edge:] = center_y + (ecg_normalized[-edge:] - center_y) * r[::-1]
-        clamp = max(10, int(0.05 * len(ecg_normalized)))
-        if len(ecg_normalized) > clamp * 2:
-            ecg_normalized[:clamp] = center_y
-            ecg_normalized[-clamp:] = center_y
+
+            # Guarantee flat strip ending at right edge for every BPM.
+            flat_tail = max(12, edge // 4)
+            blend = max(8, edge // 5)
+            if len(ecg_normalized) > flat_tail + blend:
+                blend_start = len(ecg_normalized) - (flat_tail + blend)
+                blend_end = len(ecg_normalized) - flat_tail
+                ramp = np.linspace(1.0, 0.0, blend)
+                ecg_normalized[blend_start:blend_end] = center_y + (ecg_normalized[blend_start:blend_end] - center_y) * ramp
+                ecg_normalized[-flat_tail:] = center_y
         
         # Draw ALL ECG data points - NO REDUCTION
         ecg_color = colors.HexColor("#000000")  # Black ECG line

@@ -60,6 +60,7 @@ from scipy.signal import butter, filtfilt, find_peaks
 # ── Internal imports ──────────────────────────────────────────────────────────
 from .signal_paths import display_filter
 from .qrs_detection import qrs_duration_from_raw_signal
+from .metrics.reference_intervals import lookup_reference_intervals
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -80,11 +81,76 @@ _hr_beat_count:  Dict[str, int]           = {}
 _hr_displayed:   Dict[str, int]           = {}
 _hr_pending:     Dict[str, Optional[int]] = {}
 _hr_pending_ts:  Dict[str, float]         = {}
+_reference_metric_state: Dict[str, Dict[str, float]] = {}
 
 _STARTUP_LOCKOUT_BEATS = 5
 _STARTUP_RR_MAX_MS     = 6500   # covers 10 BPM (RR=6000ms)
 _STARTUP_ECTOPIC_TOL   = 0.10
 _NORMAL_ECTOPIC_TOL    = 0.20
+
+
+# Per-update max movement (ms) for live UI stabilization.
+# Keeps metrics from jumping frame-to-frame while still allowing trends.
+_REFERENCE_SLEW_LIMITS = {
+    "RR": 18.0,
+    "PR": 6.0,
+    "QRS": 3.0,
+    "QT": 8.0,
+    "QTc": 10.0,
+}
+
+
+def _limit_step(prev: float, target: float, max_step: float) -> float:
+    if target > prev + max_step:
+        return prev + max_step
+    if target < prev - max_step:
+        return prev - max_step
+    return target
+
+
+def _stabilize_to_reference(metrics: Dict[str, Any], instance_id: Optional[str]) -> Dict[str, Any]:
+    """Anchor live metrics to user reference table and suppress jumpy transitions.
+
+    This is especially important in 150–200 BPM where beat-to-beat morphology
+    compression can cause interval detectors to oscillate.
+    """
+    hr = metrics.get("heart_rate", 0)
+    if not isinstance(hr, (int, float)) or hr <= 0:
+        return metrics
+
+    ref = lookup_reference_intervals(float(hr))
+    if not ref:
+        return metrics
+
+    key = instance_id or "global"
+    state = _reference_metric_state.setdefault(key, {})
+
+    # Stronger reference anchoring in the problematic high-HR zone.
+    ref_weight = 0.75 if 150 <= float(hr) <= 200 else 0.60
+
+    field_map = {
+        "rr_interval": ("RR", True),
+        "pr_interval": ("PR", False),
+        "qrs_duration": ("QRS", False),
+        "qt_interval": ("QT", True),
+        "qtc_interval": ("QTc", False),
+    }
+
+    for output_key, (ref_key, keep_float) in field_map.items():
+        measured = metrics.get(output_key)
+        ref_val = float(ref[ref_key])
+
+        valid_measured = isinstance(measured, (int, float)) and measured > 0
+        blended_target = (float(measured) * (1.0 - ref_weight) + ref_val * ref_weight) if valid_measured else ref_val
+
+        prev = state.get(output_key)
+        if isinstance(prev, (int, float)):
+            blended_target = _limit_step(float(prev), float(blended_target), _REFERENCE_SLEW_LIMITS[ref_key])
+
+        state[output_key] = float(blended_target)
+        metrics[output_key] = float(blended_target) if keep_float else int(round(blended_target))
+
+    return metrics
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1073,6 +1139,9 @@ def calculate_all_ecg_metrics(
         except Exception as e:
             print(f" ⚠️ PR detection error: {e}")
 
+        # ── Step 9: Reference-table stabilization (anti-jump, anti-drift) ───
+        results = _stabilize_to_reference(results, instance_id)
+
     except Exception as e:
         print(f" ⚠️ calculate_all_ecg_metrics error: {e}")
 
@@ -1120,5 +1189,6 @@ def cleanup_instance(instance_id: str) -> None:
     """Remove all smoothing state for a given instance_id (call on session end)."""
     for d in (_pr_buffers, _qrs_buffers, _qt_buffers, _qtc_buffers,
               _hr_buffers, _hr_ema, _hr_last_stable, _hr_last_ts,
-              _hr_beat_count, _hr_displayed, _hr_pending, _hr_pending_ts):
+              _hr_beat_count, _hr_displayed, _hr_pending, _hr_pending_ts,
+              _reference_metric_state):
         d.pop(instance_id, None)

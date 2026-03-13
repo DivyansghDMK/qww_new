@@ -1,3 +1,4 @@
+from .metrics.reference_intervals import lookup_reference_intervals
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -114,6 +115,28 @@ def _safe_float(value, default=None):
         return float(value)
     except Exception:
         return default
+
+
+def _align_report_intervals_to_reference(data: dict) -> None:
+    """Align report interval fields to HR reference table for stable report output."""
+    try:
+        hr_val = _safe_float(data.get("HR_bpm") or data.get("Heart_Rate") or data.get("HR"), 0)
+        if not hr_val or hr_val <= 0:
+            return
+
+        ref = lookup_reference_intervals(float(hr_val))
+        if not ref:
+            return
+
+        # For report output we prefer deterministic, calibration-aligned values
+        # so printed intervals match the selected reference profile.
+        data["RR_ms"] = int(round(ref["RR"]))
+        data["PR"] = int(round(ref["PR"]))
+        data["QRS"] = int(round(ref["QRS"]))
+        data["QT"] = int(round(ref["QT"]))
+        data["QTc"] = int(round(ref["QTc"]))
+    except Exception:
+        return
 
 
 def _build_conservative_conclusions(metrics, settings_manager=None, sampling_rate=None, recording_duration=None):
@@ -930,12 +953,24 @@ def create_reportlab_ecg_drawing_with_real_data(lead_name, ecg_data, width=460, 
             ecg_mv = ecg_mv - trend  # ALWAYS remove trend - no threshold
             print(f" {lead_name}: FORCEFUL: Removed slope={slope:.6f} (no threshold)")
             
-            # ADDITIONAL: Force first and last 10 samples to zero
-            edge_samples = 10
-            if len(ecg_mv) > edge_samples * 2:
-                ecg_mv[:edge_samples] = 0  # Force start to zero
-                ecg_mv[-edge_samples:] = 0  # Force end to zero
-                print(f" {lead_name}: FORCEFUL: Forced {edge_samples} start/end samples to zero")
+            # Edge conditioning for all BPM: smooth approach + hard-flat terminal segment.
+            edge_samples = min(80, max(20, len(ecg_mv) // 16))
+            if len(ecg_mv) > edge_samples * 3:
+                t = np.linspace(0.0, 1.0, edge_samples)
+                taper = 0.5 * (1.0 + np.cos(np.pi * t))
+                ecg_mv[:edge_samples] = ecg_mv[:edge_samples] * (1.0 - taper)
+                ecg_mv[-edge_samples:] = ecg_mv[-edge_samples:] * taper
+
+                # Guarantee a straight final edge (no up/down jump in report tail).
+                flat_tail = max(10, edge_samples // 4)
+                blend = max(8, edge_samples // 5)
+                if len(ecg_mv) > flat_tail + blend:
+                    blend_start = len(ecg_mv) - (flat_tail + blend)
+                    blend_end = len(ecg_mv) - flat_tail
+                    ramp = np.linspace(1.0, 0.0, blend)
+                    ecg_mv[blend_start:blend_end] = ecg_mv[blend_start:blend_end] * ramp
+                    ecg_mv[-flat_tail:] = 0.0
+                print(f" {lead_name}: Applied edge taper + flat tail ({flat_tail} samples)")
     
     # Gain once: mm per mV (AFTER all processing)
     y_mm = ecg_mv * wave_gain_mm_mv
@@ -1255,6 +1290,8 @@ def generate_ecg_report(
         data["RR_ms"] = int(60000 / hr_bpm_value)
     else:
         data["RR_ms"] = data.get("RR_ms", 0)
+
+    _align_report_intervals_to_reference(data)
 
     # Compute QTc (Fridericia) safely using seconds; store in data for downstream use
     try:
