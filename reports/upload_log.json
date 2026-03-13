@@ -1,0 +1,313 @@
+[
+  {
+    "local_path": "C:\\Users\\DELL\\Downloads\\dfg\\merge\\reports\\ECG_Report_12_1_20260306_151730.pdf",
+    "uploaded_at": "2026-03-10T10:48:49.830410",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/10/ECG_Report_12_1_20260306_151730.pdf",
+      "key": "ecg-reports/2026/03/10/ECG_Report_12_1_20260306_151730.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260306_151730.pdf",
+      "uploaded_at": "2026-03-10T10:48:44.831110",
+      "file_size": 430777,
+      "file_type": ".pdf"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Downloads\\dfg\\merge\\reports\\ECG_Report_12_1_20260306_152128.pdf",
+    "uploaded_at": "2026-03-10T10:48:53.514014",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/10/ECG_Report_12_1_20260306_152128.pdf",
+      "key": "ecg-reports/2026/03/10/ECG_Report_12_1_20260306_152128.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260306_152128.pdf",
+      "uploaded_at": "2026-03-10T10:48:49.844902",
+      "file_size": 418338,
+      "file_type": ".pdf"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Downloads\\dfg\\merge\\reports\\ECG_Report_12_1_20260306_152221.pdf",
+    "uploaded_at": "2026-03-10T10:48:55.693494",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/10/ECG_Report_12_1_20260306_152221.pdf",
+      "key": "ecg-reports/2026/03/10/ECG_Report_12_1_20260306_152221.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260306_152221.pdf",
+      "uploaded_at": "2026-03-10T10:48:53.533637",
+      "file_size": 417988,
+      "file_type": ".pdf"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Downloads\\dfg\\merge\\reports\\ECG_Report_12_1_20260306_152724.pdf",
+    "uploaded_at": "2026-03-10T10:48:59.626076",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/10/ECG_Report_12_1_20260306_152724.pdf",
+      "key": "ecg-reports/2026/03/10/ECG_Report_12_1_20260306_152724.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260306_152724.pdf",
+      "uploaded_at": "2026-03-10T10:48:55.722977",
+      "file_size": 419480,
+      "file_type": ".pdf"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Downloads\\dfg\\merge\\reports\\ECG_Report_12_1_20260306_153611.pdf",
+    "uploaded_at": "2026-03-10T10:49:02.098716",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/10/ECG_Report_12_1_20260306_153611.pdf",
+      "key": "ecg-reports/2026/03/10/ECG_Report_12_1_20260306_153611.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260306_153611.pdf",
+      "uploaded_at": "2026-03-10T10:48:59.652020",
+      "file_size": 902795,
+      "file_type": ".pdf"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Downloads\\dfg\\merge\\reports\\ECG_Report_12_1_20260306_153633.pdf",
+    "uploaded_at": "2026-03-10T10:49:04.488701",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/10/ECG_Report_12_1_20260306_153633.pdf",
+      "key": "ecg-reports/2026/03/10/ECG_Report_12_1_20260306_153633.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260306_153633.pdf",
+      "uploaded_at": "2026-03-10T10:49:02.108144",
+      "file_size": 901615,
+      "file_type": ".pdf"
+    }
+  },
+  {
+    "local_path": "reports\\ECG_Report_12_1_20260306_153633.pdf",
+    "uploaded_at": "2026-03-10T10:49:05.364314",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/10/ECG_Report_12_1_20260306_153633.pdf",
+      "key": "ecg-reports/2026/03/10/ECG_Report_12_1_20260306_153633.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260306_153633.pdf",
+      "uploaded_at": "2026-03-10T10:49:02.990834",
+      "file_size": 901615,
+      "file_type": ".pdf"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Downloads\\dfg\\merge\\reports\\ECG_Report_12_1_20260306_154150.pdf",
+    "uploaded_at": "2026-03-10T10:49:06.773344",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/10/ECG_Report_12_1_20260306_154150.pdf",
+      "key": "ecg-reports/2026/03/10/ECG_Report_12_1_20260306_154150.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260306_154150.pdf",
+      "uploaded_at": "2026-03-10T10:49:04.497785",
+      "file_size": 885460,
+      "file_type": ".pdf"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Downloads\\dfg\\merge\\reports\\ECG_Report_12_1_20260306_155341.pdf",
+    "uploaded_at": "2026-03-10T10:49:10.622239",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/10/ECG_Report_12_1_20260306_155341.pdf",
+      "key": "ecg-reports/2026/03/10/ECG_Report_12_1_20260306_155341.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260306_155341.pdf",
+      "uploaded_at": "2026-03-10T10:49:06.785406",
+      "file_size": 423303,
+      "file_type": ".pdf"
+    }
+  },
+  {
+    "local_path": "reports\\ECG_Report_12_1_20260306_154150.pdf",
+    "uploaded_at": "2026-03-10T10:49:10.907333",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/10/ECG_Report_12_1_20260306_154150.pdf",
+      "key": "ecg-reports/2026/03/10/ECG_Report_12_1_20260306_154150.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260306_154150.pdf",
+      "uploaded_at": "2026-03-10T10:49:05.375652",
+      "file_size": 885460,
+      "file_type": ".pdf"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Downloads\\dfg\\merge\\reports\\ECG_Report_12_1_20260306_160016.pdf",
+    "uploaded_at": "2026-03-10T10:49:12.823514",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/10/ECG_Report_12_1_20260306_160016.pdf",
+      "key": "ecg-reports/2026/03/10/ECG_Report_12_1_20260306_160016.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260306_160016.pdf",
+      "uploaded_at": "2026-03-10T10:49:10.638568",
+      "file_size": 422061,
+      "file_type": ".pdf"
+    }
+  },
+  {
+    "local_path": "reports\\ECG_Report_12_1_20260306_160016.pdf",
+    "uploaded_at": "2026-03-10T10:49:12.968407",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/10/ECG_Report_12_1_20260306_160016.pdf",
+      "key": "ecg-reports/2026/03/10/ECG_Report_12_1_20260306_160016.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260306_160016.pdf",
+      "uploaded_at": "2026-03-10T10:49:10.922107",
+      "file_size": 422061,
+      "file_type": ".pdf"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Downloads\\dfg\\merge\\reports\\ECG_Report_12_1_20260306_162603.pdf",
+    "uploaded_at": "2026-03-10T10:49:16.664173",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/10/ECG_Report_12_1_20260306_162603.pdf",
+      "key": "ecg-reports/2026/03/10/ECG_Report_12_1_20260306_162603.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260306_162603.pdf",
+      "uploaded_at": "2026-03-10T10:49:12.830724",
+      "file_size": 422361,
+      "file_type": ".pdf"
+    }
+  },
+  {
+    "local_path": "reports\\ECG_Report_12_1_20260306_162603.pdf",
+    "uploaded_at": "2026-03-10T10:49:17.189204",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/10/ECG_Report_12_1_20260306_162603.pdf",
+      "key": "ecg-reports/2026/03/10/ECG_Report_12_1_20260306_162603.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260306_162603.pdf",
+      "uploaded_at": "2026-03-10T10:49:12.981579",
+      "file_size": 422361,
+      "file_type": ".pdf"
+    }
+  },
+  {
+    "local_path": "reports\\ECG_Report_12_1_20260306_164544.pdf",
+    "uploaded_at": "2026-03-10T10:49:19.234245",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/10/ECG_Report_12_1_20260306_164544.pdf",
+      "key": "ecg-reports/2026/03/10/ECG_Report_12_1_20260306_164544.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260306_164544.pdf",
+      "uploaded_at": "2026-03-10T10:49:17.199775",
+      "file_size": 412513,
+      "file_type": ".pdf"
+    }
+  },
+  {
+    "local_path": "reports\\ECG_Report_12_1_20260306_164609.pdf",
+    "uploaded_at": "2026-03-10T10:49:21.382649",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/10/ECG_Report_12_1_20260306_164609.pdf",
+      "key": "ecg-reports/2026/03/10/ECG_Report_12_1_20260306_164609.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260306_164609.pdf",
+      "uploaded_at": "2026-03-10T10:49:19.247614",
+      "file_size": 424692,
+      "file_type": ".pdf"
+    }
+  },
+  {
+    "local_path": "test_report.pdf",
+    "uploaded_at": "2026-03-11T16:05:42.314846",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/11/test_report.pdf",
+      "key": "ecg-reports/2026/03/11/test_report.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "test_report.pdf",
+      "uploaded_at": "2026-03-11T16:05:40.358096",
+      "file_size": 15957,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "100"
+    }
+  }
+]

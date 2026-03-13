@@ -1,0 +1,18 @@
+{
+  "wave_speed": "25",
+  "wave_gain": "10",
+  "lead_sequence": "Standard",
+  "serial_port": "COM8",
+  "baud_rate": "115200",
+  "hardware_version": "",
+  "printer_average_wave": "on",
+  "filter_ac": "50",
+  "filter_emg": "150",
+  "filter_dft": "0.5",
+  "system_beat_vol": "off",
+  "system_language": "en",
+  "factory_calibration": "skip",
+  "factory_self_test": "skip",
+  "factory_memory_reset": "keep",
+  "factory_reset": "cancel"
+}

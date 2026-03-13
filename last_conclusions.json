@@ -1,0 +1,14 @@
+{
+  "timestamp": "2026-03-13 16:00:47",
+  "findings": [
+    "Bradycardia detected",
+    "Normal PR interval",
+    "Normal QRS duration",
+    "Normal QTc interval",
+    "Good heart rate variability"
+  ],
+  "recommendations": [
+    "May be normal for well-trained athletes or during sleep",
+    "Monitor for symptoms, consult if experiencing fatigue or dizziness"
+  ]
+}

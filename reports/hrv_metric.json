@@ -1,0 +1,19 @@
+[
+  {
+    "timestamp": "2026-03-12 10:34:31",
+    "file": "C:\\Users\\DELL\\Downloads\\HRV_Report_20260312_103426.pdf",
+    "HR_bpm": 77,
+    "PR_ms": 132,
+    "QRS_ms": 79,
+    "QT_ms": 281,
+    "QTc_ms": 402,
+    "ST_ms": 0,
+    "RR_ms": 778,
+    "HRV_SDNN_ms": 62.00329616893068,
+    "HRV_RMSSD_ms": 17.140633555423754,
+    "HRV_NN50": 5,
+    "HRV_pNN50": 1.36986301369863,
+    "HRV_SDANN_ms": 29.76507136010044,
+    "Original_HR_bpm": 81
+  }
+]

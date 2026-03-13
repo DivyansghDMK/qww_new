@@ -1,0 +1,1 @@
+"""reports templates module"""
