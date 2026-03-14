@@ -91,7 +91,11 @@ class SerialStreamReader:
     @staticmethod
     def scan_and_detect_port(baudrate: int = 115200, timeout: float = 0.05) -> Optional[tuple]:
         """
-        Scan all available COM ports and detect which one responds to START command
+        Scan all available COM ports and detect the ECG device.
+
+        Detection priority:
+        1) VERSION command success (preferred; confirms protocol support)
+        2) START ACK success (fallback for older firmware)
         
         Args:
             baudrate: Baud rate to use for scanning (default: 115200)
@@ -99,7 +103,7 @@ class SerialStreamReader:
             
         Returns:
             tuple: (port_name: str, serial_port: Serial) if found, or None if none found
-                   The serial port is already opened and has START command sent
+                   The serial port is already opened and validated
         """
         if not SERIAL_AVAILABLE:
             print("❌ Port scanning failed: Serial module not available")
@@ -141,7 +145,7 @@ class SerialStreamReader:
         # ─────────────────────────────────────────────────────────────────────
 
         def _probe_port(port_name: str):
-            """Try opening port_name and sending START. Returns (port, ser) or None."""
+            """Try opening port_name and validating via VERSION (or START fallback)."""
             temp_ser = None
             try:
                 print(f"   🔌 Testing port: {port_name}")
@@ -154,14 +158,23 @@ class SerialStreamReader:
                 temp_ser.reset_input_buffer()
                 temp_ser.reset_output_buffer()
                 temp_handler = HardwareCommandHandler(temp_ser)
+
+                # Preferred detection: VERSION command
+                version_ok, version, _ = temp_handler.send_version_command(timeout=timeout)
+                if version_ok:
+                    version_text = version or "(empty version)"
+                    print(f"   ✅ Port {port_name} responded to VERSION: {version_text}")
+                    return (port_name, temp_ser)
+
+                # Fallback detection: START ACK (for legacy firmware)
                 success, _ = temp_handler.send_start_command(timeout=timeout, quiet=True)
                 if success:
-                    print(f"   ✅ Port {port_name} responded with ACK!")
+                    print(f"   ✅ Port {port_name} responded to START ACK (legacy fallback)")
                     return (port_name, temp_ser)
-                else:
-                    print(f"   ❌ Port {port_name} did not respond correctly")
-                    temp_ser.close()
-                    return None
+
+                print(f"   ❌ Port {port_name} did not respond to VERSION/START")
+                temp_ser.close()
+                return None
             except Exception as exc:
                 print(f"   ⚠️ Port {port_name} error: {exc}")
                 if temp_ser:
@@ -199,7 +212,7 @@ class SerialStreamReader:
         if detected_port and detected_serial:
             print(f"\n✅ PORT DETECTED: {detected_port}")
         else:
-            print(f"\n❌ No port responded to START command")
+            print(f"\n❌ No port responded to VERSION/START commands")
 
         print("="*70 + "\n")
 
@@ -909,7 +922,42 @@ class DeviceStartWorker(QThread):
             self._reader = reader
 
             # ── Start (opens port, VERSION handshake, START command) ──────
-            reader.start()
+            try:
+                reader.start()
+            except Exception as start_exc:
+                # If a configured (but wrong) port was used, retry by scanning all ports.
+                if scan_needed:
+                    raise
+
+                print(f" [Worker] Start failed on configured port {port_to_use}: {start_exc}")
+                print(" [Worker] Retrying with full auto-scan across all serial ports…")
+
+                scan_result = SerialStreamReader.scan_and_detect_port(
+                    baudrate=baud_int, timeout=0.2
+                )
+                if not scan_result:
+                    self.connected.emit(
+                        False,
+                        port_to_use,
+                        f"Configured port failed ({start_exc}); no ECG device found on any port",
+                    )
+                    return
+
+                scanned_port, detected_ser = scan_result
+                try:
+                    if detected_ser and detected_ser.is_open:
+                        detected_ser.close()
+                except Exception:
+                    pass
+
+                self._port_to_use = scanned_port
+                reader = GlobalHardwareManager().get_reader(scanned_port, baud_int)
+                if reader is None:
+                    self.connected.emit(False, scanned_port, "Failed to create serial reader after scan")
+                    return
+                self._reader = reader
+                reader.start()
+                port_to_use = scanned_port
 
             # Emit version (may be None)
             version = reader.device_version or ""
