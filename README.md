@@ -381,6 +381,22 @@ The application calculates and displays the following metrics in real-time:
 2. Run: `python src/main.py`
 3. Login or register to start monitoring
 
+
+
+## Windows EXE Build (Recommended)
+
+Use the standardized onedir build flow for best cross-system compatibility:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+pip install -r src\requirements.txt
+python build_exe.py --name ECGMonitor
+```
+
+- This creates `dist\ECGMonitor\ECGMonitor.exe` (with dependencies in `_internal`).
+- Share the **entire `dist\ECGMonitor\` folder**, not just the `.exe`.
+- For startup debugging, build with console: `python build_exe.py --name ECGMonitor --console`.
+
 ## Cloud Integration (AWS S3)
 
 ### Features
