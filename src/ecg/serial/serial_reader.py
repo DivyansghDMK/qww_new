@@ -84,6 +84,9 @@ class GlobalHardwareManager:
 
 class SerialStreamReader:
     """Packet-based serial reader for ECG data - NEW IMPLEMENTATION"""
+    READ_LOOP_BUDGET_SECONDS = 0.012  # Keep UI tick responsive (<~12 ms parse budget)
+    MAX_BUFFER_BYTES = 100000
+    SILENCE_WARNING_SECONDS = 3.0
     
     @staticmethod
     def scan_and_detect_port(baudrate: int = 115200, timeout: float = 0.05) -> Optional[tuple]:
@@ -207,7 +210,8 @@ class SerialStreamReader:
     def __init__(self, port: str, baudrate: int, timeout: float = 0.1):
         if not SERIAL_AVAILABLE:
             raise RuntimeError("pyserial is required for serial capture. pip install pyserial")
-        self.ser = serial.Serial(port=port, baudrate=baudrate, timeout=timeout)
+        safe_timeout = max(0.01, min(float(timeout or 0.1), 0.1))
+        self.ser = serial.Serial(port=port, baudrate=baudrate, timeout=safe_timeout, write_timeout=safe_timeout)
         self.buf = bytearray()
         self.running = False
         self.data_count = 0
@@ -226,6 +230,8 @@ class SerialStreamReader:
         self._last_packet_counter = None
         self._total_sequence_lost = 0
         self._packet_loss_warnings = 0
+        self._last_silence_warn_time = 0.0
+        self._read_timeout = safe_timeout
         # Initialize hardware command handler
         if SERIAL_AVAILABLE:
             self.command_handler = HardwareCommandHandler(self.ser)
@@ -233,6 +239,14 @@ class SerialStreamReader:
             self.command_handler = None
         self.device_version = None
         print(f" SerialStreamReader initialized: Port={port}, Baud={baudrate}")
+
+    def is_device_silent(self, silence_seconds: float = None) -> bool:
+        """Return True when stream has no valid packet for configured duration."""
+        if silence_seconds is None:
+            silence_seconds = self.SILENCE_WARNING_SECONDS
+        if not self.running:
+            return False
+        return (time.time() - float(self.last_packet_time or 0)) >= float(silence_seconds)
 
     def close(self) -> None:
         """Close serial connection"""
@@ -338,7 +352,9 @@ class SerialStreamReader:
                     # Re-initialize serial port object to ensure fresh state
                     self.ser.port = current_port
                     self.ser.baudrate = current_baudrate
-                    self.ser.timeout = 0.1
+                    self.ser.timeout = self._read_timeout
+                    if hasattr(self.ser, "write_timeout"):
+                        self.ser.write_timeout = self._read_timeout
                     self.ser.open()
                     
                     # Re-initialize command handler with the opened port
@@ -480,6 +496,8 @@ class SerialStreamReader:
             # (Actually, we should read all available to clear hardware buffer, but in chunks)
             read_size = min(bytes_to_read, target_read_size)
             
+            if getattr(self.ser, 'timeout', None) in (None, 0):
+                self.ser.timeout = self._read_timeout
             chunk = self.ser.read(read_size)
             if chunk:
                 self.buf.extend(chunk)
@@ -491,15 +509,19 @@ class SerialStreamReader:
             max_iterations = max(max_packets * 5, 500)  # Allow catching up significantly if we fell behind
             iteration = 0
             packets_processed = 0
-            
+            parse_deadline = time.perf_counter() + self.READ_LOOP_BUDGET_SECONDS
+
             while iteration < max_iterations and len(self.buf) >= PACKET_SIZE:
+                if time.perf_counter() >= parse_deadline:
+                    # Budget exhausted; continue next timer tick to keep UI responsive
+                    break
                 iteration += 1
                 start_idx = self.buf.find(bytes([START_BYTE]))
                 if start_idx == -1:
-                    # No start byte found - clear buffer if it's getting too large (>100KB)
-                    if len(self.buf) > 100000:
-                        print(f" Serial buffer overflow risk: {len(self.buf)} bytes, clearing buffer")
-                        self.buf.clear()
+                    # No start byte found - keep only tail to avoid unbounded growth
+                    if len(self.buf) > self.MAX_BUFFER_BYTES:
+                        print(f" Serial buffer overflow risk: {len(self.buf)} bytes, trimming garbage")
+                        del self.buf[:-PACKET_SIZE]
                     break
                 if start_idx > 10000:
                     # Skip too much garbage data before start byte
@@ -562,6 +584,11 @@ class SerialStreamReader:
                 if not hasattr(self, '_buffer_warn_time') or (time.time() - self._buffer_warn_time) > 5.0:
                     print(f" ⚠️ Buffer: {len(self.buf)} bytes")
                     self._buffer_warn_time = time.time()
+
+            # Device connected but not sending valid packets — surface warning without freezing.
+            if self.is_device_silent() and (time.time() - self._last_silence_warn_time) > 3.0:
+                print(" ⚠️ Device not sending valid ECG packets")
+                self._last_silence_warn_time = time.time()
             
             # Update packet loss statistics
             if self.running and self.data_count > 0:

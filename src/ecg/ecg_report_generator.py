@@ -1174,6 +1174,133 @@ def load_latest_metrics_entry(reports_dir):
 
     return None
 
+
+
+def _load_signup_details_for_username(username):
+    """Load signup/profile details for a username from users.json if available."""
+    if not username:
+        return {}
+    try:
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+        users_path = os.path.join(base_dir, 'users.json')
+        if not os.path.exists(users_path):
+            return {}
+        with open(users_path, 'r', encoding='utf-8') as f:
+            raw = json.load(f)
+        if isinstance(raw, dict):
+            val = raw.get(str(username), {})
+            return val if isinstance(val, dict) else {}
+        return {}
+    except Exception:
+        return {}
+
+
+def _collect_12_lead_payload(ecg_test_page, sampling_rate, ecg_data_file=None, window_seconds=10.0):
+    """Collect latest 12-lead ECG payload for backend sync."""
+    try:
+        fs = float(sampling_rate) if sampling_rate else 500.0
+    except Exception:
+        fs = 500.0
+    n = max(1, int(round(window_seconds * fs)))
+
+    lead_names = ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"]
+
+    # Priority: saved ecg_data_file when provided (stable/report-consistent)
+    if ecg_data_file and os.path.exists(ecg_data_file):
+        try:
+            with open(ecg_data_file, 'r', encoding='utf-8') as f:
+                saved = json.load(f)
+            leads = saved.get('leads') if isinstance(saved, dict) else None
+            if isinstance(leads, dict) and leads:
+                out = {}
+                for ln in lead_names:
+                    arr = leads.get(ln) or leads.get(f'Lead_{ln}') or []
+                    if isinstance(arr, list):
+                        out[ln] = arr[-n:] if len(arr) > n else arr
+                if out:
+                    return out, fs
+        except Exception:
+            pass
+
+    # Fallback: live ecg_test_page data buffers
+    out = {}
+    try:
+        if ecg_test_page and hasattr(ecg_test_page, 'data') and isinstance(ecg_test_page.data, (list, tuple)):
+            for idx, ln in enumerate(lead_names):
+                if idx < len(ecg_test_page.data):
+                    arr = ecg_test_page.data[idx]
+                    if isinstance(arr, (list, tuple, np.ndarray)) and len(arr) > 0:
+                        arr_list = list(arr)
+                        out[ln] = arr_list[-n:] if len(arr_list) > n else arr_list
+        return out, fs
+    except Exception:
+        return {}, fs
+
+
+def _sync_report_package_to_backend(filename, patient, data, metrics_payload, username, ecg_test_page, sampling_rate, ecg_data_file=None):
+    """Sync generated report package (metrics + 12-lead + signup + ecg details) to backend."""
+    try:
+        from utils.backend_api import get_backend_api
+
+        backend = get_backend_api()
+        if not backend.is_enabled():
+            print('  Backend sync disabled')
+            return
+
+        signup_details = _load_signup_details_for_username(username)
+        leads_payload, fs = _collect_12_lead_payload(ecg_test_page, sampling_rate, ecg_data_file=ecg_data_file)
+
+        device_serial = str((patient or {}).get('serial_number') or data.get('machine_serial') or signup_details.get('serial_id') or 'UNKNOWN')
+        device_info = {
+            'machine_serial': data.get('machine_serial', ''),
+            'app': 'ecg_monitor',
+            'report_type': '12_lead_ecg',
+            'report_file': os.path.abspath(filename),
+        }
+
+        sid = backend.start_session(device_serial=device_serial, device_info=device_info)
+        print(f'  Backend session started: {sid}')
+
+        metric_result = backend.upload_metrics({
+            'report_generated_at': datetime.now().isoformat(),
+            'username': username or '',
+            'patient': patient or {},
+            'signup': signup_details,
+            'metrics': metrics_payload or {},
+        })
+        print(f"  Backend metrics sync: {metric_result.get('status')}")
+
+        if leads_payload:
+            wave_result = backend.upload_waveform(leads_payload, int(round(fs)))
+            print(f"  Backend waveform sync: {wave_result.get('status')} ({len(leads_payload)} leads)")
+        else:
+            print('  Backend waveform sync skipped: no lead data available')
+
+        report_meta = {
+            'username': username or '',
+            'patient': patient or {},
+            'signup': signup_details,
+            'metrics': metrics_payload or {},
+            'ecg_details': {
+                'sampling_rate': fs,
+                'lead_count': len(leads_payload),
+                'ecg_data_file': os.path.abspath(ecg_data_file) if ecg_data_file else '',
+            }
+        }
+        report_result = backend.upload_report(filename, metadata=report_meta)
+        print(f"  Backend report sync: {report_result.get('status')}")
+
+        end_result = backend.end_session({
+            'status': 'report_generated',
+            'report_file': os.path.abspath(filename),
+            'lead_count': len(leads_payload),
+            'username': username or '',
+        })
+        print(f"  Backend session end: {end_result.get('status')}")
+
+    except Exception as be:
+        print(f"  Backend sync error: {be}")
+
 def generate_ecg_report(
     filename="ecg_report.pdf",
     data=None,
@@ -3771,6 +3898,29 @@ def generate_ecg_report(
         except Exception as hist_err:
             print(f" Failed to append ECG history entry: {hist_err}")
     
+    # Sync full 12-lead report package to backend (metrics + signup + ECG details)
+    try:
+        backend_metrics_payload = {
+            "HR_bpm": HR, "PR_ms": PR, "QRS_ms": QRS, "QT_ms": QT, "QTc_ms": QTc,
+            "ST_ms": ST, "RR_ms": RR,
+            "RV5_plus_SV1_mV": round(rv5_sv1_sum, 3),
+            "P_QRS_T_mm": [p_mm, qrs_mm, t_mm],
+            "QTCF_ms": round(qtcf_val, 1) if 'qtcf_val' in locals() and qtcf_val else None,
+            "RV5_SV1_mV": [round(rv5_mv, 3), round(sv1_mv, 3)],
+        }
+        _sync_report_package_to_backend(
+            filename=filename,
+            patient=patient if isinstance(patient, dict) else {},
+            data=data if isinstance(data, dict) else {},
+            metrics_payload=backend_metrics_payload,
+            username=username,
+            ecg_test_page=ecg_test_page,
+            sampling_rate=computed_sampling_rate,
+            ecg_data_file=saved_data_file_path if 'saved_data_file_path' in locals() else ecg_data_file,
+        )
+    except Exception as _be:
+        print(f"  Backend package sync failed: {_be}")
+
     # Upload to cloud if configured
     try:
         import sys

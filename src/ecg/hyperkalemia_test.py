@@ -603,6 +603,7 @@ class HyperkalemiaTestWindow(QWidget):
             self.report_btn.setEnabled(False)
             self.status_label.setText("Status: Capturing from serial port...")
             self.status_label.setStyleSheet("color: #28a745; padding: 5px;")
+            self._silent_data_warned = False
             
             # ── Start HolterBPMController ───────────────────────────────────────
             try:
@@ -646,7 +647,7 @@ class HyperkalemiaTestWindow(QWidget):
                 category="HYPERKALEMIA_TEST_ERROR"
             )
     
-    def stop_capture(self, device_disconnected=False):
+    def stop_capture(self, device_disconnected=False, device_not_sending=False):
         """Stop capturing data"""
         # UPDATE STATE: Test stopped
         if hasattr(self, 'dashboard_instance') and self.dashboard_instance:
@@ -689,6 +690,12 @@ class HyperkalemiaTestWindow(QWidget):
             self.analyze_btn.setEnabled(False)
             self.report_btn.setEnabled(False)
             self.status_label.setText("Status: Device disconnected")
+        elif device_not_sending:
+            self.start_btn.setEnabled(True)
+            self.stop_btn.setEnabled(False)
+            self.analyze_btn.setEnabled(False)
+            self.report_btn.setEnabled(False)
+            self.status_label.setText("Status: Device connected but not sending data")
         else:
             self.start_btn.setEnabled(True)
             self.stop_btn.setEnabled(False)
@@ -775,7 +782,18 @@ class HyperkalemiaTestWindow(QWidget):
             
             # Read packets from serial reader
             packets = self.serial_reader.read_packets(max_packets=100)
-            
+            if not packets and hasattr(self.serial_reader, 'is_device_silent') and self.serial_reader.is_device_silent(3.0):
+                if not getattr(self, '_silent_data_warned', False):
+                    QMessageBox.warning(
+                        self,
+                        "Device Not Sending Data",
+                        "Device is connected but not sending ECG packets.\n\n"
+                        "Please check electrodes/cable and ensure device streaming is ON."
+                    )
+                    self._silent_data_warned = True
+                self.stop_capture(device_not_sending=True)
+                return
+
             if not packets:
                 return
             
