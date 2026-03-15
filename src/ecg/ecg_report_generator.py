@@ -2031,9 +2031,12 @@ def generate_ecg_report(
                     from ecg.ecg_filters import apply_ecg_filters
                     from scipy.ndimage import gaussian_filter1d as _gf1d
                     
-                    ac_setting  = str(settings_manager.get_setting("filter_ac",  "50")).strip()
-                    emg_setting = str(settings_manager.get_setting("filter_emg", "150")).strip()
-                    dft_setting = str(settings_manager.get_setting("filter_dft", "0.5")).strip()
+                    if settings_manager is not None:
+                        ac_setting  = str(settings_manager.get_setting("filter_ac",  "50")).strip()
+                        emg_setting = str(settings_manager.get_setting("filter_emg", "150")).strip()
+                        dft_setting = str(settings_manager.get_setting("filter_dft", "0.5")).strip()
+                    else:
+                        ac_setting, emg_setting, dft_setting = "50", "150", "0.5"
                     
                     # Nyquist guard: AC notch at F Hz requires sampling rate > 2*F Hz
                     if ac_setting in ("50", "60"):
@@ -2565,9 +2568,12 @@ def generate_ecg_report(
                     from ecg.ecg_filters import apply_ecg_filters
                     from scipy.ndimage import gaussian_filter1d as _gf1d
                     
-                    ac_setting  = str(settings_manager.get_setting("filter_ac",  "50")).strip()
-                    emg_setting = str(settings_manager.get_setting("filter_emg", "150")).strip()
-                    dft_setting = str(settings_manager.get_setting("filter_dft", "0.5")).strip()
+                    if settings_manager is not None:
+                        ac_setting  = str(settings_manager.get_setting("filter_ac",  "50")).strip()
+                        emg_setting = str(settings_manager.get_setting("filter_emg", "150")).strip()
+                        dft_setting = str(settings_manager.get_setting("filter_dft", "0.5")).strip()
+                    else:
+                        ac_setting, emg_setting, dft_setting = "50", "150", "0.5"
                     
                     # Nyquist guard: AC notch at F Hz requires sampling rate > 2*F Hz
                     if ac_setting in ("50", "60"):

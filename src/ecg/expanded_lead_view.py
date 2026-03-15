@@ -20,12 +20,13 @@ from matplotlib.figure import Figure
 import matplotlib.patches as patches
 from .arrhythmia_detector import ArrhythmiaDetector
 try:
-    from .ecg_filters import extract_respiration, estimate_baseline_drift, apply_ac_filter, apply_emg_filter
+    from .ecg_filters import extract_respiration, estimate_baseline_drift, apply_ac_filter, apply_emg_filter, apply_ecg_filters
 except ImportError:
     extract_respiration = None
     estimate_baseline_drift = None
     apply_ac_filter = None
     apply_emg_filter = None
+    apply_ecg_filters = None
 try:
     from .clinical_measurements import (
         build_median_beat, get_tp_baseline, measure_pr_from_median_beat,
@@ -1746,42 +1747,36 @@ class ExpandedLeadView(QDialog):
             # Clinical signal (raw) is untouched; display_signal is for plotting only.
             display_signal = window_signal.copy()
             try:
-                # Mode toggle (default clean)
+                # Keep expanded view filter behavior aligned with 12-box defaults.
+                # Default AC notch is 50 Hz; if user turns it off, both views follow that.
+                ac_opt = '50'
+                emg_opt = 'off'
+                dft_opt = 'off'
+                if hasattr(self._parent, 'settings_manager') and self._parent.settings_manager is not None:
+                    ac_opt = str(self._parent.settings_manager.get_setting('filter_ac', '50')).strip()
+                    emg_opt = str(self._parent.settings_manager.get_setting('filter_emg', 'off')).strip()
+                    dft_opt = str(self._parent.settings_manager.get_setting('filter_dft', 'off')).strip()
+
+                if apply_ecg_filters is not None:
+                    display_signal = apply_ecg_filters(
+                        signal=display_signal,
+                        sampling_rate=float(self.sampling_rate),
+                        ac_filter=ac_opt if ac_opt in ('50', '60') else None,
+                        emg_filter=emg_opt if emg_opt not in ('off', '') else None,
+                        dft_filter=dft_opt if dft_opt not in ('off', '') else None,
+                    )
+                else:
+                    if apply_emg_filter is not None and emg_opt not in ('off', ''):
+                        display_signal = apply_emg_filter(display_signal, float(self.sampling_rate), emg_opt)
+                    if apply_ac_filter is not None and ac_opt in ('50', '60'):
+                        display_signal = apply_ac_filter(display_signal, float(self.sampling_rate), ac_opt)
+
+                # Optional clean-view mode can further suppress respiration drift.
                 if self.use_clean_view:
-                    # Clean display: Just remove respiration, don't apply bandpass filtering
-                    # This keeps waves straight like live display
                     display_signal = self._remove_respiration_display(display_signal, fs=self.sampling_rate, window_sec=2.0)
-                # clinical view leaves display_signal untouched
             except Exception as filter_error:
                 print(f" Expanded view display filter error: {filter_error}")
 
-            # Apply EMG filter from settings for display if enabled
-            try:
-                emg_applied = False
-                emg_suppresses_ac = False
-                if 'apply_emg_filter' in globals() and apply_emg_filter is not None and hasattr(self._parent, 'settings_manager'):
-                    emg_opt = str(self._parent.settings_manager.get_setting('filter_emg', '150')).strip()
-                    if emg_opt and emg_opt.lower() != 'off':
-                         display_signal = apply_emg_filter(display_signal, float(self.sampling_rate), emg_opt)
-                         emg_applied = True
-                         try:
-                             if float(emg_opt) < 60:
-                                 emg_suppresses_ac = True
-                         except ValueError:
-                             pass
-            except Exception as _emg_err:
-                 print(f" Expanded view EMG filter error: {_emg_err}")
-
-            # Apply AC filter (50/60 Hz) from settings for display
-            try:
-                # Apply AC filter if enabled
-                if (not emg_applied or not emg_suppresses_ac) and 'apply_ac_filter' in globals() and apply_ac_filter is not None and hasattr(self._parent, 'settings_manager'):
-                    ac_opt = str(self._parent.settings_manager.get_setting('filter_ac', '50')).strip()
-                    if ac_opt in ('50', '60'):
-                        display_signal = apply_ac_filter(display_signal, float(self.sampling_rate), ac_opt)
-            except Exception as _ac_err:
-                print(f" Expanded view AC filter error: {_ac_err}")
-            
             # After all filters, crop back to the exact visible window to remove
             # edge transients introduced by filtering the padded segment.
             try:
@@ -1793,11 +1788,14 @@ class ExpandedLeadView(QDialog):
 
             try:
                 from scipy.ndimage import gaussian_filter1d
+                sigma = 0.8
+                if hasattr(self._parent, 'SMOOTH_SIGMA'):
+                    sigma = float(self._parent.SMOOTH_SIGMA)
                 if len(display_signal) > 5:
-                    display_signal = gaussian_filter1d(display_signal, sigma=1.5)
+                    display_signal = gaussian_filter1d(display_signal, sigma=sigma)
             except Exception:
                 if len(display_signal) > 5:
-                    kernel_size = 7
+                    kernel_size = 3
                     kernel = np.ones(kernel_size) / kernel_size
                     display_signal = np.convolve(display_signal, kernel, mode="same")
 
