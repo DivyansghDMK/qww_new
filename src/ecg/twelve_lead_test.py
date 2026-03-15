@@ -8653,7 +8653,7 @@ class ECGTestPage(QWidget):
                                 if hasattr(self, "settings_manager"):
                                     emg_setting = str(self.settings_manager.get_setting("filter_emg", "150")).strip()
                                 if emg_setting and emg_setting.lower() != "off" and len(filtered_slice) >= 10:
-                                    filtered_slice = apply_emg_filter(filtered_slice, float(self.SAMPLE_RATE), emg_setting)
+                                    filtered_slice = apply_emg_filter(filtered_slice, float(sampling_rate), emg_setting)
                                     emg_applied = True
                                     try:
                                         if float(emg_setting) < 60:
@@ -8671,8 +8671,8 @@ class ECGTestPage(QWidget):
                                 ac_setting = None
                                 if hasattr(self, "settings_manager"):
                                     ac_setting = str(self.settings_manager.get_setting("filter_ac", "50")).strip()
-                                if (not emg_applied or not emg_suppresses_ac) and ac_setting in ("50", "60") and len(filtered_slice) > 30:
-                                    filtered_slice = apply_ac_filter(filtered_slice, float(self.SAMPLE_RATE), ac_setting)
+                                if ac_setting in ("50", "60") and len(filtered_slice) > 30:
+                                    filtered_slice = apply_ac_filter(filtered_slice, float(sampling_rate), ac_setting)
                             except Exception:
                                 # If anything fails, fall back to unfiltered slice so UI never crashes
                                 pass
