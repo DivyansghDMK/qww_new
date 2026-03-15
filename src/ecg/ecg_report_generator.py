@@ -3272,7 +3272,7 @@ def generate_ecg_report(
     t_mm = extract_axis_value(t_axis_deg)
     
     # SECOND COLUMN - P/QRS/T Axis (optional: hidden in compact report mode)
-    show_extended_header_metrics = bool(data.get('show_extended_header_metrics', False))
+    show_extended_header_metrics = bool(data.get('show_extended_header_metrics', True))
     if show_extended_header_metrics:
         p_qrs_label = String(84.7 * mm, 284.1 * mm, f"P/QRS/T  : {p_axis_display}/{qrs_axis_display}/{t_axis_display}°",
                              fontSize=10, fontName="Helvetica", fillColor=colors.black)
@@ -3412,8 +3412,9 @@ def generate_ecg_report(
 
     # Calculate RV5+SV1 = RV5 + abs(SV1) (GE/Philips standard)
     # CRITICAL: Calculate from unrounded values to avoid rounding errors
-    # SV1 is negative, so RV5+SV1 = RV5 + (SV1) for Sokolow-Lyon index
-    rv5_sv1_sum = rv5_mv + (sv1_mv)  # RV5 + (SV1) as per GE/Philips standard
+    # Sokolow-Lyon index uses RV5 + |SV1| (both in mV).
+    # SV1 is typically negative by sign convention, so use absolute magnitude.
+    rv5_sv1_sum = rv5_mv + abs(sv1_mv)
 
     # SECOND COLUMN - RV5+SV1 (ABOVE ECG GRAPH - shifted further up)
     # Use 3 decimal places for precision
