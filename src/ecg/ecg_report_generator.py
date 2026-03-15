@@ -1396,15 +1396,22 @@ def generate_ecg_report(
 
     _align_report_intervals_to_reference(data)
 
-    # Compute QTc (Fridericia) safely using seconds; store in data for downstream use
+    # Compute QTc / QTcF from QT and RR using standard formulas for report consistency:
+    #   QTc  (Bazett)     = QT / sqrt(RR)
+    #   QTcF (Fridericia) = QT / cbrt(RR)
+    # where QT and RR are in seconds.
     try:
         qt_ms = _safe_float(data.get("QT"))
         rr_ms = _safe_float(data.get("RR_ms"))
+        qtc_bazett_ms = None
         qtc_frid_ms = None
         if qt_ms and qt_ms > 0 and rr_ms and rr_ms > 0:
             qt_sec = qt_ms / 1000.0
             rr_sec = rr_ms / 1000.0
+            qtc_bazett_ms = qt_sec / (rr_sec ** 0.5) * 1000.0
             qtc_frid_ms = qt_sec / (rr_sec ** (1.0 / 3.0)) * 1000.0
+        if qtc_bazett_ms and qtc_bazett_ms > 0:
+            data["QTc"] = qtc_bazett_ms
         if qtc_frid_ms and qtc_frid_ms > 0:
             data["QTc_Fridericia"] = qtc_frid_ms
     except Exception:
@@ -1639,8 +1646,8 @@ def generate_ecg_report(
     HR = data.get('HR_avg',)
     PR = data.get('PR',) 
     QRS = data.get('QRS',)
-    QT = data.get('QT',)
-    QTc = data.get('QTc',)
+    QT = _safe_float(data.get('QT',), 0.0)
+    QTc = _safe_float(data.get('QTc',), 0.0)
     QTcF = data.get('QTc_Fridericia') or data.get('QTcF') or 0
     ST = data.get('ST',)
     # DYNAMIC RR interval calculation from heart rate (instead of hard-coded 857)
@@ -2314,8 +2321,8 @@ def generate_ecg_report(
     HR = data.get('HR_avg',)
     PR = data.get('PR',) 
     QRS = data.get('QRS',)
-    QT = data.get('QT',)
-    QTc = data.get('QTc',)
+    QT = _safe_float(data.get('QT',), 0.0)
+    QTc = _safe_float(data.get('QTc',), 0.0)
     ST = data.get('ST',)
     # DYNAMIC RR interval calculation from heart rate (instead of hard-coded 857)
     RR = int(60000 / HR) if HR and HR > 0 else 0  # RR interval in ms from heart rate
@@ -2793,8 +2800,8 @@ def generate_ecg_report(
     HR = data.get('HR_avg',)
     PR = data.get('PR',) 
     QRS = data.get('QRS',)
-    QT = data.get('QT',)
-    QTc = data.get('QTc',)
+    QT = _safe_float(data.get('QT',), 0.0)
+    QTc = _safe_float(data.get('QTc',), 0.0)
     ST = data.get('ST',)
     # DYNAMIC RR interval calculation from heart rate (instead of hard-coded 857)
     RR = int(60000 / HR) if HR and HR > 0 else 0  # RR interval in ms from heart rate
@@ -2900,20 +2907,44 @@ def generate_ecg_report(
             print(f" Fallback amplitude computation failed: {e}")
 
     # Calculate P/QRS/T Axis in degrees (using Lead I and Lead aVF)
+    def _to_axis_degree(value):
+        """Normalize axis input to integer degrees in [-180, 180], or None."""
+        if value is None:
+            return None
+        try:
+            if isinstance(value, str):
+                value = value.replace("°", "").strip()
+                if not value:
+                    return None
+            axis = float(value)
+            if not np.isfinite(axis):
+                return None
+            while axis > 180:
+                axis -= 360
+            while axis < -180:
+                axis += 360
+            return int(round(axis))
+        except Exception:
+            return None
+
     # PRIORITY 1: Use standardized values from data dictionary (passed from dashboard)
     p_axis_deg = "--"
     qrs_axis_deg = "--"
     t_axis_deg = "--"
     
     if data is not None:
-        if 'p_axis' in data and data['p_axis'] is not None:
-            p_axis_deg = f"{int(round(data['p_axis']))}°"
+        p_axis_data = _to_axis_degree(data.get('p_axis'))
+        qrs_axis_data = _to_axis_degree(data.get('QRS_axis'))
+        t_axis_data = _to_axis_degree(data.get('t_axis'))
+
+        if p_axis_data is not None:
+            p_axis_deg = f"{p_axis_data}°"
             print(f" Using P axis from data: {p_axis_deg}")
-        if 'QRS_axis' in data and data['QRS_axis'] is not None:
-            qrs_axis_deg = str(data['QRS_axis']).replace('°', '') + '°' if '°' not in str(data['QRS_axis']) else str(data['QRS_axis'])
+        if qrs_axis_data is not None:
+            qrs_axis_deg = f"{qrs_axis_data}°"
             print(f" Using QRS axis from data: {qrs_axis_deg}")
-        if 't_axis' in data and data['t_axis'] is not None:
-            t_axis_deg = f"{int(round(data['t_axis']))}°"
+        if t_axis_data is not None:
+            t_axis_deg = f"{t_axis_data}°"
             print(f" Using T axis from data: {t_axis_deg}")
     
     # PRIORITY 2: Try to get axis values from ECG test page (standardized median beat method)
@@ -2922,22 +2953,25 @@ def generate_ecg_report(
             # Get P axis from standardized calculation
             if p_axis_deg == "--" and hasattr(ecg_test_page, 'calculate_p_axis_from_median'):
                 p_axis_calc = ecg_test_page.calculate_p_axis_from_median()
-                if p_axis_calc is not None and p_axis_calc != 0:
-                    p_axis_deg = f"{int(round(p_axis_calc))}°"
+                p_axis_calc = _to_axis_degree(p_axis_calc)
+                if p_axis_calc is not None:
+                    p_axis_deg = f"{p_axis_calc}°"
                     print(f" Using standardized P axis from ECG test page: {p_axis_deg}")
             
             # Get QRS axis from standardized calculation
             if qrs_axis_deg == "--" and hasattr(ecg_test_page, 'calculate_qrs_axis_from_median'):
                 qrs_axis_calc = ecg_test_page.calculate_qrs_axis_from_median()
-                if qrs_axis_calc is not None and qrs_axis_calc != 0:
-                    qrs_axis_deg = f"{int(round(qrs_axis_calc))}°"
+                qrs_axis_calc = _to_axis_degree(qrs_axis_calc)
+                if qrs_axis_calc is not None:
+                    qrs_axis_deg = f"{qrs_axis_calc}°"
                     print(f" Using standardized QRS axis from ECG test page: {qrs_axis_deg}")
             
             # Get T axis from standardized calculation
             if t_axis_deg == "--" and hasattr(ecg_test_page, 'calculate_t_axis_from_median'):
                 t_axis_calc = ecg_test_page.calculate_t_axis_from_median()
-                if t_axis_calc is not None and t_axis_calc != 0:
-                    t_axis_deg = f"{int(round(t_axis_calc))}°"
+                t_axis_calc = _to_axis_degree(t_axis_calc)
+                if t_axis_calc is not None:
+                    t_axis_deg = f"{t_axis_calc}°"
                     print(f"🔬 Using standardized T axis from ECG test page: {t_axis_deg}")
         except Exception as e:
             print(f" Error getting axis values from ECG test page: {e}")

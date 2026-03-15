@@ -3192,23 +3192,7 @@ class Dashboard(QWidget):
 
         print(f" [SNAPSHOT] PDF Report values — HR:{HR} PR:{PR} QRS:{QRS} QT:{QT} QTc:{QTc} QTcF:{QTcF}")
 
-        # Snapshot data arrays NOW (copy to avoid mutation while thread runs)
-        ecg_data_snapshot = None
-        if hasattr(self, 'ecg_test_page') and self.ecg_test_page and \
-                hasattr(self.ecg_test_page, 'data'):
-            try:
-                import numpy as np
-                ecg_data_snapshot = [np.array(arr, dtype=float) for arr in self.ecg_test_page.data]
-            except Exception as e:
-                print(f" [SNAPSHOT] Could not copy ECG data arrays: {e}")
-
-        # Snapshot demo mode flag
-        is_demo_mode = False
-        if hasattr(self, 'ecg_test_page') and self.ecg_test_page and \
-                hasattr(self.ecg_test_page, 'demo_toggle'):
-            is_demo_mode = self.ecg_test_page.demo_toggle.isChecked()
-
-        # Snapshot sampling rate
+        # Snapshot sampling rate first (used to trim snapshot size)
         sampling_rate = 500.0
         if hasattr(self, 'ecg_test_page') and self.ecg_test_page and \
                 hasattr(self.ecg_test_page, 'sampler') and \
@@ -3218,6 +3202,35 @@ class Dashboard(QWidget):
             except Exception:
                 sampling_rate = 500.0
 
+        # Snapshot data arrays NOW (copy to avoid mutation while thread runs)
+        # Performance: copy only report window, not full buffers.
+        # Stability: skip latest ~1s to avoid click-time transients in generated PDF.
+        ecg_data_snapshot = None
+        if hasattr(self, 'ecg_test_page') and self.ecg_test_page and \
+                hasattr(self.ecg_test_page, 'data'):
+            try:
+                import numpy as np
+                report_seconds = 10.0
+                tail_skip_seconds = 1.0
+                report_points = max(1, int(float(sampling_rate) * report_seconds))
+                tail_skip_points = max(0, int(float(sampling_rate) * tail_skip_seconds))
+                ecg_data_snapshot = []
+                for arr in self.ecg_test_page.data:
+                    arr_np = np.asarray(arr, dtype=float)
+                    if arr_np.size == 0:
+                        ecg_data_snapshot.append(arr_np.copy())
+                        continue
+                    end_idx = arr_np.size - tail_skip_points if (tail_skip_points > 0 and arr_np.size > tail_skip_points) else arr_np.size
+                    start_idx = max(0, end_idx - report_points)
+                    ecg_data_snapshot.append(arr_np[start_idx:end_idx].copy())
+            except Exception as e:
+                print(f" [SNAPSHOT] Could not copy ECG data arrays: {e}")
+
+        # Snapshot demo mode flag
+        is_demo_mode = False
+        if hasattr(self, 'ecg_test_page') and self.ecg_test_page and \
+                hasattr(self.ecg_test_page, 'demo_toggle'):
+            is_demo_mode = self.ecg_test_page.demo_toggle.isChecked()
         # Assemble frozen ecg_data dict
         frozen_ecg_data = {
             "HR":     HR  if HR  > 0 else 88,
@@ -3332,16 +3345,29 @@ class Dashboard(QWidget):
                                 recent = arr[-data_points:] if len(arr) > data_points else arr
                                 if len(recent) == 0 or np.all(recent == 0):
                                     continue
+
+                                # Match 12-box visual cleanliness: use same display filter for report traces.
+                                # Fallback to raw snapshot if filtering fails.
+                                plot_signal = np.asarray(recent, dtype=float)
+                                try:
+                                    from ecg.signal_paths import display_filter
+                                    filtered = display_filter(plot_signal, float(self.sampling_rate))
+                                    if filtered is not None and len(filtered) == len(plot_signal):
+                                        plot_signal = np.asarray(filtered, dtype=float)
+                                except Exception:
+                                    pass
+
                                 fig, ax = plt.subplots(figsize=(8, 2))
-                                time_ax = np.linspace(0, 10, len(recent))
-                                ax.plot(time_ax, recent, color='black', linewidth=0.8)
-                                ax.set_xlim(0, 10)
+                                duration_sec = max(1e-3, float(len(plot_signal)) / float(self.sampling_rate))
+                                time_ax = np.linspace(0, duration_sec, len(plot_signal), endpoint=False)
+                                ax.plot(time_ax, plot_signal, color='black', linewidth=0.8)
+                                ax.set_xlim(0, duration_sec)
                                 ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
                                 ax.set_facecolor('white')
                                 fig.patch.set_facecolor('white')
                                 img_path = os.path.join(project_root, f"lead_{lead}_10sec.png")
                                 fig.savefig(img_path, bbox_inches='tight', pad_inches=0.1,
-                                            dpi=150, facecolor='white', edgecolor='none')
+                                            dpi=120, facecolor='white', edgecolor='none')
                                 plt.close(fig)
                                 lead_img_paths[lead] = img_path
                             except Exception as e:
