@@ -1385,6 +1385,23 @@ class ECGTestPage(QWidget):
             text = "Demo Mode: ON" if is_on else "Demo Mode: OFF"
             self.demo_toggle.setText(self.tr(text))
 
+    def _can_generate_report(self) -> bool:
+        """Generate report is allowed when acquisition is running or demo mode is ON."""
+        try:
+            is_demo_mode = False
+            if hasattr(self, 'demo_toggle') and self.demo_toggle is not None:
+                is_demo_mode = bool(self.demo_toggle.isChecked())
+
+            is_acquisition_running = False
+            if hasattr(self, 'timer') and self.timer is not None:
+                is_acquisition_running = bool(self.timer.isActive())
+            if not is_acquisition_running and hasattr(self, 'serial_reader') and self.serial_reader is not None:
+                is_acquisition_running = bool(getattr(self.serial_reader, 'running', False))
+
+            return is_demo_mode or is_acquisition_running
+        except Exception:
+            return False
+
     def _start_generate_report_cooldown(self, seconds: int = 10, reason: str = ""):
         """Disable Generate Report button for a countdown window, then re-enable."""
         if not hasattr(self, "generate_report_btn"):
@@ -1419,13 +1436,8 @@ class ECGTestPage(QWidget):
         self.generate_report_btn.setText(f"Generate Report ({seconds})")
 
         def _finish_cooldown():
-            # Only re-enable if test is still running or demo mode is ON.
-            can_enable = bool(getattr(self, 'running', False))
-            if hasattr(self, 'demo_toggle') and self.demo_toggle is not None:
-                try:
-                    can_enable = can_enable or bool(self.demo_toggle.isChecked())
-                except Exception:
-                    pass
+            # Re-enable when acquisition is running or demo mode is ON.
+            can_enable = self._can_generate_report()
             if can_enable:
                 self.generate_report_btn.setEnabled(True)
                 self.generate_report_btn.setStyleSheet(green_style)
@@ -1464,19 +1476,25 @@ class ECGTestPage(QWidget):
                     except Exception:
                         pass
             else:
-                # Demo mode OFF - Permanently disable button and cancel timers
-                # Cancel any active countdown timers
+                # Demo mode OFF: keep report enabled if live acquisition is still running.
+                # Cancel any active countdown timers first.
                 for timer in self.countdown_timers:
                     if hasattr(timer, "stop") and timer.isActive():
                         timer.stop()
                 self.countdown_timers.clear()
-                
-                # Permanently disable generate report button when demo is off
-                self.generate_report_btn.setEnabled(False)
+
                 self.generate_report_btn.setText("Generate Report")
-                # Apply disabled style
-                self.generate_report_btn.setStyleSheet("background: #cccccc; color: #666666; border-radius: 10px; padding: 8px 0; font-size: 10px; font-weight: bold;")
-                
+                if self._can_generate_report():
+                    self.generate_report_btn.setEnabled(True)
+                    try:
+                        if hasattr(self, "green_button_style"):
+                            self.generate_report_btn.setStyleSheet(self.green_button_style)
+                    except Exception:
+                        pass
+                else:
+                    self.generate_report_btn.setEnabled(False)
+                    self.generate_report_btn.setStyleSheet("background: #cccccc; color: #666666; border-radius: 10px; padding: 8px 0; font-size: 10px; font-weight: bold;")
+
                 timer = getattr(self, "timer", None)
                 if timer is None or not timer.isActive():
                     self.update_recording_button_state()
@@ -6265,26 +6283,16 @@ class ECGTestPage(QWidget):
              file copies, index update) to a QThread so the event-loop / QTimer
              never miss a tick → waves keep flowing and BPM stays stable.
         """
-        from PyQt5.QtWidgets import QFileDialog, QMessageBox, QInputDialog
+        from PyQt5.QtWidgets import QFileDialog, QMessageBox
         from PyQt5.QtCore import QThread, pyqtSignal, QObject
         import datetime, os, json, shutil, copy
 
         # Enforce per-report cooldown: every click restarts a 10-second wait.
         self._start_generate_report_cooldown(seconds=10, reason="Report Click")
 
-        # ── STEP 1 (main thread): pick format ──────────────────────────────────
-        formats = ["12:1 Portrait", "4:3 Landscape", "6:2 Landscape"]
-        format_name, ok = QInputDialog.getItem(
-            self, "Select Format", "Choose ECG Report Format:", formats, 0, False)
-        if not ok:
-            return
-
-        if "4:3" in format_name:
-            fmt = "4_3"
-        elif "6:2" in format_name:
-            fmt = "6_2"
-        else:
-            fmt = "12_1"
+        # ── STEP 1 (main thread): fixed format = 12:1 ──────────────────────────
+        # User workflow requirement: one-click Generate should produce a 12:1 report.
+        fmt = "12_1"
         self.selected_format = fmt
 
         # ── STEP 2 (main thread): snapshot live data before file dialog ─────────
