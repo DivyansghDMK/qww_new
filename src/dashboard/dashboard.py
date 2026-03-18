@@ -3207,27 +3207,23 @@ class Dashboard(QWidget):
             except Exception:
                 sampling_rate = 500.0
 
-        # Snapshot data arrays NOW (copy to avoid mutation while thread runs)
-        # Performance: copy only report window, not full buffers.
-        # Stability: skip latest ~1s to avoid click-time transients in generated PDF.
+        # Snapshot data arrays NOW (copy to avoid mutation while thread runs).
+        # Report values must come from the exact click-time tail segment, not
+        # smoothed display labels, so capture the newest report window directly.
         ecg_data_snapshot = None
         if hasattr(self, 'ecg_test_page') and self.ecg_test_page and \
                 hasattr(self.ecg_test_page, 'data'):
             try:
                 import numpy as np
-                report_seconds = 10.0
-                tail_skip_seconds = 1.0
-                report_points = max(1, int(float(sampling_rate) * report_seconds))
-                tail_skip_points = max(0, int(float(sampling_rate) * tail_skip_seconds))
+                report_points = 5000  # last 10 seconds at 500 Hz; report calculations use this tail window
                 ecg_data_snapshot = []
                 for arr in self.ecg_test_page.data:
                     arr_np = np.asarray(arr, dtype=float)
                     if arr_np.size == 0:
                         ecg_data_snapshot.append(arr_np.copy())
                         continue
-                    end_idx = arr_np.size - tail_skip_points if (tail_skip_points > 0 and arr_np.size > tail_skip_points) else arr_np.size
-                    start_idx = max(0, end_idx - report_points)
-                    ecg_data_snapshot.append(arr_np[start_idx:end_idx].copy())
+                    start_idx = max(0, arr_np.size - report_points)
+                    ecg_data_snapshot.append(arr_np[start_idx:].copy())
             except Exception as e:
                 print(f" [SNAPSHOT] Could not copy ECG data arrays: {e}")
 
@@ -3236,19 +3232,21 @@ class Dashboard(QWidget):
         if hasattr(self, 'ecg_test_page') and self.ecg_test_page and \
                 hasattr(self.ecg_test_page, 'demo_toggle'):
             is_demo_mode = self.ecg_test_page.demo_toggle.isChecked()
-        # Assemble frozen ecg_data dict
+        # Assemble frozen ecg_data dict. Values will be recalculated from the
+        # captured last-5000-sample snapshot inside the worker before PDF generation.
         frozen_ecg_data = {
-            "HR":     HR  if HR  > 0 else 88,
-            "beat":   HR  if HR  > 0 else 88,
-            "PR":     PR  if PR  > 0 else 160,
-            "QRS":    QRS if QRS > 0 else 90,
-            "QT":     QT  if QT  > 0 else 400,
-            "QTc":    QTc if QTc > 0 else 400,
-            "QTcF":   QTcF if QTcF > 0 else (QTc if QTc > 0 else 400),
-            "ST":     ST,
-            "HR_max": 136,
-            "HR_min": 74,
-            "HR_avg": HR  if HR  > 0 else 88,
+            "HR":     0,
+            "beat":   0,
+            "PR":     0,
+            "QRS":    0,
+            "QT":     0,
+            "QTc":    0,
+            "QTcF":   0,
+            "ST":     0.0,
+            "RR_ms":  0,
+            "HR_max": 0,
+            "HR_min": 0,
+            "HR_avg": 0,
         }
 
         # ── STEP 2: Prepare output path BEFORE starting background work (non-modal) ──
@@ -3336,6 +3334,97 @@ class Dashboard(QWidget):
                     lead_img_paths = {}
                     current_dir  = os.path.dirname(os.path.abspath(__file__))
                     project_root = os.path.abspath(os.path.join(current_dir, '..'))
+
+                    def _recalculate_report_metrics_from_snapshot():
+                        """Recalculate report values from the captured last-5000-sample snapshot only."""
+                        if not self.ecg_data_snapshot or len(self.ecg_data_snapshot) < 2:
+                            return
+                        try:
+                            from ecg.signal_paths import display_filter
+                            from ecg.ecg_calculations import detectRPeaks, calculate_qtcf_interval
+                            from ecg.clinical_measurements import (
+                                build_median_beat,
+                                get_tp_baseline,
+                                measure_pr_from_median_beat,
+                                measure_qrs_duration_from_median_beat,
+                                measure_qt_from_median_beat,
+                                measure_st_deviation_from_median_beat,
+                            )
+
+                            fs = float(self.sampling_rate or 500.0)
+                            lead_ii = np.asarray(self.ecg_data_snapshot[1], dtype=float)
+                            if lead_ii.size < 100:
+                                return
+
+                            filtered_ii = display_filter(lead_ii, fs)
+                            r_peaks = np.asarray(detectRPeaks(filtered_ii, fs), dtype=int)
+                            rr_ms = 0
+                            hr_bpm = 0
+                            if r_peaks.size >= 2:
+                                rr_intervals_ms = np.diff(r_peaks) * (1000.0 / fs)
+                                valid_rr = rr_intervals_ms[(rr_intervals_ms >= 250.0) & (rr_intervals_ms <= 2000.0)]
+                                if valid_rr.size > 0:
+                                    rr_ms = int(round(float(np.median(valid_rr))))
+                                    hr_bpm = int(round(60000.0 / rr_ms)) if rr_ms > 0 else 0
+
+                            self.ecg_data["RR_ms"] = rr_ms
+                            self.ecg_data["HR"] = hr_bpm
+                            self.ecg_data["beat"] = hr_bpm
+                            self.ecg_data["HR_avg"] = hr_bpm
+                            self.ecg_data["HR_max"] = hr_bpm
+                            self.ecg_data["HR_min"] = hr_bpm
+                            self.ecg_data["Heart_Rate"] = hr_bpm
+                            self.ecg_data["HR_bpm"] = hr_bpm
+
+                            min_beats = min(8, max(3, int(r_peaks.size)))
+                            time_axis, median_beat = build_median_beat(lead_ii, r_peaks, fs, min_beats=min_beats)
+                            if median_beat is None or time_axis is None:
+                                print(" [BG] Report snapshot median beat unavailable; only RR/HR refreshed")
+                                return
+
+                            mid_idx = len(r_peaks) // 2
+                            r_mid = int(r_peaks[mid_idx])
+                            prev_r_idx = int(r_peaks[mid_idx - 1]) if mid_idx > 0 else None
+                            tp_baseline = get_tp_baseline(lead_ii, r_mid, fs, prev_r_peak_idx=prev_r_idx)
+
+                            pr_val = measure_pr_from_median_beat(median_beat, time_axis, fs, tp_baseline) or 0
+                            qrs_val = measure_qrs_duration_from_median_beat(median_beat, time_axis, fs, tp_baseline) or 0
+                            qt_val = measure_qt_from_median_beat(
+                                median_beat,
+                                time_axis,
+                                fs,
+                                tp_baseline,
+                                rr_ms=rr_ms if rr_ms > 0 else None,
+                            ) or 0
+                            st_val = measure_st_deviation_from_median_beat(median_beat, time_axis, fs, tp_baseline)
+                            st_val = float(st_val) if st_val is not None else 0.0
+
+                            qtc_val = 0
+                            qtcf_val = 0
+                            if qt_val > 0 and rr_ms > 0:
+                                rr_sec = rr_ms / 1000.0
+                                qtc_val = int(round(qt_val / (rr_sec ** 0.5)))
+                                qtcf_val = int(calculate_qtcf_interval(qt_val, rr_ms) or 0)
+
+                            self.ecg_data["PR"] = int(round(pr_val)) if pr_val > 0 else 0
+                            self.ecg_data["QRS"] = int(round(qrs_val)) if qrs_val > 0 else 0
+                            self.ecg_data["QT"] = int(round(qt_val)) if qt_val > 0 else 0
+                            self.ecg_data["QTc"] = int(round(qtc_val)) if qtc_val > 0 else 0
+                            self.ecg_data["QTcF"] = int(round(qtcf_val)) if qtcf_val > 0 else 0
+                            self.ecg_data["QTc_Fridericia"] = int(round(qtcf_val)) if qtcf_val > 0 else 0
+                            self.ecg_data["ST"] = st_val
+
+                            print(
+                                " [BG] Report snapshot metrics (last 5000 samples) — "
+                                f"HR:{self.ecg_data['HR']} RR:{self.ecg_data['RR_ms']} "
+                                f"PR:{self.ecg_data['PR']} QRS:{self.ecg_data['QRS']} "
+                                f"QT:{self.ecg_data['QT']} QTc:{self.ecg_data['QTc']} "
+                                f"QTcF:{self.ecg_data['QTcF']} ST:{self.ecg_data['ST']:.3f}"
+                            )
+                        except Exception as calc_err:
+                            print(f" [BG] Failed to recalculate report metrics from snapshot: {calc_err}")
+
+                    _recalculate_report_metrics_from_snapshot()
 
                     # --- Render 12-lead plots from frozen snapshot data ---
                     if self.ecg_data_snapshot and len(self.ecg_data_snapshot) >= 12:
