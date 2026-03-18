@@ -579,6 +579,60 @@ def apply_report_ecg_filters(signal, sampling_rate, settings_manager):
     # before the strip ends. Keep natural morphology after filtering.
     return filtered
 
+
+def _estimate_rr_from_report_strip(ecg_test_page, ecg_data_file, sampling_rate, settings_manager, width_points=460):
+    """Estimate RR from the same Lead II strip window used in the 12:1 report."""
+    try:
+        leads_payload, fs = _collect_12_lead_payload(
+            ecg_test_page,
+            sampling_rate,
+            ecg_data_file=ecg_data_file,
+            window_seconds=STANDARD_REPORT_WINDOW_SECONDS,
+        )
+        lead_ii = leads_payload.get("II") if isinstance(leads_payload, dict) else None
+        if lead_ii is None:
+            return None
+
+        signal = apply_report_ecg_filters(lead_ii, fs, settings_manager)
+        if signal is None or len(signal) < max(3, int(fs * 2.0)):
+            return None
+
+        wave_speed_setting = settings_manager.get_setting("wave_speed")
+        speed_mm_s = float(wave_speed_setting) if wave_speed_setting else None
+        if not speed_mm_s or speed_mm_s <= 0:
+            return None
+
+        width_mm = float(width_points) / mm
+        effective_speed_mm_s = speed_mm_s * ECG_SPEED_SCALE
+        max_display_seconds = width_mm / max(effective_speed_mm_s, 1e-6)
+        display_samples = max(1, min(len(signal), int(round(max_display_seconds * fs))))
+        strip_signal = np.asarray(signal[-display_samples:], dtype=float)
+        if len(strip_signal) < max(3, int(fs * 2.0)):
+            return None
+
+        from scipy.signal import find_peaks
+
+        centered = strip_signal - np.nanmedian(strip_signal)
+        diff_signal = np.diff(centered, prepend=centered[0])
+        energy = diff_signal * diff_signal
+        window = max(1, int(0.12 * fs))
+        envelope = np.convolve(energy, np.ones(window) / window, mode="same")
+        threshold = np.mean(envelope) + 0.8 * np.std(envelope)
+        min_distance = max(1, int(0.25 * fs))
+        peaks, _ = find_peaks(envelope, height=threshold, distance=min_distance)
+        if len(peaks) < 2:
+            return None
+
+        rr_ms = np.diff(peaks) * (1000.0 / fs)
+        rr_ms = rr_ms[(rr_ms >= 250.0) & (rr_ms <= 2000.0)]
+        if len(rr_ms) == 0:
+            return None
+
+        return int(round(float(np.median(rr_ms))))
+    except Exception as exc:
+        print(f" RR strip estimation failed: {exc}")
+        return None
+
 def create_ecg_grid_with_waveform(ecg_data, lead_name, width=6, height=2):
     """
     Create ECG graph with pink grid background and dark ECG waveform
@@ -936,7 +990,6 @@ def create_reportlab_ecg_drawing_with_real_data(lead_name, ecg_data, width=460, 
     ecg_mv = ecg_array / 1000.0 if med_abs > 20.0 else ecg_array
 
     fs = float(sampling_rate)
-    t_sec = np.arange(len(ecg_mv)) / fs
 
     # Show ALL available data - NO MASKING to prevent cutting last beat
     print(f" Available data: {len(ecg_mv)} points, Time window: {total_seconds:.2f}s")
@@ -960,10 +1013,6 @@ def create_reportlab_ecg_drawing_with_real_data(lead_name, ecg_data, width=460, 
             ecg_mv = ecg_mv - trend
             print(f" {lead_name}: Removed baseline slope={slope:.6f}")
     
-    # Gain once: mm per mV (AFTER all processing)
-    y_mm = ecg_mv * wave_gain_mm_mv
-    baseline_mm = height_mm_physical / 2.0
-    y_mm = baseline_mm + y_mm
     # PROPER ECG SCALING: Use actual ECG paper scaling (25mm/s with proper grid alignment)
     # This ensures medically accurate time representation
     effective_speed_mm_s = speed_mm_s * 1.05  # ECG_SPEED_SCALE = 1.05
@@ -974,20 +1023,27 @@ def create_reportlab_ecg_drawing_with_real_data(lead_name, ecg_data, width=460, 
     # Use the smaller of: available data time or max display time
     actual_data_seconds = len(ecg_mv) / fs
     display_seconds = min(actual_data_seconds, max_display_seconds)
-    
-    # Calculate corresponding time points for display
-    max_time_index = min(len(t_sec), int(display_seconds * fs))
-    display_t_sec = t_sec[:max_time_index]
-    display_ecg_mv = ecg_mv[:max_time_index]
-    
+    display_samples = max(1, min(len(ecg_mv), int(round(display_seconds * fs))))
+
+    # Always render the newest portion of the report window so the waveform,
+    # boxes-per-wave timing, and calculated values all describe the same tail segment.
+    if len(ecg_mv) > display_samples:
+        ecg_mv = ecg_mv[-display_samples:]
+        print(f" {lead_name}: Using latest {display_samples} samples for report strip")
+    else:
+        ecg_mv = ecg_mv[:display_samples]
+
+    t_sec = np.arange(len(ecg_mv)) / fs
+
+    # Gain once: mm per mV (AFTER all processing and final window selection)
+    y_mm = ecg_mv * wave_gain_mm_mv
+    baseline_mm = height_mm_physical / 2.0
+    y_mm = baseline_mm + y_mm
+
     # Convert to physical mm positions (proper ECG scaling)
-    x_mm = display_t_sec * effective_speed_mm_s
+    x_mm = t_sec * effective_speed_mm_s
     
-    print(f" Display: {len(display_ecg_mv)} points, {display_seconds:.2f}s of {actual_data_seconds:.2f}s available")
-    
-    # Update variables for the rest of the processing
-    t_sec = display_t_sec
-    ecg_mv = display_ecg_mv
+    print(f" Display: {len(ecg_mv)} points, {display_seconds:.2f}s of {actual_data_seconds:.2f}s available")
 
     # Clip to panel
     y_mm = np.clip(y_mm, 0.0, height_mm_physical)
@@ -1404,7 +1460,26 @@ def generate_ecg_report(
     data["HR_bpm"] = hr_bpm_value
     data["Heart_Rate"] = hr_bpm_value
     data["HR"] = hr_bpm_value
-    if hr_bpm_value > 0:
+
+    report_sampling_rate = (
+        getattr(getattr(ecg_test_page, "sampler", None), "sampling_rate", None)
+        or getattr(ecg_test_page, "sampling_rate", None)
+        or 500.0
+    )
+    rr_from_strip_ms = _estimate_rr_from_report_strip(
+        ecg_test_page=ecg_test_page,
+        ecg_data_file=ecg_data_file,
+        sampling_rate=report_sampling_rate,
+        settings_manager=settings_manager,
+    )
+    if rr_from_strip_ms and rr_from_strip_ms > 0:
+        data["RR_ms"] = rr_from_strip_ms
+        if not hr_bpm_value:
+            data["HR_bpm"] = int(round(60000.0 / rr_from_strip_ms))
+            data["Heart_Rate"] = data["HR_bpm"]
+            data["HR"] = data["HR_bpm"]
+        print(f" Using RR from plotted Lead II strip: {data['RR_ms']} ms")
+    elif hr_bpm_value > 0:
         data["RR_ms"] = int(60000 / hr_bpm_value)
     else:
         data["RR_ms"] = data.get("RR_ms", 0)
@@ -1663,15 +1738,17 @@ def generate_ecg_report(
     date_time_str = patient.get("date_time", "")
 
     # Get real ECG data from dashboard
-    HR = data.get('HR_avg',)
+    HR = _safe_int(data.get('HR') or data.get('HR_bpm') or data.get('HR_avg'), 0)
     PR = data.get('PR',) 
     QRS = data.get('QRS',)
     QT = _safe_float(data.get('QT',), 0.0)
     QTc = _safe_float(data.get('QTc',), 0.0)
     QTcF = data.get('QTc_Fridericia') or data.get('QTcF') or 0
     ST = data.get('ST',)
-    # DYNAMIC RR interval calculation from heart rate (instead of hard-coded 857)
-    RR = int(60000 / HR) if HR and HR > 0 else 0  # RR interval in ms from heart rate
+    # Prefer RR calculated from the same plotted strip; only fall back to HR-derived RR.
+    RR = _safe_int(data.get('RR_ms'), 0)
+    if RR <= 0 and HR > 0:
+        RR = int(60000 / HR)
 
     # Formatting functions
     def _fmt_bpm(value):
