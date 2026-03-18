@@ -936,7 +936,6 @@ def create_reportlab_ecg_drawing_with_real_data(lead_name, ecg_data, width=460, 
     ecg_mv = ecg_array / 1000.0 if med_abs > 20.0 else ecg_array
 
     fs = float(sampling_rate)
-    t_sec = np.arange(len(ecg_mv)) / fs
 
     # Show ALL available data - NO MASKING to prevent cutting last beat
     print(f" Available data: {len(ecg_mv)} points, Time window: {total_seconds:.2f}s")
@@ -960,10 +959,6 @@ def create_reportlab_ecg_drawing_with_real_data(lead_name, ecg_data, width=460, 
             ecg_mv = ecg_mv - trend
             print(f" {lead_name}: Removed baseline slope={slope:.6f}")
     
-    # Gain once: mm per mV (AFTER all processing)
-    y_mm = ecg_mv * wave_gain_mm_mv
-    baseline_mm = height_mm_physical / 2.0
-    y_mm = baseline_mm + y_mm
     # PROPER ECG SCALING: Use actual ECG paper scaling (25mm/s with proper grid alignment)
     # This ensures medically accurate time representation
     effective_speed_mm_s = speed_mm_s * 1.05  # ECG_SPEED_SCALE = 1.05
@@ -974,20 +969,27 @@ def create_reportlab_ecg_drawing_with_real_data(lead_name, ecg_data, width=460, 
     # Use the smaller of: available data time or max display time
     actual_data_seconds = len(ecg_mv) / fs
     display_seconds = min(actual_data_seconds, max_display_seconds)
-    
-    # Calculate corresponding time points for display
-    max_time_index = min(len(t_sec), int(display_seconds * fs))
-    display_t_sec = t_sec[:max_time_index]
-    display_ecg_mv = ecg_mv[:max_time_index]
-    
+    display_samples = max(1, min(len(ecg_mv), int(round(display_seconds * fs))))
+
+    # Always render the newest portion of the report window so the waveform,
+    # boxes-per-wave timing, and calculated values all describe the same tail segment.
+    if len(ecg_mv) > display_samples:
+        ecg_mv = ecg_mv[-display_samples:]
+        print(f" {lead_name}: Using latest {display_samples} samples for report strip")
+    else:
+        ecg_mv = ecg_mv[:display_samples]
+
+    t_sec = np.arange(len(ecg_mv)) / fs
+
+    # Gain once: mm per mV (AFTER all processing and final window selection)
+    y_mm = ecg_mv * wave_gain_mm_mv
+    baseline_mm = height_mm_physical / 2.0
+    y_mm = baseline_mm + y_mm
+
     # Convert to physical mm positions (proper ECG scaling)
-    x_mm = display_t_sec * effective_speed_mm_s
+    x_mm = t_sec * effective_speed_mm_s
     
-    print(f" Display: {len(display_ecg_mv)} points, {display_seconds:.2f}s of {actual_data_seconds:.2f}s available")
-    
-    # Update variables for the rest of the processing
-    t_sec = display_t_sec
-    ecg_mv = display_ecg_mv
+    print(f" Display: {len(ecg_mv)} points, {display_seconds:.2f}s of {actual_data_seconds:.2f}s available")
 
     # Clip to panel
     y_mm = np.clip(y_mm, 0.0, height_mm_physical)
