@@ -4164,24 +4164,68 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     fig_radar.savefig(temp_radar_chart_path, dpi=100, facecolor='white')
     plt.close(fig_radar)
     
-    # Create metrics table for SDANN, SDDN (SDNN), RMSSD, NN50 (displayed inside container)
-    # Format values for display - USING DYNAMIC CALCULATED VALUES
-    # Ensure we use actual calculated values, not defaults
+    # HRV CLASSIFICATION FIX (Issue 3): Add evidence-based interpretation labels.
+    # Thresholds from: Task Force of ESC/NASPE, Eur Heart J 1996;17:354–381
+    # SDNN:  ≥100ms = Excellent autonomic function
+    #         50-100 = Normal/healthy range
+    #         30-50  = Borderline (mild ANS impairment, monitor)
+    #        <30     = Low (significant autonomic dysfunction)
+    # RMSSD: ≥42ms  = Excellent parasympathetic tone
+    #         20-42  = Normal
+    #         10-20  = Borderline
+    #        <10     = Very low (high sympathetic dominance / stress)
+    sdnn_val   = float(sdnn)   if sdnn   and sdnn   > 0 else 0.0
+    rmssd_val  = float(rmssd)  if rmssd  and rmssd  > 0 else 0.0
+
+    if sdnn_val >= 100:
+        sdnn_label, sdnn_color = "Excellent", "#1a7a1a"
+    elif sdnn_val >= 50:
+        sdnn_label, sdnn_color = "Normal", "#2a8a2a"
+    elif sdnn_val >= 30:
+        sdnn_label, sdnn_color = "Borderline", "#c87800"
+    else:
+        sdnn_label, sdnn_color = "Low", "#c82020"
+
+    if rmssd_val >= 42:
+        rmssd_label, rmssd_color = "Excellent", "#1a7a1a"
+    elif rmssd_val >= 20:
+        rmssd_label, rmssd_color = "Normal", "#2a8a2a"
+    elif rmssd_val >= 10:
+        rmssd_label, rmssd_color = "Borderline", "#c87800"
+    else:
+        rmssd_label, rmssd_color = "Low", "#c82020"
+
+    # Overall autonomic status (simple composite)
+    if sdnn_val >= 50 and rmssd_val >= 20:
+        hrv_status, hrv_status_color = "Healthy autonomic regulation", "#1a7a1a"
+    elif sdnn_val >= 30 or rmssd_val >= 10:
+        hrv_status, hrv_status_color = "Mild autonomic imbalance – monitor", "#c87800"
+    else:
+        hrv_status, hrv_status_color = "Autonomic dysfunction – clinical review advised", "#c82020"
+
+    print(f"📊 HRV Classification: SDNN={sdnn_label}, RMSSD={rmssd_label}, Status={hrv_status}")
+
     sdann_display = f"{sdann:.2f}" if sdann is not None and sdann > 0 else "0.00"
     sdnn_display = f"{sdnn:.2f}" if sdnn is not None and sdnn > 0 else "0.00"
     rmssd_display = f"{rmssd:.2f}" if rmssd is not None and rmssd > 0 else "0.00"
     nn50_display = f"{int(nn50_count)}" if nn50_count is not None and nn50_count >= 0 else "0"
-    
+
     # Debug: Print calculated values to verify they're dynamic
     print(f"📊 HRV Metrics (Dynamic Values):")
     print(f"   SDANN: {sdann_display}, SDNN: {sdnn_display}, RMSSD: {rmssd_display}, NN50: {nn50_display}")
-    
-    # Create metrics in single row (like reference image) - More gap between metrics
+
+    # Create metrics in TWO rows: values + classification labels
     metrics_table_data = [
+        # Row 1: Metric values
         [Paragraph(f"<b>SDANN:</b> {sdann_display}", styles['Normal']),
-         Paragraph(f"<b>SDDN:</b> {sdnn_display}", styles['Normal']),
-         Paragraph(f"<b>RMSSD:</b> {rmssd_display}", styles['Normal']),
-         Paragraph(f"<b>NN50:</b> {nn50_display}", styles['Normal'])]
+         Paragraph(f"<b>SDNN:</b> {sdnn_display} <font color='{sdnn_color}'>({sdnn_label})</font>", styles['Normal']),
+         Paragraph(f"<b>RMSSD:</b> {rmssd_display} <font color='{rmssd_color}'>({rmssd_label})</font>", styles['Normal']),
+         Paragraph(f"<b>NN50:</b> {nn50_display}", styles['Normal'])],
+        # Row 2: Interpretation summary (spans all columns)
+        [Paragraph(f"<b>Interpretation:</b> <font color='{hrv_status_color}'>{hrv_status}</font>"
+                   f" &nbsp;|&nbsp; Reference: SDNN ≥50ms, RMSSD ≥20ms = Normal (ESC/AHA Task Force 1996)",
+                   styles['Normal']),
+         "", "", ""],
     ]
     
     # Further increased column widths for MORE gap between metrics (to fill entire container width)

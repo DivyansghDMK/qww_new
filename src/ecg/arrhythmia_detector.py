@@ -100,11 +100,10 @@ class ArrhythmiaDetector:
         except Exception as e:
             print(f"Error in bigeminy detection: {e}")
         
-        try:
-            if self._is_asynchronous_75_bpm(heart_rate, rr_intervals, p_peaks, r_peaks):
-                arrhythmias.append("Asynchronous 75 bpm")
-        except Exception as e:
-            print(f"Error in asynchronous 75 bpm detection: {e}")
+        # BUG-18 FIX: Removed "Asynchronous 75 bpm" detection.
+        # This is not a real clinical arrhythmia classification.
+        # Detecting it at 70-80 BPM caused every normal patient to get a false alarming label.
+        # Normal rhythm at this rate is classified as "Normal Sinus Rhythm" below.
         
         try:
             if self._is_junctional_rhythm(heart_rate, qrs_duration, pr_interval, rr_intervals, p_peaks, r_peaks):
@@ -354,9 +353,9 @@ class ArrhythmiaDetector:
         rr_std = np.std(rr_intervals)
         
         
-        # Lower threshold for better sensitivity - AF has high RR interval variability
-        # CV > 0.10 is more sensitive for AF detection (reduced from 0.12)
-        if rr_cv > 0.10:
+        # BUG-17 FIX: Raised threshold from 0.10 to 0.18 (clinical standard for AF)
+        # 0.10 was too sensitive — caused false AFib in normal patients with minor variability
+        if rr_cv > 0.18:
             # Check 2: Normal QRS complexes (AF should have narrow QRS)
             # Wide QRS suggests ventricular origin, not AF
             if qrs_duration is None or qrs_duration <= 120:
@@ -383,8 +382,8 @@ class ArrhythmiaDetector:
                         if p_cv > 0.12:  # Lowered threshold
                             return True
                 
-                # If RR CV is very high (>0.15) with narrow QRS, likely AF even with some P waves
-                if rr_cv > 0.15:
+                # If RR CV is very high (>0.18) with narrow QRS, likely AF even with some P waves
+                if rr_cv > 0.18:
                     return True
         
         # Check 4: Very high RR variability (CV > 0.18) with narrow QRS

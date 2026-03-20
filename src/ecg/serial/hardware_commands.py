@@ -255,7 +255,13 @@ class HardwareCommandHandler:
                     # In quiet mode, still show minimal info for debugging
                     print(f"   📥 Response: Code=0x{response.get('code', 0):02X}, Type={response.get('type')}, OpCode=0x{response.get('opcode', 0):02X}")
                 
+                is_ack = False
                 if response["type"] == "ack" and response.get("opcode") == OPCODE_START:
+                    is_ack = True
+                elif response.get("code") == 0x20:
+                    is_ack = True
+                    
+                if is_ack:
                     if not quiet:
                         print(f"✅ START COMMAND: Success! Device acknowledged START command")
                         print(f"   ACK OpCode: 0x{response.get('opcode', 0):02X} ({self._get_code_name(response.get('opcode', 0))})")
@@ -321,7 +327,13 @@ class HardwareCommandHandler:
                 response = self._parse_response(response_packet)
                 print(f"📋 Parsed response: {response}")
                 
+                is_ack = False
                 if response["type"] == "ack" and response.get("opcode") == OPCODE_STOP:
+                    is_ack = True
+                elif response.get("code") == 0x20:
+                    is_ack = True
+                    
+                if is_ack:
                     print(f"✅ STOP COMMAND: Success! Device acknowledged STOP command")
                     print(f"   ACK OpCode: 0x{response.get('opcode', 0):02X} ({self._get_code_name(response.get('opcode', 0))})")
                     print("="*70 + "\n")
@@ -649,7 +661,13 @@ class HardwareCommandHandler:
                 response = self._parse_response(response_packet)
                 print(f"📋 Parsed response: {response}")
                 
+                is_ack = False
                 if response["type"] == "ack" and response.get("opcode") == OPCODE_CLOSE:
+                    is_ack = True
+                elif response.get("code") == 0x20:
+                    is_ack = True
+                    
+                if is_ack:
                     print(f"✅ CLOSE COMMAND: Success! Device acknowledged CLOSE command")
                     print(f"   ACK OpCode: 0x{response.get('opcode', 0):02X} ({self._get_code_name(response.get('opcode', 0))})")
                     print("="*70 + "\n")

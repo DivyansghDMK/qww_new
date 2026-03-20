@@ -1,5 +1,15 @@
 import sys
 import os
+
+# ── BUG-05 FIX: Force software OpenGL rendering ──────────────────────────────
+# MUST be set BEFORE any Qt/PyQtGraph import.
+# This fixes blank waves on laptops with Intel HD, AMD integrated, or no GPU.
+os.environ['QT_OPENGL'] = 'software'
+os.environ['PYOPENGL_PLATFORM'] = 'win32'
+os.environ['QT_SCALE_FACTOR'] = '1'
+os.environ['QT_AUTO_SCREEN_SCALE_FACTOR'] = '0'
+# ─────────────────────────────────────────────────────────────────────────────
+
 import json
 from dotenv import load_dotenv
 
@@ -483,9 +493,11 @@ class LoginRegisterDialog(QDialog):
     def handle_login(self):
         identifier = self.login_email.text()  # Can be full name, username, or phone
         password_or_serial = self.login_password.text()
-        # Admin shortcut: username 'admin' with password 'adminsd'
+        # BUG-31 FIX: Admin credentials loaded from environment variable, not hardcoded
         try:
-            if identifier.strip().lower() == 'admin' and password_or_serial == 'adminsd':
+            admin_user = os.environ.get('CARDIOX_ADMIN_USER', 'admin')
+            admin_pass = os.environ.get('CARDIOX_ADMIN_PASS', '')  # empty = disabled unless set in .env
+            if admin_pass and identifier.strip().lower() == admin_user and password_or_serial == admin_pass:
                 self.result = True
                 self.username = 'admin'
                 self.user_details = {'is_admin': True}

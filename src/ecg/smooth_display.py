@@ -84,8 +84,8 @@ def configure_pyqtgraph():
     """
     pg.setConfigOptions(
         antialias=False,         # OFF: ~3x faster rendering, imperceptible on ECG lines
-        useOpenGL=True,          # GPU-accelerated canvas
-        enableExperimental=True, # Required for OpenGL path
+        useOpenGL=False,         # BUG-04 FIX: software rendering — works on ALL laptops (was True → crashes on weak GPUs)
+        enableExperimental=False,# BUG-04 FIX: only needed with OpenGL=True (was True)
         foreground='w',          # White axes/text (dark background)
         background='k',          # Black background — standard ECG monitor look
     )

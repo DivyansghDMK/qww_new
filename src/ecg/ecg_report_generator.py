@@ -3085,7 +3085,12 @@ def generate_ecg_report(
             traceback.print_exc()
     
     # Fallback: Recalculate if not available from ECG test page
-    if (p_axis_deg == "--" or qrs_axis_deg == "--" or t_axis_deg == "--") and ecg_test_page is not None and hasattr(ecg_test_page, 'data') and len(ecg_test_page.data) > 5:
+    # Disable fallback - it uses a different wrong algorithm
+    # T axis should come from the cached value only
+    if (p_axis_deg == "--" or qrs_axis_deg == "--" or t_axis_deg == "--"):
+        pass  # Don't recalculate - use cached value or "--"
+        
+    if False: # Fallback disabled
         try:
             from scipy.signal import butter, filtfilt, find_peaks
             

@@ -1142,7 +1142,7 @@ class ExpandedLeadView(QDialog):
                 print(f"All data is NaN in expanded view initialization for lead {self.lead_name}")
         
         # self.ax.set_xlabel('Time (seconds)', fontsize=14, fontweight='bold', color='#34495e')
-        self.ax.set_ylabel('Amplitude (mV)', fontsize=14, fontweight='bold', color='#34495e')
+        self.ax.set_ylabel('Amplitude (ADC)', fontsize=14, fontweight='bold', color='#34495e')
         
         # Add demo mode or wave speed info to title
         if self.demo_mode_active and self.demo_manager:
@@ -1526,7 +1526,16 @@ class ExpandedLeadView(QDialog):
             self.t_peaks = t_peaks
 
             rr_intervals = np.diff(r_peaks) / self.sampling_rate * 1000 if len(r_peaks) > 1 else np.array([])
-            arrhythmias = self.arrhythmia_detector.detect_arrhythmias(r_peaks, rr_intervals)
+            
+            # Fix call to detect_arrhythmias: it expects (signal, analysis_dict)
+            analysis_dict = {
+                'r_peaks': r_peaks,
+                'p_peaks': p_peaks,
+                'q_peaks': q_peaks,
+                's_peaks': s_peaks,
+                't_peaks': t_peaks
+            }
+            arrhythmias = self.arrhythmia_detector.detect_arrhythmias(filtered_signal, analysis_dict)
             self.update_arrhythmia_display(arrhythmias)
 
         except Exception as e:
@@ -1849,7 +1858,7 @@ class ExpandedLeadView(QDialog):
             if (
                 not hasattr(self, '_display_center_ema')
                 or self._last_window_bounds is None
-                or abs(current_window_bounds[0] - self._last_window_bounds[0]) > max(1, int(self.sampling_rate * 0.5))
+                or abs(current_window_bounds[0] - self._last_window_bounds[0]) > max(1, int(self.sampling_rate * 2.0))
             ):
                 self._display_center_ema = raw_center
             center_alpha = 0.12
@@ -1963,7 +1972,7 @@ class ExpandedLeadView(QDialog):
                             pass
 
             # Remove explicit X-axis label ("Time (seconds)") to match dashboard style
-            self.ax.set_ylabel('Amplitude (mV)', fontsize=14, fontweight='bold', color='#34495e')
+            self.ax.set_ylabel('Amplitude (ADC)', fontsize=14, fontweight='bold', color='#34495e')
             amp_text = f" (Zoom: {self.amplification:.2f}x)" if self.amplification != 1.0 else ""
             self.ax.set_title(
                 f'Lead {self.lead_name} - Live PQRST Analysis{amp_text}',

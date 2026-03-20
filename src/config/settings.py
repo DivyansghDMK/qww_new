@@ -19,8 +19,8 @@ class AppConfig:
         """Load default configuration values"""
         return {
             "ecg": {
-                "sampling_rate": 80,
-                "buffer_size": 1000,
+                "sampling_rate": 500,   # BUG-01 FIX: hardware runs at 500 Hz (was wrong 80)
+                "buffer_size": 5000,     # BUG-01 FIX: 10s @ 500 Hz (was 1000 = 2s)
                 "update_interval": 50,  # ms
                 "leads": ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"],
                 "filtering": {
@@ -39,7 +39,7 @@ class AppConfig:
             },
             "hardware": {
                 "serial_port": "COM3",
-                "baud_rate": 9600,
+                "baud_rate": 115200,    # BUG-02 FIX: hardware uses 115200 (was wrong 9600)
                 "timeout": 1.0,
                 "max_readings_per_cycle": 20
             },

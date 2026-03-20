@@ -24,6 +24,31 @@ from PyQt5.QtWidgets import (
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
+import sys
+# Add the src directory to the path to ensure ecg module can be imported
+current_dir = os.path.dirname(os.path.abspath(__file__))
+src_dir = os.path.dirname(current_dir)
+if src_dir not in sys.path:
+    sys.path.insert(0, src_dir)
+
+# Try importing with multiple paths to be robust
+try:
+    from ecg.arrhythmia_detector import ArrhythmiaDetector
+    from ecg.expanded_lead_view import PQRSTAnalyzer
+except ImportError:
+    try:
+        from src.ecg.arrhythmia_detector import ArrhythmiaDetector
+        from src.ecg.expanded_lead_view import PQRSTAnalyzer
+    except ImportError:
+        # Final fallback - use relative imports if possible
+        try:
+            from ..ecg.arrhythmia_detector import ArrhythmiaDetector
+            from ..ecg.expanded_lead_view import PQRSTAnalyzer
+        except (ImportError, ValueError):
+            print(" Warning: Could not import ECG analysis modules")
+            ArrhythmiaDetector = None
+            PQRSTAnalyzer = None
+
 
 class ECGAnalysisWindow(QDialog):
     """User-friendly ECG analysis window for backend JSON reports."""
@@ -72,7 +97,7 @@ class ECGAnalysisWindow(QDialog):
         self.lead_data = {lead: np.array([]) for lead in self.LEADS}
         self.sampling_rate = 500.0
 
-        self.window_seconds = 2.0
+        self.window_seconds = 10.0
         self.step_seconds = 0.5
         self.frame_start_sample = 0
         self.play_timer = QTimer(self)
@@ -121,9 +146,28 @@ class ECGAnalysisWindow(QDialog):
         self.export_btn.setObjectName("secondary")
         self.export_btn.clicked.connect(self.export_report)
 
+        self.pdf_btn = QPushButton("Generate PDF")
+        self.pdf_btn.setStyleSheet("background: #e74c3c; color: white; font-weight: bold;")
+        self.pdf_btn.clicked.connect(self.generate_pdf_report)
+
+        self.api_id_lbl = QLabel("API ID:")
+        self.api_id_input = QLineEdit()
+        self.api_id_input.setPlaceholderText("ID")
+        self.api_id_input.setFixedWidth(60)
+        
+        self.api_fetch_btn = QPushButton("Fetch")
+        self.api_fetch_btn.setStyleSheet("background: #3498db; color: white;")
+        self.api_fetch_btn.clicked.connect(self.fetch_api_report)
+
+        right.addWidget(QLabel("Report:"))
         right.addWidget(self.report_combo)
         right.addWidget(self.refresh_btn)
         right.addWidget(self.export_btn)
+        right.addWidget(self.pdf_btn)
+        right.addSpacing(15)
+        right.addWidget(self.api_id_lbl)
+        right.addWidget(self.api_id_input)
+        right.addWidget(self.api_fetch_btn)
 
         lay.addLayout(left)
         lay.addStretch()
@@ -151,8 +195,8 @@ class ECGAnalysisWindow(QDialog):
         controls.addSpacing(12)
         controls.addWidget(QLabel("Window:"))
         self.window_combo = QComboBox()
-        self.window_combo.addItems(["1.0 s", "2.0 s", "3.0 s", "5.0 s"])
-        self.window_combo.setCurrentText("2.0 s")
+        self.window_combo.addItems(["1.0 s", "2.0 s", "3.0 s", "5.0 s", "10.0 s"])
+        self.window_combo.setCurrentText("10.0 s")
         self.window_combo.currentTextChanged.connect(self._on_window_changed)
 
         controls.addWidget(self.window_combo)
@@ -190,24 +234,7 @@ class ECGAnalysisWindow(QDialog):
         h.setContentsMargins(8, 8, 8, 8)
         h.setSpacing(8)
 
-        # Metrics
-        metrics_box = QFrame()
-        mv = QVBoxLayout(metrics_box)
-        mv.addWidget(QLabel("Metrics"))
-        self.metrics_table = QTableWidget(0, 2)
-        self.metrics_table.setHorizontalHeaderLabels(["Parameter", "Value"])
-        self.metrics_table.horizontalHeader().setStretchLastSection(True)
-        mv.addWidget(self.metrics_table)
-
-        # Findings
-        findings_box = QFrame()
-        fv = QVBoxLayout(findings_box)
-        fv.addWidget(QLabel("Backend Analysis"))
-        self.findings_text = QTextEdit()
-        self.findings_text.setReadOnly(True)
-        fv.addWidget(self.findings_text)
-
-        # Manual arrhythmia marking
+        # Manual arrhythmia marking only
         mark_box = QFrame()
         av = QVBoxLayout(mark_box)
         av.addWidget(QLabel("Manual Arrhythmia Marking"))
@@ -238,11 +265,14 @@ class ECGAnalysisWindow(QDialog):
         self.mark_start_btn.clicked.connect(self.mark_start)
         self.mark_end_btn = QPushButton("Mark End + Save")
         self.mark_end_btn.clicked.connect(self.mark_end_and_save)
+        self.auto_detect_btn = QPushButton("Automatic Detection")
+        self.auto_detect_btn.clicked.connect(self.run_automatic_detection)
         self.delete_mark_btn = QPushButton("Delete Selected")
         self.delete_mark_btn.setObjectName("secondary")
         self.delete_mark_btn.clicked.connect(self.delete_selected_annotation)
         row2.addWidget(self.mark_start_btn)
         row2.addWidget(self.mark_end_btn)
+        row2.addWidget(self.auto_detect_btn)
         row2.addWidget(self.delete_mark_btn)
         av.addLayout(row2)
 
@@ -254,9 +284,11 @@ class ECGAnalysisWindow(QDialog):
         self.annotation_table.horizontalHeader().setStretchLastSection(True)
         av.addWidget(self.annotation_table)
 
-        h.addWidget(metrics_box, 1)
-        h.addWidget(findings_box, 1)
-        h.addWidget(mark_box, 2)
+        h.addWidget(mark_box)
+
+        # Keep dummy references so other code doesn't break
+        self.metrics_table = QTableWidget(0, 2)
+        self.findings_text = QTextEdit()
 
         return frame
 
@@ -406,9 +438,12 @@ class ECGAnalysisWindow(QDialog):
 
         # Metrics from multiple schema variants
         metrics = rpt.get('result_reading') or rpt.get('metrics') or {}
-        hrv_metrics = rpt.get('hrv_result_reading') or {}
 
         self.metrics_table.setRowCount(0)
+        
+        rv5_sv1 = metrics.get('RV5_SV1', metrics.get('rv5_sv1', 'N/A'))
+        rv5_plus_sv1 = metrics.get('RV5_plus_SV1', metrics.get('rv5_plus_sv1', 'N/A'))
+
         items = [
             ("HR", metrics.get('HR_bpm', metrics.get('heart_rate', metrics.get('HR', 'N/A'))), "bpm"),
             ("RR", metrics.get('RR_ms', metrics.get('rr_interval', metrics.get('RR', 'N/A'))), "ms"),
@@ -416,7 +451,8 @@ class ECGAnalysisWindow(QDialog):
             ("QRS", metrics.get('QRS_ms', metrics.get('qrs_duration', metrics.get('QRS', 'N/A'))), "ms"),
             ("QT", metrics.get('QT_ms', metrics.get('qt_interval', metrics.get('QT', 'N/A'))), "ms"),
             ("QTc", metrics.get('QTc_ms', metrics.get('qtc_interval', metrics.get('QTc', 'N/A'))), "ms"),
-            ("HRV HR", hrv_metrics.get('HR_bpm', hrv_metrics.get('HR', 'N/A')), "bpm"),
+            ("RV5/SV1", str(rv5_sv1).replace(' mV', ''), "mV" if str(rv5_sv1) != 'N/A' else ""),
+            ("RV5+SV1", str(rv5_plus_sv1).replace(' mV', ''), "mV" if str(rv5_plus_sv1) != 'N/A' else "")
         ]
 
         self.metrics_table.setRowCount(len(items))
@@ -512,14 +548,23 @@ class ECGAnalysisWindow(QDialog):
             ax.grid(True, alpha=0.25, color='#dcdcdc', linestyle='-', linewidth=0.5)
             for spine in ax.spines.values():
                 spine.set_color('#cccccc')
-            ax.set_title(f"Lead {lead}", fontsize=10, fontweight='bold', color='#111111')
-            ax.tick_params(labelsize=7, colors='#444444')
+                
+            # Inline Text to save vertical space instead of `set_title`
+            ax.text(0.01, 0.65, f"{lead}", transform=ax.transAxes, fontsize=11, fontweight='bold', color='#111111')
+            
+            # Remove X and Y axis labelling to make it clean and professional
+            ax.set_xticklabels([])
+            ax.set_yticklabels([])
+            ax.tick_params(left=False, bottom=False)
 
             data = self.lead_data.get(lead, np.array([]))
             if len(data) > 0 and en > st:
                 seg = data[st:en]
                 ax.plot(t, seg, color='#111111', linewidth=0.9)
                 ax.set_xlim(start_sec, end_sec)
+                
+                # Dynamic ADC Y-Lim scaling explicitly requested by User
+                ax.set_ylim(0, 4096)
             else:
                 ax.text(0.5, 0.5, 'No data', ha='center', va='center', transform=ax.transAxes, color='#777777')
 
@@ -600,7 +645,213 @@ class ECGAnalysisWindow(QDialog):
             return
         self.current_report['manual_annotations'] = self.manual_annotations
 
+    # --------------------------- automatic detection ---------------------------
+    def run_automatic_detection(self):
+        if not self.current_report:
+            QMessageBox.warning(self, "Detection", "No report loaded.")
+            return
+
+        # Use the lead selected in the marking combo, fallback to Lead II
+        lead_name = self.mark_lead_combo.currentText()
+        if lead_name == "All Leads":
+            lead_name = 'II'
+            
+        data = self.lead_data.get(lead_name, np.array([]))
+        if len(data) == 0:
+            # Try to find any lead with data
+            for l in self.LEADS:
+                if len(self.lead_data.get(l, [])) > 0:
+                    lead_name = l
+                    data = self.lead_data[l]
+                    break
+            
+            if len(data) == 0:
+                QMessageBox.warning(self, "Detection", "No ECG data available for analysis.")
+                return
+
+        # Get the current window data
+        ws = self._window_samples()
+        st = self.frame_start_sample
+        en = min(len(data), st + ws)
+        
+        # Analyze current visible segment
+        segment = data[st:en]
+        if len(segment) < self.sampling_rate * 1.5: # At least 1.5 seconds
+            QMessageBox.warning(self, "Detection", "Visible window too short for accurate detection (need >1.5s).")
+            return
+
+        try:
+            if PQRSTAnalyzer is None or ArrhythmiaDetector is None:
+                QMessageBox.critical(self, "Error", "ECG analysis modules not loaded. Please check your installation.")
+                return
+
+            # Use PQRSTAnalyzer to get peaks for detection
+            analyzer = PQRSTAnalyzer(self.sampling_rate)
+            analysis = analyzer.analyze_signal(segment)
+            
+            # Run Arrhythmia Detection
+            detector = ArrhythmiaDetector(self.sampling_rate)
+            # We pass the segment and its analysis
+            results = detector.detect_arrhythmias(segment, analysis)
+            
+            # Filter out "Insufficient data" or NSR if we want to show only arrhythmias
+            # But the user said "all arthmia and mention", so let's show all results.
+            
+            if not results or (len(results) == 1 and "Insufficient data" in results[0]):
+                QMessageBox.information(self, "Detection", "No specific arrhythmia patterns detected in this window.")
+                return
+
+            # Format results for display
+            rhythm_text = ", ".join(results)
+            is_normal = "Normal Sinus Rhythm" in rhythm_text
+            
+            msg = f"<b>Window Analysis (Lead {lead_name}):</b><br><br>"
+            msg += f"Detected: <span style='color: {'#2ecc71' if is_normal else '#e74c3c'}; font-weight: bold;'>{rhythm_text}</span><br><br>"
+            msg += "Would you like to add these findings to the report?"
+            
+            reply = QMessageBox.question(self, "Automatic Detection Result", msg, QMessageBox.Yes | QMessageBox.No)
+            if reply == QMessageBox.Yes:
+                start_sec = st / self.sampling_rate
+                end_sec = en / self.sampling_rate
+                
+                added_count = 0
+                for arr in results:
+                    # Skip NSR if adding to report annotations
+                    if arr == "Normal Sinus Rhythm":
+                        continue
+                        
+                    ann = {
+                        'start_sec': round(start_sec, 3),
+                        'end_sec': round(end_sec, 3),
+                        'type': arr,
+                        'lead': lead_name,
+                        'notes': "Automatically detected",
+                        'created_at': datetime.now().isoformat(timespec='seconds')
+                    }
+                    self.manual_annotations.append(ann)
+                    added_count += 1
+                
+                if added_count > 0:
+                    self._refresh_annotation_table()
+                    self._persist_annotations_in_report()
+                    self._render_current_frame()
+                    QMessageBox.information(self, "Report Updated", f"Added {added_count} detected arrhythmia(s) to the report.")
+                else:
+                    QMessageBox.information(self, "Report", "Normal rhythm detected; no annotations added.")
+                
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Error", f"Detection failed: {str(e)}")
+
     # --------------------------- actions ---------------------------
+    # --------------------------- API actions ---------------------------
+    def fetch_api_report(self):
+        id_text = self.api_id_input.text().strip()
+        if not id_text:
+            return
+            
+        url = f"https://deckmount.in/ankur_bhaiya.php?id={id_text}"
+        import requests
+        from scipy.ndimage import gaussian_filter1d
+        
+        try:
+            self.api_fetch_btn.setText("Loading...")
+            from PyQt5.QtWidgets import QApplication
+            QApplication.processEvents()
+            
+            resp = requests.get(url, timeout=10)
+            data = resp.json()
+            if not data.get("status"):
+                QMessageBox.warning(self, "API Error", "API returned status: false (ID not found)")
+                self.api_fetch_btn.setText("Fetch")
+                return
+                
+            api_data = data.get("data", {})
+            
+            res_reading = {}
+            try: res_reading = json.loads(api_data.get("result_reading", "{}"))
+            except: pass
+            
+            concl = []
+            try: concl = json.loads(api_data.get("conclusion", "[]"))
+            except: pass
+            
+            arr = []
+            try: arr = json.loads(api_data.get("arrhythmia", "[]"))
+            except: pass
+            
+            ecg_data = {}
+            ecg_data["sampling_rate"] = float(api_data.get("sampling_rate", 500))
+            
+            possible_keys = [
+                ["lead1_reading", "lead_1_reading", "lead1"],
+                ["lead2_reading", "lead_2_reading", "lead2"],
+                ["lead3_reading", "lead_3_reading", "lead3"],
+                ["leadavr_reading", "lead_avr_reading", "leadavr"],
+                ["leadavl_reading", "lead_avl_reading", "leadavl"],
+                ["leadavf_reading", "lead_avf_reading", "leadavf"],
+                ["leadv1_reading", "lead_v1_reading", "leadv1"],
+                ["leadv2_reading", "lead_v2_reading", "leadv2"],
+                ["leadv3_reading", "lead_v3_reading", "leadv3"],
+                ["leadv4_reading", "lead_v4_reading", "leadv4"],
+                ["leadv5_reading", "lead_v5_reading", "leadv5"],
+                ["leadv6_reading", "lead_v6_reading", "leadv6"]
+            ]
+            
+            lower_keys = {k.lower(): k for k in api_data.keys()}
+            leads_list = ['I', 'II', 'III', 'aVR', 'aVL', 'aVF', 'V1', 'V2', 'V3', 'V4', 'V5', 'V6']
+            
+            for i, variants in enumerate(possible_keys):
+                leadstr = leads_list[i]
+                for variant in variants:
+                    actual_key = lower_keys.get(variant.lower())
+                    if actual_key and actual_key in api_data:
+                        val_str = str(api_data[actual_key]).strip()
+                        if val_str:
+                            if val_str.endswith(','): val_str = val_str[:-1]
+                            arr_vals = np.array([float(x.strip()) for x in val_str.split(',') if x.strip()])
+                            # Apply smoothing and zero-centering
+                            filt = gaussian_filter1d(arr_vals, sigma=1.5)
+                            c_mean = np.mean(filt)
+                            if not np.isnan(c_mean):
+                                filt = filt - c_mean
+                            
+                            # Shift to native ADC limits matching Dashboard Y limitations
+                            filt = filt + 2048
+                                
+                            ecg_data[leadstr] = filt.tolist()
+                        break
+
+            new_report = {
+                "patient_details": {
+                    "name": api_data.get("name", "Unknown"),
+                    "age": api_data.get("age", ""),
+                    "gender": api_data.get("gender", ""),
+                    "report_id": api_data.get("report_id", id_text),
+                    "report_date": api_data.get("report_date", "")
+                },
+                "result_reading": res_reading,
+                "clinical_findings": {
+                    "conclusion": concl,
+                    "arrhythmia": arr
+                },
+                "ecg_data": ecg_data,
+                "api_id": id_text
+            }
+            
+            self.reports.append(new_report)
+            idx = len(self.reports) - 1
+            name = api_data.get("name", "Unknown API")
+            self.report_combo.addItem(f"[API] {name} | ID:{id_text}", "")
+            self.report_combo.setCurrentIndex(idx)
+            
+            self.api_fetch_btn.setText("Fetch")
+            
+        except Exception as e:
+            self.api_fetch_btn.setText("Fetch")
+            QMessageBox.critical(self, "API Error", f"Failed: {str(e)}")
+
     def export_report(self):
         if not self.current_report:
             QMessageBox.warning(self, "Export", "No report selected")
@@ -617,3 +868,378 @@ class ECGAnalysisWindow(QDialog):
             QMessageBox.information(self, "Export", f"Exported successfully:\n{path}")
         except Exception as e:
             QMessageBox.critical(self, "Export", f"Failed to export: {e}")
+
+    def generate_pdf_report(self):
+        if not self.current_report:
+            QMessageBox.warning(self, "Export", "No report loaded.")
+            return
+
+        rpt = self.current_report
+        pat = rpt.get('patient_details', {}) or {}
+
+        # ── Parse result_reading (may be a JSON string from API) ─────────────
+        raw_metrics = rpt.get('result_reading') or rpt.get('metrics') or {}
+        if isinstance(raw_metrics, str):
+            try:
+                import json as _json
+                raw_metrics = _json.loads(raw_metrics)
+            except Exception:
+                raw_metrics = {}
+        if not isinstance(raw_metrics, dict):
+            raw_metrics = {}
+
+        # Build only values that are actually present (skip N/A / None / empty)
+        def _get(d, *keys):
+            for k in keys:
+                v = d.get(k)
+                if v is not None and str(v).strip() not in ('', '--', 'N/A', 'null'):
+                    return str(v)
+            return None
+
+        hr      = _get(raw_metrics, 'HR',  'heart_rate',   'HR_bpm')
+        pr      = _get(raw_metrics, 'PR',  'pr_interval',  'PR_ms')
+        qrs     = _get(raw_metrics, 'QRS', 'qrs_duration', 'QRS_ms')
+        qt      = _get(raw_metrics, 'QT',  'qt_interval',  'QT_ms')
+        qtc     = _get(raw_metrics, 'QTc', 'qtc_interval', 'QTc_ms')
+        rr      = _get(raw_metrics, 'RR',  'rr_interval',  'RR_ms')
+        rv5sv1  = _get(raw_metrics, 'RV5_SV1',     'rv5_sv1')
+        rv5plus = _get(raw_metrics, 'RV5_plus_SV1','rv5_plus_sv1')
+
+        # ── Conclusions from clinical_findings ───────────────────────────────
+        clinical = rpt.get('clinical_findings') or {}
+        if isinstance(clinical, dict):
+            conclusions = clinical.get('conclusion', [])
+        else:
+            conclusions = []
+        if isinstance(conclusions, str):
+            conclusions = [conclusions]
+        elif not isinstance(conclusions, list):
+            conclusions = []
+        # also try root-level conclusion
+        if not conclusions:
+            c2 = rpt.get('conclusion', [])
+            if isinstance(c2, str): c2 = [c2]
+            conclusions = c2 if isinstance(c2, list) else []
+
+        patient_name = pat.get('name', 'Unknown')
+        default_name = f"ECG_{patient_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+        path, _ = QFileDialog.getSaveFileName(self, "Save ECG PDF", default_name, "PDF Files (*.pdf)")
+        if not path:
+            return
+
+        try:
+            from matplotlib.backends.backend_pdf import PdfPages
+            from matplotlib.patches import Rectangle as MRect
+
+            self.pdf_btn.setText("Generating...")
+            from PyQt5.QtWidgets import QApplication
+            QApplication.processEvents()
+
+            # ── Constants (all mm, matching ReportScreen.kt) ─────────────────
+            PAGE_W = 210.0;  PAGE_H = 297.0   # A4 portrait
+            ML = 10.0;  MR = 10.0;  MT = 10.0;  MB = 10.0
+            HEADER_H = 30.0    # mm reserved for header
+            FOOTER_H = 25.0    # mm reserved for footer
+            STRIP_TOP  = MT + HEADER_H
+            STRIP_H    = PAGE_H - STRIP_TOP - FOOTER_H - MB
+            CELL_H     = STRIP_H / 12.0
+
+            MM_PER_SAMPLE = 25.0 / float(self.sampling_rate)   # 25 mm/s ÷ fs
+            # Android app uses: "640 ADC units per 5mm grid box" 
+            # 640 ADC / 5 mm = 128 ADC units per mm.
+            # This perfectly scales the raw ADC API data to visual clinical standard.
+            ADC_PER_MM = 128.0
+            CALIB_MM   = 10.0     # 1 mV calibration pulse height (10 mm)
+            HALF_CELL  = CELL_H / 2.0 - 1.0   # clip headroom within each strip (mm)
+
+
+
+            # ── Figure (A4 in inches, 150 dpi) ───────────────────────────────
+            fig = Figure(figsize=(PAGE_W / 25.4, PAGE_H / 25.4), dpi=150, facecolor='white')
+
+            # Single axes covering the whole page; coordinates = mm
+            ax = fig.add_axes([0, 0, 1, 1], facecolor='#fff5f5')
+            ax.set_xlim(0, PAGE_W)
+            ax.set_ylim(PAGE_H, 0)          # y-axis: top=0, bottom=PAGE_H (like screen)
+            ax.set_aspect('equal')
+
+            # ── ECG grid  (1 mm minor, 5 mm major) ───────────────────────────
+            ax.set_xticks(np.arange(0, PAGE_W + 1, 5))
+            ax.set_xticks(np.arange(0, PAGE_W + 1, 1), minor=True)
+            ax.set_yticks(np.arange(0, PAGE_H + 1, 5))
+            ax.set_yticks(np.arange(0, PAGE_H + 1, 1), minor=True)
+            ax.grid(True, which='major', color='#e09696', linewidth=0.55, zorder=1)
+            ax.grid(True, which='minor', color='#f5d8d8', linewidth=0.22, zorder=1)
+            for sp in ax.spines.values():
+                sp.set_visible(False)
+            ax.set_xticklabels([]);  ax.set_yticklabels([])
+            ax.tick_params(left=False, bottom=False, which='both')
+
+            # ── Header ───────────────────────────────────────────────────────
+            yb = MT;  lh = 5.0
+            x1 = ML
+            # Col 1: patient
+            ax.text(x1, yb,      f"Name: {pat.get('name') or '-'}",    fontsize=7, va='top')
+            ax.text(x1, yb+lh,   f"Age: {pat.get('age') or '-'}",      fontsize=7, va='top')
+            ax.text(x1, yb+lh*2, f"Gender: {pat.get('gender') or '-'}",fontsize=7, va='top')
+
+            # Col 2: HR PR QRS QT QTc (skip any that are None)
+            x2 = x1 + 50
+            col2_items = [
+                ('HR',  hr,  'bpm'),
+                ('PR',  pr,  'ms'),
+                ('QRS', qrs, 'ms'),
+                ('QT',  qt,  'ms'),
+                ('QTc', qtc, 'ms'),
+            ]
+            row_y = yb
+            for lbl, val, unit in col2_items:
+                if val is not None:
+                    ax.text(x2, row_y, f"{lbl}: {val} {unit}",
+                            fontsize=7, va='top', fontweight='bold')
+                    row_y += lh
+
+            # Col 3: RR RV5/SV1 RV5+SV1 (skip if None)
+            x3 = x2 + 35
+            col3_row = yb
+            if rr is not None:
+                ax.text(x3, col3_row, f"RR: {rr} ms", fontsize=7, va='top');  col3_row += lh
+            if rv5sv1 is not None:
+                ax.text(x3, col3_row, f"RV5/SV1: {str(rv5sv1).replace(' mV','')}",
+                        fontsize=7, va='top');  col3_row += lh
+            if rv5plus is not None:
+                ax.text(x3, col3_row, f"RV5+SV1: {str(rv5plus).replace(' mV','')}",
+                        fontsize=7, va='top')
+
+            # Brand (right)
+            ax.text(PAGE_W - MR, yb,       "DECK⚡MOUNT",
+                    fontsize=10, fontweight='bold', color='#0000cc', ha='right', va='top')
+            ax.text(PAGE_W - MR, yb+lh*2,  "25.0mm/s  0.5-25Hz  AC:50Hz  10.0mm/mV",
+                    fontsize=5.5, ha='right', va='top', color='#555')
+            ax.text(PAGE_W - MR, yb+lh*3,  f"Date & Time: {pat.get('report_date','')}",
+                    fontsize=5.5, ha='right', va='top', color='#555')
+
+            # ── 12 Lead strips ───────────────────────────────────────────────
+            ws = self._window_samples()
+            st = self.frame_start_sample
+            en = min(self._total_samples(), st + ws)
+
+            for i, lead in enumerate(self.LEADS):
+                mid_y  = STRIP_TOP + i * CELL_H + CELL_H / 2.0
+                lbl_y  = mid_y - CELL_H * 0.4
+
+                # Calibration square pulse (1 mV → 10 mm tall)
+                cx, cy, cg = ML, mid_y, CALIB_MM
+                ax.plot([cx, cx+2, cx+2, cx+7, cx+7, cx+9],
+                        [cy, cy,  cy-cg, cy-cg, cy,  cy],
+                        color='black', linewidth=0.9, zorder=6)
+
+                # Lead label
+                ax.text(ML + 11, lbl_y, lead,
+                        fontsize=6.5, fontweight='bold', color='black', va='top', zorder=7)
+
+                # Waveform — full ECG trace, centred per-lead
+                data_arr = self.lead_data.get(lead, np.array([]))
+                total_samples = len(data_arr)
+                if total_samples > 0:
+                    seg      = data_arr.astype(float)
+                    # Use per-lead median as baseline (removes DC offset / baseline wander)
+                    baseline = float(np.median(seg))
+                    seg_mm   = (seg - baseline) / ADC_PER_MM   # ADC → mm
+                    wx0      = ML + 13.0
+                    wx_mm    = wx0 + np.arange(total_samples) * MM_PER_SAMPLE
+                    mask     = wx_mm <= (PAGE_W - MR)
+                    wx_mm    = wx_mm[mask]
+                    wy_mm    = mid_y - seg_mm[:len(wx_mm)]     # upward deflection = smaller y
+                    ax.plot(wx_mm, wy_mm, color='black', linewidth=0.5, zorder=5)
+
+            # ── Footer ───────────────────────────────────────────────────────
+            ft = PAGE_H - MB - FOOTER_H
+            ax.text(ML, ft + 14, "Doctor Name: ________________________",
+                    fontsize=7, va='top', color='black')
+            ax.text(ML, ft + 19, "Doctor Sign:  ________________________",
+                    fontsize=7, va='top', color='black')
+
+            # Conclusion box
+            bx, by = 95.0, ft + 2.0
+            bw, bh = PAGE_W - bx - MR, 18.0
+            from matplotlib.patches import Rectangle as MRect2
+            rect = MRect2((bx, by), bw, bh,
+                          linewidth=0.8, edgecolor='black', facecolor='white', zorder=8)
+            ax.add_patch(rect)
+            ax.text(bx + bw/2, by + 1.0, "CONCLUSION",
+                    fontsize=6.5, fontweight='bold', ha='center', va='top', zorder=9)
+
+            cols = 3;  col_w = (bw - 4.0) / cols;  rh2 = 3.5
+            for idx2, line in enumerate(conclusions[:9]):
+                row2 = idx2 // cols;  col2 = idx2 % cols
+                tx = bx + 2.0 + col2 * col_w
+                ty = by + 6.0 + row2 * rh2
+                if ty + rh2 > by + bh:
+                    break
+                ax.text(tx, ty, f"{idx2+1}. {line}", fontsize=5.5, va='top', zorder=9)
+
+            # Footer brand
+            brand = "Deckmount Electronics Pvt Ltd | RhythmPro ECG | IEC 60601 | Made in India"
+            ax.text(PAGE_W/2, PAGE_H - MB + 1, brand,
+                    fontsize=6, ha='center', va='top', color='#333', zorder=9)
+
+            with PdfPages(path) as pdf:
+                pdf.savefig(fig, bbox_inches='tight')
+                
+                # ADDED: Second page for automatic/manual annotations
+                if self.manual_annotations:
+                    fig2 = self._generate_annotation_page()
+                    if fig2:
+                        pdf.savefig(fig2, bbox_inches='tight')
+
+            self.pdf_btn.setText("Generate PDF")
+            QMessageBox.information(self, "PDF Saved", f"ECG Report saved:\n{path}")
+
+        except Exception as e:
+            self.pdf_btn.setText("Generate PDF")
+            QMessageBox.critical(self, "PDF Error", f"Failed:\n{e}")
+
+    def _generate_annotation_page(self):
+        """Generate a second page for the PDF report containing annotations and wave strips."""
+        if not self.manual_annotations:
+            return None
+
+        from matplotlib.figure import Figure
+        from matplotlib.patches import Rectangle as MRect
+
+        # A4 portrait (mm)
+        PAGE_W = 210.0; PAGE_H = 297.0
+        ML = 15.0; MR = 15.0; MT = 15.0; MB = 15.0
+
+        fig = Figure(figsize=(PAGE_W / 25.4, PAGE_H / 25.4), dpi=150, facecolor='white')
+        ax = fig.add_axes([0, 0, 1, 1], facecolor='white')
+        ax.set_xlim(0, PAGE_W)
+        ax.set_ylim(PAGE_H, 0) # y-axis inverted like top-to-bottom
+        ax.set_aspect('equal')
+        
+        for sp in ax.spines.values(): sp.set_visible(False)
+        ax.set_xticklabels([]); ax.set_yticklabels([])
+        ax.tick_params(left=False, bottom=False, which='both')
+
+        # Title
+        ax.text(PAGE_W/2, MT + 5, "ECG ARRHYTHMIA & FINDINGS REPORT", 
+                fontsize=12, fontweight='bold', ha='center', va='top', color='#0000cc')
+        
+        y_cursor = MT + 20
+        
+        # Summary Table Header
+        ax.text(ML, y_cursor, "Summary of Manual & Automatic Annotations:", fontsize=9, fontweight='bold', va='top')
+        y_cursor += 8
+        
+        # Table Header
+        cols = [("Start (s)", 20), ("End (s)", 20), ("Type", 50), ("Lead", 20), ("Notes", 60)]
+        x_cursor = ML
+        for lbl, w in cols:
+            ax.text(x_cursor, y_cursor, lbl, fontsize=8, fontweight='bold', va='top')
+            x_cursor += w
+        y_cursor += 5
+        ax.plot([ML, PAGE_W - MR], [y_cursor, y_cursor], color='black', linewidth=0.5)
+        y_cursor += 2
+
+        # Table Rows
+        for ann in self.manual_annotations[:12]: # Limit to 12 rows for summary
+            x_cursor = ML
+            ax.text(x_cursor, y_cursor, f"{ann.get('start_sec',0):.2f}", fontsize=7, va='top'); x_cursor += 20
+            ax.text(x_cursor, y_cursor, f"{ann.get('end_sec',0):.2f}", fontsize=7, va='top'); x_cursor += 20
+            ax.text(x_cursor, y_cursor, ann.get('type',''), fontsize=7, fontweight='bold', va='top'); x_cursor += 50
+            ax.text(x_cursor, y_cursor, ann.get('lead',''), fontsize=7, va='top'); x_cursor += 20
+            ax.text(x_cursor, y_cursor, ann.get('notes',''), fontsize=7, va='top')
+            y_cursor += 5
+            if y_cursor > PAGE_H / 2 - 10: break
+        
+        y_cursor = max(y_cursor + 10, PAGE_H / 2 - 20)
+        
+        # Add Wave Strips for each annotation (max 3 for second half of page)
+        ax.text(ML, y_cursor, "Waveform Strips for Detected Events:", fontsize=9, fontweight='bold', va='top')
+        y_cursor += 10
+        
+        # Sort annotations to prioritize arrhythmias for strips
+        important_annotations = [a for a in self.manual_annotations if "Rhythm" not in str(a.get('type', ''))]
+        if not important_annotations: important_annotations = self.manual_annotations
+        
+        ADC_PER_MM = 128.0
+        MM_PER_SAMPLE = 25.0 / float(self.sampling_rate)
+
+        for i, ann in enumerate(important_annotations[:3]): # Show top 3 strips
+            if y_cursor > PAGE_H - 50: break
+            
+            lead_name = ann.get('lead', 'II')
+            if lead_name == "All Leads": lead_name = 'II'
+            
+            data = self.lead_data.get(lead_name, np.array([]))
+            if len(data) == 0: continue
+            
+            # Extract segment around detection
+            start_s = ann.get('start_sec', 0)
+            end_s = ann.get('end_sec', 0)
+            duration_s = end_s - start_s
+            
+            # Total width of strip in mm
+            strip_w_mm = PAGE_W - ML - MR
+            # Total time shown in strip (max 10s or 1.5x detection duration)
+            time_shown_s = min(10.0, max(3.0, duration_s * 1.5))
+            
+            # Center the detection in the strip
+            center_s = (start_s + end_s) / 2
+            strip_start_s = max(0, center_s - time_shown_s/2)
+            strip_end_s = strip_start_s + time_shown_s
+            
+            st_idx = int(strip_start_s * self.sampling_rate)
+            en_idx = int(strip_end_s * self.sampling_rate)
+            
+            segment = data[st_idx:en_idx]
+            if len(segment) < 10: continue
+            
+            # Draw strip background
+            strip_h = 30.0
+            rect = MRect((ML, y_cursor), strip_w_mm, strip_h, 
+                         linewidth=0.5, edgecolor='#e09696', facecolor='#fff5f5')
+            ax.add_patch(rect)
+            
+            # Add grid
+            for gy in np.arange(y_cursor, y_cursor + strip_h, 5):
+                ax.plot([ML, ML + strip_w_mm], [gy, gy], color='#f5d8d8', linewidth=0.2, zorder=1)
+            for gx in np.arange(ML, ML + strip_w_mm, 5):
+                ax.plot([gx, gx], [y_cursor, y_cursor + strip_h], color='#f5d8d8', linewidth=0.2, zorder=1)
+            
+            # Plot wave
+            baseline = np.median(segment)
+            seg_mm = (segment - baseline) / ADC_PER_MM
+            
+            wx_mm = ML + np.arange(len(segment)) * MM_PER_SAMPLE
+            # Clip to strip width
+            mask = wx_mm <= (ML + strip_w_mm)
+            wx_mm = wx_mm[mask]
+            wy_mm = y_cursor + strip_h/2 - seg_mm[:len(wx_mm)]
+            
+            ax.plot(wx_mm, wy_mm, color='black', linewidth=0.5, zorder=2)
+            
+            # Highlight the detected part
+            hl_start_mm = ML + (start_s - strip_start_s) * 25.0
+            hl_end_mm = ML + (end_s - strip_start_s) * 25.0
+            if hl_start_mm < ML + strip_w_mm and hl_end_mm > ML:
+                hl_start_mm = max(ML, hl_start_mm)
+                hl_end_mm = min(ML + strip_w_mm, hl_end_mm)
+                ax.axvspan(hl_start_mm, hl_end_mm, color='#ff0000', alpha=0.1, ymin=1 - (y_cursor+strip_h)/PAGE_H, ymax=1 - y_cursor/PAGE_H)
+
+            # Labels
+            ax.text(ML + 2, y_cursor + 3, f"Event {i+1}: {ann.get('type','')} (Lead {lead_name})", 
+                    fontsize=8, fontweight='bold', color='black', va='top', zorder=3)
+            ax.text(ML + 2, y_cursor + strip_h - 2, f"Time: {start_s:.2f}s to {end_s:.2f}s", 
+                    fontsize=6, color='#555', va='bottom', zorder=3)
+            
+            y_cursor += strip_h + 10
+            
+        # Brand Footer
+        brand = "Deckmount Electronics Pvt Ltd | RhythmPro ECG | Made in India"
+        ax.text(PAGE_W/2, PAGE_H - MB + 5, brand,
+                fontsize=6, ha='center', va='top', color='#333', zorder=9)
+        
+        return fig
+

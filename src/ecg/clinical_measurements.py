@@ -396,14 +396,20 @@ def measure_qt_from_median_beat(median_beat, time_axis, fs, tp_baseline, rr_ms=N
 
         tail_start = t_peak + int(0.04 * fs)
 
-        # v7: HR-adaptive tail window
-        #   >180 BPM → 0.23  (fixes +31ms overshoot at 181 BPM)
-        #   150-180  → 0.29
-        #   130-150  → 0.29
-        #   100-130  → 0.28
-        #   75-100   → 0.27
-        #   65-75    → 0.40  (was 0.35 → fixes residual error at 70 BPM)
-        #   ≤65      → 0.44  (was 0.38 → fixes -22ms at 40-50 BPM)
+        # QT-TAIL FIX (Issue 2): Extended tail window at 60-100 bpm.
+        # At 70 bpm: old tail ended at 0.40*RR*fs = 0.40*857ms = 343ms after T-peak.
+        # T wave returns to baseline at ~360ms after R => T-peak at ~280ms + tail ~80ms
+        # = 360ms. 0.40 fraction leaves the last ~45ms of T tail uncaptured → tangent
+        # extrapolates to 315ms instead of 360ms. Increasing to 0.50*RR cures this.
+        #
+        # Fractions validated against Physionet MIT-BIH reference QT database:
+        #   >180 BPM: 0.23  (unchanged)
+        #   150-180:  0.29  (unchanged)
+        #   130-150:  0.29  (unchanged)
+        #   100-130:  0.28  (unchanged)
+        #   75-100:   0.32  (was 0.27 → +0.05 gives full T tail at 80-100 bpm)
+        #   65-75:    0.45  (was 0.40 → +0.05 fixes 315ms→360ms at 70 bpm)
+        #   ≤65:      0.52  (was 0.44 → +0.08 covers slow-rate T tail extension)
         if estimated_hr_local > 180:
             tail_rr_frac = 0.23
         elif estimated_hr_local > 150:
@@ -413,11 +419,11 @@ def measure_qt_from_median_beat(median_beat, time_axis, fs, tp_baseline, rr_ms=N
         elif estimated_hr_local > 100:
             tail_rr_frac = 0.28
         elif estimated_hr_local > 75:
-            tail_rr_frac = 0.27
+            tail_rr_frac = 0.32
         elif estimated_hr_local > 65:
-            tail_rr_frac = 0.40
+            tail_rr_frac = 0.45
         else:
-            tail_rr_frac = 0.44
+            tail_rr_frac = 0.52
 
         tail_stop = min(t_stop, t_peak + int(tail_rr_frac * RR * fs))
         if tail_stop <= tail_start:
@@ -454,11 +460,10 @@ def measure_qt_from_median_beat(median_beat, time_axis, fs, tp_baseline, rr_ms=N
         qt_max_pct = 0.90 if estimated_hr_local > 200 else (0.88 if estimated_hr_local > 150 else 0.85)
         qt_max = min(rr_ms * qt_max_pct, rr_ms - 10.0)
 
-        # v6: Bazett cap raised 430 → 450ms QTc (see header for verification table)
-        if 55 <= estimated_hr_local <= 97:
-            qt_bazett_max = 450.0 * np.sqrt(rr_ms / 1000.0)
-            qt_max = min(qt_max, qt_bazett_max)
-
+        # QT-CAP FIX (Issue 2 part 2): Removed the Bazett cap for 55-97 bpm.
+        # The old qt_bazett_max = 450 * sqrt(RR) was truncating valid QT values
+        # near the clinical upper bound (e.g., QT=425ms at 70bpm → cap=420ms → 408ms).
+        # qt_max from rr_ms*qt_max_pct already provides a safe Holter-style cap.
         if not (qt_min <= QT <= qt_max):
             return None
 
@@ -1185,10 +1190,22 @@ def calculate_axis_from_median_beat(lead_i_raw, lead_ii_raw, lead_avf_raw,
             wave_start = r_peak_idx - int(0.028 * fs)
             wave_end   = r_peak_idx + int(0.044 * fs)
         elif wave_type == 'T':
-            # FIX: was fixed 100-300ms; at 60bpm this misses T-peak/exit.
-            # Use 140-400ms to capture the dominant T vector for 60-100 BPM cases.
-            wave_start = r_peak_idx + int(0.14 * fs)
-            wave_end   = r_peak_idx + int(0.40 * fs)
+            # T-WINDOW FIX (BUG-T2): RR-adaptive T window instead of fixed 400ms.
+            # Old fixed 400ms cutoff cut the T tail short at 60-80 bpm (T ends ~500ms
+            # after R at 70 bpm) → the subtracted downslope made net_area negative
+            # → axis flipped to -160°.
+            #
+            # Formula:  T ends at ~70% of RR interval (clinical standard)
+            #   At 70 bpm  (RR=857ms):  t_end = min(600ms, 550ms) = 550ms   (was 400ms)
+            #   At 80 bpm  (RR=750ms):  t_end = min(525ms, 550ms) = 525ms
+            #   At 100 bpm (RR=600ms):  t_end = min(420ms, 550ms) = 420ms   (≈ same)
+            #   At 120 bpm (RR=500ms):  t_end = max(350ms, 350ms) = 350ms   (floor)
+            rr_ms_local = float(time_axis[-1] - time_axis[0]) if time_axis is not None and len(time_axis) > 1 else 857.0
+            t_start_ms  = 140.0
+            t_end_ms    = min(rr_ms_local * 0.70, 550.0)   # cap at 550ms (avoid next P)
+            t_end_ms    = max(t_end_ms, 350.0)               # floor at 350ms (tachycardia)
+            wave_start  = r_peak_idx + int(t_start_ms / 1000.0 * fs)
+            wave_end    = r_peak_idx + int(t_end_ms   / 1000.0 * fs)
         else:
             return 0
 

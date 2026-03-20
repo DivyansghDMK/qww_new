@@ -3031,5 +3031,2379 @@
       "file_size": 898670,
       "file_type": ".json"
     }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\metrics.json",
+    "uploaded_at": "2026-03-19T12:44:07.242553",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/metrics.json",
+      "key": "ecg-reports/2026/03/19/metrics.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "metrics.json",
+      "uploaded_at": "2026-03-19T12:44:04.619100",
+      "file_size": 63394,
+      "file_type": ".json"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\hyper_metric.json",
+    "uploaded_at": "2026-03-19T12:44:08.262977",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/hyper_metric.json",
+      "key": "ecg-reports/2026/03/19/hyper_metric.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "hyper_metric.json",
+      "uploaded_at": "2026-03-19T12:44:07.257681",
+      "file_size": 235,
+      "file_type": ".json"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\hrv_metric.json",
+    "uploaded_at": "2026-03-19T12:44:09.349238",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/hrv_metric.json",
+      "key": "ecg-reports/2026/03/19/hrv_metric.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "hrv_metric.json",
+      "uploaded_at": "2026-03-19T12:44:08.281246",
+      "file_size": 465,
+      "file_type": ".json"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_124456.pdf",
+    "uploaded_at": "2026-03-19T12:45:02.405516",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_124456.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_124456.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_124456.pdf",
+      "uploaded_at": "2026-03-19T12:45:00.368386",
+      "file_size": 422650,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "70"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_124458.json",
+    "uploaded_at": "2026-03-19T12:45:04.821366",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_124458.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_124458.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_124458.json",
+      "uploaded_at": "2026-03-19T12:45:02.426365",
+      "file_size": 895452,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "70"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_124527.pdf",
+    "uploaded_at": "2026-03-19T12:45:31.868403",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_124527.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_124527.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_124527.pdf",
+      "uploaded_at": "2026-03-19T12:45:29.922199",
+      "file_size": 229001,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "70"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_124528.json",
+    "uploaded_at": "2026-03-19T12:45:34.442489",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_124528.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_124528.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_124528.json",
+      "uploaded_at": "2026-03-19T12:45:31.890705",
+      "file_size": 887955,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "70"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_124541.pdf",
+    "uploaded_at": "2026-03-19T12:45:47.632953",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_124541.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_124541.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_124541.pdf",
+      "uploaded_at": "2026-03-19T12:45:44.255439",
+      "file_size": 422535,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "70"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_124542.json",
+    "uploaded_at": "2026-03-19T12:45:51.510709",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_124542.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_124542.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_124542.json",
+      "uploaded_at": "2026-03-19T12:45:47.653060",
+      "file_size": 890260,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "70"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_124738.pdf",
+    "uploaded_at": "2026-03-19T12:47:43.515903",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_124738.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_124738.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_124738.pdf",
+      "uploaded_at": "2026-03-19T12:47:41.394416",
+      "file_size": 416090,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "70"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_124739.json",
+    "uploaded_at": "2026-03-19T12:47:45.928882",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_124739.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_124739.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_124739.json",
+      "uploaded_at": "2026-03-19T12:47:43.547639",
+      "file_size": 884978,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "70"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_125023.pdf",
+    "uploaded_at": "2026-03-19T12:50:28.855060",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_125023.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_125023.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_125023.pdf",
+      "uploaded_at": "2026-03-19T12:50:26.744199",
+      "file_size": 421402,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "70"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_125025.json",
+    "uploaded_at": "2026-03-19T12:50:33.663620",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_125025.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_125025.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_125025.json",
+      "uploaded_at": "2026-03-19T12:50:28.878568",
+      "file_size": 896272,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "70"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_125625.pdf",
+    "uploaded_at": "2026-03-19T12:56:31.524307",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_125625.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_125625.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_125625.pdf",
+      "uploaded_at": "2026-03-19T12:56:28.044636",
+      "file_size": 421623,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "70"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_125626.json",
+    "uploaded_at": "2026-03-19T12:56:31.815516",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_125626.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_125626.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_125626.json",
+      "uploaded_at": "2026-03-19T12:56:27.485960",
+      "file_size": 883136,
+      "file_type": ".json"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_125626.json",
+    "uploaded_at": "2026-03-19T12:56:34.157309",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_125626.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_125626.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_125626.json",
+      "uploaded_at": "2026-03-19T12:56:31.550088",
+      "file_size": 883136,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "70"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_125645.pdf",
+    "uploaded_at": "2026-03-19T12:56:49.641927",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_125645.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_125645.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_125645.pdf",
+      "uploaded_at": "2026-03-19T12:56:47.711114",
+      "file_size": 408171,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "70"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_125646.json",
+    "uploaded_at": "2026-03-19T12:56:52.638864",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_125646.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_125646.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_125646.json",
+      "uploaded_at": "2026-03-19T12:56:49.668060",
+      "file_size": 864742,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "70"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_125646.json",
+    "uploaded_at": "2026-03-19T12:57:00.431100",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_125646.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_125646.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_125646.json",
+      "uploaded_at": "2026-03-19T12:56:46.941729",
+      "file_size": 864742,
+      "file_type": ".json"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_125657.pdf",
+    "uploaded_at": "2026-03-19T12:57:01.746281",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_125657.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_125657.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_125657.pdf",
+      "uploaded_at": "2026-03-19T12:56:59.794766",
+      "file_size": 402892,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "70"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_125658.json",
+    "uploaded_at": "2026-03-19T12:57:04.377611",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_125658.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_125658.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_125658.json",
+      "uploaded_at": "2026-03-19T12:57:01.767100",
+      "file_size": 846318,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "70"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_125715.pdf",
+    "uploaded_at": "2026-03-19T12:57:20.135527",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_125715.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_125715.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_125715.pdf",
+      "uploaded_at": "2026-03-19T12:57:17.715886",
+      "file_size": 415410,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "70"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_125716.json",
+    "uploaded_at": "2026-03-19T12:57:26.892346",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_125716.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_125716.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_125716.json",
+      "uploaded_at": "2026-03-19T12:57:20.158661",
+      "file_size": 886664,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "70"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_125726.pdf",
+    "uploaded_at": "2026-03-19T12:57:31.968435",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_125726.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_125726.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_125726.pdf",
+      "uploaded_at": "2026-03-19T12:57:29.818804",
+      "file_size": 431173,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "70"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_125728.json",
+    "uploaded_at": "2026-03-19T12:57:34.714085",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_125728.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_125728.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_125728.json",
+      "uploaded_at": "2026-03-19T12:57:31.995904",
+      "file_size": 905581,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "70"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_125728.json",
+    "uploaded_at": "2026-03-19T12:57:40.421352",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_125728.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_125728.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_125728.json",
+      "uploaded_at": "2026-03-19T12:57:30.502764",
+      "file_size": 905581,
+      "file_type": ".json"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_130447.pdf",
+    "uploaded_at": "2026-03-19T13:04:53.494311",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_130447.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_130447.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_130447.pdf",
+      "uploaded_at": "2026-03-19T13:04:50.439628",
+      "file_size": 425752,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "70"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_130449.json",
+    "uploaded_at": "2026-03-19T13:04:56.137758",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_130449.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_130449.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_130449.json",
+      "uploaded_at": "2026-03-19T13:04:53.525115",
+      "file_size": 893467,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "70"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_130525.pdf",
+    "uploaded_at": "2026-03-19T13:05:29.901509",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_130525.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_130525.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_130525.pdf",
+      "uploaded_at": "2026-03-19T13:05:27.663856",
+      "file_size": 428128,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "70"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_130526.json",
+    "uploaded_at": "2026-03-19T13:05:30.234892",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_130526.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_130526.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_130526.json",
+      "uploaded_at": "2026-03-19T13:05:27.523676",
+      "file_size": 911134,
+      "file_type": ".json"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_130526.json",
+    "uploaded_at": "2026-03-19T13:05:35.574296",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_130526.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_130526.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_130526.json",
+      "uploaded_at": "2026-03-19T13:05:29.921056",
+      "file_size": 911134,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "70"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_130542.pdf",
+    "uploaded_at": "2026-03-19T13:05:47.248937",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_130542.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_130542.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_130542.pdf",
+      "uploaded_at": "2026-03-19T13:05:44.912881",
+      "file_size": 416612,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "70"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_130543.json",
+    "uploaded_at": "2026-03-19T13:05:47.650984",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_130543.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_130543.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_130543.json",
+      "uploaded_at": "2026-03-19T13:05:45.274961",
+      "file_size": 886914,
+      "file_type": ".json"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_130543.json",
+    "uploaded_at": "2026-03-19T13:05:49.693897",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_130543.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_130543.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_130543.json",
+      "uploaded_at": "2026-03-19T13:05:47.271618",
+      "file_size": 886914,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "70"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_130554.pdf",
+    "uploaded_at": "2026-03-19T13:05:59.382982",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_130554.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_130554.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_130554.pdf",
+      "uploaded_at": "2026-03-19T13:05:57.221417",
+      "file_size": 419131,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "70"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_130555.json",
+    "uploaded_at": "2026-03-19T13:06:01.855254",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_130555.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_130555.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_130555.json",
+      "uploaded_at": "2026-03-19T13:05:59.412892",
+      "file_size": 879463,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "70"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_130605.pdf",
+    "uploaded_at": "2026-03-19T13:06:09.818510",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_130605.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_130605.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_130605.pdf",
+      "uploaded_at": "2026-03-19T13:06:07.783115",
+      "file_size": 428038,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "70"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_130606.json",
+    "uploaded_at": "2026-03-19T13:06:12.743881",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_130606.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_130606.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_130606.json",
+      "uploaded_at": "2026-03-19T13:06:09.841847",
+      "file_size": 903603,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "70"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_135449.pdf",
+    "uploaded_at": "2026-03-19T13:54:56.647467",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_135449.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_135449.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_135449.pdf",
+      "uploaded_at": "2026-03-19T13:54:53.038561",
+      "file_size": 415836,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "72"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_135451.json",
+    "uploaded_at": "2026-03-19T13:55:01.017163",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_135451.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_135451.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_135451.json",
+      "uploaded_at": "2026-03-19T13:54:56.735165",
+      "file_size": 885333,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "72"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_135451.json",
+    "uploaded_at": "2026-03-19T13:55:02.079311",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_135451.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_135451.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_135451.json",
+      "uploaded_at": "2026-03-19T13:54:59.465907",
+      "file_size": 885333,
+      "file_type": ".json"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_135502.pdf",
+    "uploaded_at": "2026-03-19T13:55:07.238493",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_135502.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_135502.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_135502.pdf",
+      "uploaded_at": "2026-03-19T13:55:05.003346",
+      "file_size": 414738,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "72"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_135503.json",
+    "uploaded_at": "2026-03-19T13:55:14.688379",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_135503.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_135503.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_135503.json",
+      "uploaded_at": "2026-03-19T13:55:07.280223",
+      "file_size": 871669,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "72"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_135555.pdf",
+    "uploaded_at": "2026-03-19T13:56:01.050357",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_135555.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_135555.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_135555.pdf",
+      "uploaded_at": "2026-03-19T13:55:58.007586",
+      "file_size": 424035,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "70"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_135556.json",
+    "uploaded_at": "2026-03-19T13:56:08.168624",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_135556.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_135556.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_135556.json",
+      "uploaded_at": "2026-03-19T13:56:01.088449",
+      "file_size": 888914,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "70"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_135605.pdf",
+    "uploaded_at": "2026-03-19T13:56:10.814969",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_135605.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_135605.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_135605.pdf",
+      "uploaded_at": "2026-03-19T13:56:08.644954",
+      "file_size": 421983,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "70"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_135556.json",
+    "uploaded_at": "2026-03-19T13:56:12.235202",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_135556.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_135556.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_135556.json",
+      "uploaded_at": "2026-03-19T13:56:06.095318",
+      "file_size": 888914,
+      "file_type": ".json"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_135607.json",
+    "uploaded_at": "2026-03-19T13:56:13.456704",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_135607.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_135607.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_135607.json",
+      "uploaded_at": "2026-03-19T13:56:10.840996",
+      "file_size": 890777,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "70"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_140152.pdf",
+    "uploaded_at": "2026-03-19T14:02:01.848287",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_140152.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_140152.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_140152.pdf",
+      "uploaded_at": "2026-03-19T14:01:55.586518",
+      "file_size": 421712,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "74"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_140154.json",
+    "uploaded_at": "2026-03-19T14:02:03.214727",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_140154.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_140154.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_140154.json",
+      "uploaded_at": "2026-03-19T14:02:00.714228",
+      "file_size": 855753,
+      "file_type": ".json"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_140154.json",
+    "uploaded_at": "2026-03-19T14:02:07.231362",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_140154.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_140154.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_140154.json",
+      "uploaded_at": "2026-03-19T14:02:01.891052",
+      "file_size": 855753,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "74"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_140203.pdf",
+    "uploaded_at": "2026-03-19T14:02:08.059455",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_140203.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_140203.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_140203.pdf",
+      "uploaded_at": "2026-03-19T14:02:05.647958",
+      "file_size": 402292,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "74"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_140204.json",
+    "uploaded_at": "2026-03-19T14:02:10.351364",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_140204.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_140204.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_140204.json",
+      "uploaded_at": "2026-03-19T14:02:08.076667",
+      "file_size": 812131,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "74"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_140213.pdf",
+    "uploaded_at": "2026-03-19T14:02:18.680353",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_140213.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_140213.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_140213.pdf",
+      "uploaded_at": "2026-03-19T14:02:16.518604",
+      "file_size": 417493,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "74"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_140215.json",
+    "uploaded_at": "2026-03-19T14:02:21.386102",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_140215.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_140215.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_140215.json",
+      "uploaded_at": "2026-03-19T14:02:18.707240",
+      "file_size": 841657,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "74"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_140215.json",
+    "uploaded_at": "2026-03-19T14:02:32.289101",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_140215.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_140215.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_140215.json",
+      "uploaded_at": "2026-03-19T14:02:18.257712",
+      "file_size": 841657,
+      "file_type": ".json"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_140821.pdf",
+    "uploaded_at": "2026-03-19T14:08:28.038287",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_140821.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_140821.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_140821.pdf",
+      "uploaded_at": "2026-03-19T14:08:25.074273",
+      "file_size": 426962,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "75"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_140823.json",
+    "uploaded_at": "2026-03-19T14:08:28.545861",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_140823.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_140823.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_140823.json",
+      "uploaded_at": "2026-03-19T14:08:23.867330",
+      "file_size": 848764,
+      "file_type": ".json"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_140823.json",
+    "uploaded_at": "2026-03-19T14:08:30.735470",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_140823.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_140823.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_140823.json",
+      "uploaded_at": "2026-03-19T14:08:28.071327",
+      "file_size": 848764,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "75"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_140832.pdf",
+    "uploaded_at": "2026-03-19T14:08:37.468689",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_140832.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_140832.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_140832.pdf",
+      "uploaded_at": "2026-03-19T14:08:35.382079",
+      "file_size": 353985,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "75"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_140834.json",
+    "uploaded_at": "2026-03-19T14:08:42.943962",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_140834.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_140834.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_140834.json",
+      "uploaded_at": "2026-03-19T14:08:37.496030",
+      "file_size": 694314,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "75"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_140845.pdf",
+    "uploaded_at": "2026-03-19T14:08:50.141882",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_140845.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_140845.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_140845.pdf",
+      "uploaded_at": "2026-03-19T14:08:47.862415",
+      "file_size": 418851,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "75"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_140846.json",
+    "uploaded_at": "2026-03-19T14:08:52.513392",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_140846.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_140846.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_140846.json",
+      "uploaded_at": "2026-03-19T14:08:50.167694",
+      "file_size": 835102,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "75"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_140859.pdf",
+    "uploaded_at": "2026-03-19T14:09:05.036211",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_140859.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_140859.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_140859.pdf",
+      "uploaded_at": "2026-03-19T14:09:02.760770",
+      "file_size": 412595,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "75"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_140901.json",
+    "uploaded_at": "2026-03-19T14:09:07.347560",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_140901.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_140901.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_140901.json",
+      "uploaded_at": "2026-03-19T14:09:05.066231",
+      "file_size": 825528,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "75"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_142140.pdf",
+    "uploaded_at": "2026-03-19T14:21:49.275326",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_142140.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_142140.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_142140.pdf",
+      "uploaded_at": "2026-03-19T14:21:43.961627",
+      "file_size": 425737,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "76"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_142142.json",
+    "uploaded_at": "2026-03-19T14:21:53.736338",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_142142.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_142142.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_142142.json",
+      "uploaded_at": "2026-03-19T14:21:49.333104",
+      "file_size": 854959,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "76"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_142142.json",
+    "uploaded_at": "2026-03-19T14:21:55.871330",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_142142.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_142142.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_142142.json",
+      "uploaded_at": "2026-03-19T14:21:51.551440",
+      "file_size": 854959,
+      "file_type": ".json"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_143234.pdf",
+    "uploaded_at": "2026-03-19T14:32:40.778506",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_143234.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_143234.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_143234.pdf",
+      "uploaded_at": "2026-03-19T14:32:37.434530",
+      "file_size": 400847,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "75"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_143236.json",
+    "uploaded_at": "2026-03-19T14:32:43.372346",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_143236.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_143236.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_143236.json",
+      "uploaded_at": "2026-03-19T14:32:40.808152",
+      "file_size": 832616,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "75"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_143236.json",
+    "uploaded_at": "2026-03-19T14:32:50.703771",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_143236.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_143236.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_143236.json",
+      "uploaded_at": "2026-03-19T14:32:43.257323",
+      "file_size": 832616,
+      "file_type": ".json"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_143246.pdf",
+    "uploaded_at": "2026-03-19T14:32:52.234689",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_143246.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_143246.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_143246.pdf",
+      "uploaded_at": "2026-03-19T14:32:49.785651",
+      "file_size": 404235,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "80"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_143248.json",
+    "uploaded_at": "2026-03-19T14:32:54.944060",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_143248.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_143248.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_143248.json",
+      "uploaded_at": "2026-03-19T14:32:52.260506",
+      "file_size": 809122,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "80"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_143258.pdf",
+    "uploaded_at": "2026-03-19T14:33:04.013883",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_143258.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_143258.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_143258.pdf",
+      "uploaded_at": "2026-03-19T14:33:01.601517",
+      "file_size": 418192,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "75"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_143300.json",
+    "uploaded_at": "2026-03-19T14:33:06.785051",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_143300.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_143300.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_143300.json",
+      "uploaded_at": "2026-03-19T14:33:04.053094",
+      "file_size": 835550,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "75"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_143300.json",
+    "uploaded_at": "2026-03-19T14:33:08.371980",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_143300.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_143300.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_143300.json",
+      "uploaded_at": "2026-03-19T14:33:05.773363",
+      "file_size": 835550,
+      "file_type": ".json"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_143309.pdf",
+    "uploaded_at": "2026-03-19T14:33:13.835167",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_143309.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_143309.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_143309.pdf",
+      "uploaded_at": "2026-03-19T14:33:11.744845",
+      "file_size": 379612,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "75"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_143310.json",
+    "uploaded_at": "2026-03-19T14:33:18.142960",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_143310.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_143310.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_143310.json",
+      "uploaded_at": "2026-03-19T14:33:13.856015",
+      "file_size": 763201,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "75"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_144814.pdf",
+    "uploaded_at": "2026-03-19T14:48:19.135637",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_144814.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_144814.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_144814.pdf",
+      "uploaded_at": "2026-03-19T14:48:17.436290",
+      "file_size": 107652,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "60"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_144816.json",
+    "uploaded_at": "2026-03-19T14:48:21.656718",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_144816.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_144816.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_144816.json",
+      "uploaded_at": "2026-03-19T14:48:19.171345",
+      "file_size": 165308,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "60"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_145154.pdf",
+    "uploaded_at": "2026-03-19T14:51:59.822766",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_145154.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_145154.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_145154.pdf",
+      "uploaded_at": "2026-03-19T14:51:57.409852",
+      "file_size": 230440,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "75"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_145156.json",
+    "uploaded_at": "2026-03-19T14:52:02.310559",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_145156.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_145156.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_145156.json",
+      "uploaded_at": "2026-03-19T14:51:59.853691",
+      "file_size": 858247,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "75"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_145222.pdf",
+    "uploaded_at": "2026-03-19T14:52:28.549533",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_145222.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_145222.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_145222.pdf",
+      "uploaded_at": "2026-03-19T14:52:25.667443",
+      "file_size": 415308,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "75"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_145223.json",
+    "uploaded_at": "2026-03-19T14:52:29.779761",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_145223.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_145223.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_145223.json",
+      "uploaded_at": "2026-03-19T14:52:25.107456",
+      "file_size": 829665,
+      "file_type": ".json"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_145223.json",
+    "uploaded_at": "2026-03-19T14:52:32.789975",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_145223.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_145223.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_145223.json",
+      "uploaded_at": "2026-03-19T14:52:28.572255",
+      "file_size": 829665,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "75"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_145240.pdf",
+    "uploaded_at": "2026-03-19T14:52:46.505755",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_145240.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_145240.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_145240.pdf",
+      "uploaded_at": "2026-03-19T14:52:43.447846",
+      "file_size": 428351,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "75"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_145242.json",
+    "uploaded_at": "2026-03-19T14:52:49.554482",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_145242.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_145242.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_145242.json",
+      "uploaded_at": "2026-03-19T14:52:44.805642",
+      "file_size": 847772,
+      "file_type": ".json"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_145242.json",
+    "uploaded_at": "2026-03-19T14:52:50.613150",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_145242.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_145242.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_145242.json",
+      "uploaded_at": "2026-03-19T14:52:46.540029",
+      "file_size": 847772,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "75"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_145512.pdf",
+    "uploaded_at": "2026-03-19T14:55:20.560341",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_145512.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_145512.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_145512.pdf",
+      "uploaded_at": "2026-03-19T14:55:16.206306",
+      "file_size": 427511,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "75"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_145514.json",
+    "uploaded_at": "2026-03-19T14:55:23.049315",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_145514.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_145514.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_145514.json",
+      "uploaded_at": "2026-03-19T14:55:20.633307",
+      "file_size": 895283,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "75"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_145514.json",
+    "uploaded_at": "2026-03-19T14:55:28.726140",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_145514.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_145514.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_145514.json",
+      "uploaded_at": "2026-03-19T14:55:18.313032",
+      "file_size": 895283,
+      "file_type": ".json"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_145909.pdf",
+    "uploaded_at": "2026-03-19T14:59:16.133329",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_145909.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_145909.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_145909.pdf",
+      "uploaded_at": "2026-03-19T14:59:12.037188",
+      "file_size": 409402,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "75"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_145910.json",
+    "uploaded_at": "2026-03-19T14:59:20.562139",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_145910.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_145910.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_145910.json",
+      "uploaded_at": "2026-03-19T14:59:14.045869",
+      "file_size": 864446,
+      "file_type": ".json"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_145910.json",
+    "uploaded_at": "2026-03-19T14:59:22.913910",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_145910.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_145910.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_145910.json",
+      "uploaded_at": "2026-03-19T14:59:16.192871",
+      "file_size": 864446,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "75"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_145924.pdf",
+    "uploaded_at": "2026-03-19T14:59:27.447363",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_145924.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_145924.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_145924.pdf",
+      "uploaded_at": "2026-03-19T14:59:26.184149",
+      "file_size": 16583,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "75"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_145925.json",
+    "uploaded_at": "2026-03-19T14:59:30.023883",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_145925.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_145925.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_145925.json",
+      "uploaded_at": "2026-03-19T14:59:27.469923",
+      "file_size": 844224,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "75"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_145934.pdf",
+    "uploaded_at": "2026-03-19T14:59:38.284695",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_145934.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_145934.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_145934.pdf",
+      "uploaded_at": "2026-03-19T14:59:36.984563",
+      "file_size": 16583,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "75"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_145936.json",
+    "uploaded_at": "2026-03-19T14:59:40.805567",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_145936.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_145936.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_145936.json",
+      "uploaded_at": "2026-03-19T14:59:38.327477",
+      "file_size": 726955,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "75"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_150324.pdf",
+    "uploaded_at": "2026-03-19T15:03:31.233235",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_150324.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_150324.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_150324.pdf",
+      "uploaded_at": "2026-03-19T15:03:27.347667",
+      "file_size": 433040,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "75"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_150325.json",
+    "uploaded_at": "2026-03-19T15:03:33.897364",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_150325.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_150325.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_150325.json",
+      "uploaded_at": "2026-03-19T15:03:31.320191",
+      "file_size": 898637,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "75"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_150423.pdf",
+    "uploaded_at": "2026-03-19T15:04:28.216689",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_150423.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_150423.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_150423.pdf",
+      "uploaded_at": "2026-03-19T15:04:25.915336",
+      "file_size": 426258,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "75"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_150424.json",
+    "uploaded_at": "2026-03-19T15:04:30.647678",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_150424.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_150424.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_150424.json",
+      "uploaded_at": "2026-03-19T15:04:28.241668",
+      "file_size": 899404,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "75"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_151836.pdf",
+    "uploaded_at": "2026-03-19T15:18:43.436308",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_151836.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_151836.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_151836.pdf",
+      "uploaded_at": "2026-03-19T15:18:40.728602",
+      "file_size": 432020,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "60"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_151839.json",
+    "uploaded_at": "2026-03-19T15:18:45.433400",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_151839.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_151839.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_151839.json",
+      "uploaded_at": "2026-03-19T15:18:42.816535",
+      "file_size": 886020,
+      "file_type": ".json"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_151839.json",
+    "uploaded_at": "2026-03-19T15:18:46.151303",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_151839.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_151839.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_151839.json",
+      "uploaded_at": "2026-03-19T15:18:43.507714",
+      "file_size": 886020,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "60"
+    }
+  },
+  {
+    "local_path": "C:/Users/DELL/Downloads\\ECG_Report_12_1_20260319_152141.pdf",
+    "uploaded_at": "2026-03-19T15:21:47.651343",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ECG_Report_12_1_20260319_152141.pdf",
+      "key": "ecg-reports/2026/03/19/ECG_Report_12_1_20260319_152141.pdf",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ECG_Report_12_1_20260319_152141.pdf",
+      "uploaded_at": "2026-03-19T15:21:45.346827",
+      "file_size": 433458,
+      "file_type": ".pdf",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "60"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_152143.json",
+    "uploaded_at": "2026-03-19T15:21:48.304540",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_152143.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_152143.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_152143.json",
+      "uploaded_at": "2026-03-19T15:21:45.784298",
+      "file_size": 907471,
+      "file_type": ".json"
+    }
+  },
+  {
+    "local_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260319_152143.json",
+    "uploaded_at": "2026-03-19T15:21:52.649087",
+    "service": "s3",
+    "result": {
+      "status": "success",
+      "service": "s3",
+      "url": "https://deck-backend-demo.s3.us-east-1.amazonaws.com/ecg-reports/2026/03/19/ecg_data_20260319_152143.json",
+      "key": "ecg-reports/2026/03/19/ecg_data_20260319_152143.json",
+      "bucket": "deck-backend-demo"
+    },
+    "metadata": {
+      "filename": "ecg_data_20260319_152143.json",
+      "uploaded_at": "2026-03-19T15:21:47.696169",
+      "file_size": 907471,
+      "file_type": ".json",
+      "patient_name": "Unknown",
+      "patient_age": "",
+      "report_date": "",
+      "machine_serial": "",
+      "heart_rate": "60"
+    }
   }
 ]

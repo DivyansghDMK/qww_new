@@ -98,6 +98,28 @@ venv.bak/
 .ropeproject
 
 # mkdocs documentation
+site/
+
+# ECG Data and Reports
+*.pdf
+*.json
+reports/
+!src/**/*.json
+!**/package.json
+!**/composer.json
+
+# Temporary/Data files
+*.txt
+*.csv
+*.zip
+*.log
+*.png
+*.gif
+*.webp
+*.wav
+RhythmUltraMax (1).txt
+dummycsv.csv
+users.zip
 /site
 
 # mypy

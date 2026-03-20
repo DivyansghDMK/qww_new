@@ -194,10 +194,23 @@ def calculate_t_axis_from_median(data: List[np.ndarray], leads: List[str],
         r_mid = r_peaks[len(r_peaks) // 2]
         prev_r_idx = r_peaks[len(r_peaks) // 2 - 1] if len(r_peaks) > 1 else None
         
-        # T-axis uses post-T TP baseline [700ms, 800ms] after R
-        # We pass None to let calculate_axis_from_median_beat compute this cleanly from the baseline of the median beat
-        tp_baseline_i = None
-        tp_baseline_avf = None
+        # T-AXIS FIX (BUG-T1): Use actual post-T TP baseline for T-wave axis,
+        # NOT None.  When None is passed, calculate_axis_from_median_beat falls
+        # back to the PR segment [-80ms, -20ms] — which is INSIDE the QRS complex
+        # for T-wave measurement and shifts the net area negative → axis flips to
+        # ~-160°.  The correct isoelectric reference for T-wave is the TP segment
+        # AFTER the T wave ends (~500-800 ms after R at 70 bpm).
+        # get_tp_baseline() already implements this post-T search.
+        tp_baseline_i   = get_tp_baseline(
+            lead_i_data, r_mid, fs,
+            prev_r_peak_idx=prev_r_idx,
+            use_measurement_channel=True
+        )
+        tp_baseline_avf = get_tp_baseline(
+            lead_avf_data, r_mid, fs,
+            prev_r_peak_idx=prev_r_idx,
+            use_measurement_channel=True
+        )
         
         # Calculate T axis
         t_axis = calculate_axis_from_median_beat(
