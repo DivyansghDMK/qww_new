@@ -1,3 +1,4 @@
+import os
 import sys
 import time
 import platform
@@ -932,6 +933,9 @@ class ECGTestPage(QWidget):
         self._holter_writer = None
         self._holter_ui = None
         self._holter_worker = None
+        self._holter_patient_info = {}
+        self._holter_output_dir = os.path.join(os.getcwd(), "recordings")
+        self._holter_duration_hours = 24
 
         self.apply_language(self.current_language)
 
@@ -8052,79 +8056,135 @@ class ECGTestPage(QWidget):
         if mode in ['scroll', 'sweep']:
             self.display_mode = mode
 
+    def _set_holter_button_state(self, enabled: bool):
+        holter_btn = None
+        for btn, text in self.menu_buttons:
+            if text == "Holter" or btn.text().startswith("Holter"):
+                holter_btn = btn
+                break
+
+        if not holter_btn:
+            return
+
+        if enabled:
+            holter_btn.setText("Holter: ON")
+            holter_btn.setStyleSheet("""
+                QPushButton {
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                        stop:0 #2ecc71, stop:1 #27ae60);
+                    color: white;
+                    border: 2px solid #27ae60;
+                    border-radius: 8px;
+                    padding: 8px 12px;
+                    font-size: 13px;
+                    font-weight: 900;
+                    text-align: center;
+                    margin: 4px 0;
+                }
+            """)
+        else:
+            holter_btn.setText("Holter")
+            holter_btn.setStyleSheet("""
+                QPushButton {
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                        stop:0 #E65100, stop:1 #ff8c00);
+                    color: white;
+                    border: 2px solid #E65100;
+                    border-radius: 8px;
+                    padding: 8px 12px;
+                    font-size: 13px;
+                    font-weight: 900;
+                    text-align: center;
+                    margin: 4px 0;
+                }
+            """)
+
+        if hasattr(self, 'generate_report_btn'):
+            self.generate_report_btn.setVisible(not enabled)
+
     def show_holter_menu(self):
-        """Toggles the Holter monitor mode for the current session"""
+        """Open professional Holter setup and workspace."""
         if not HOLTER_AVAILABLE:
             QMessageBox.warning(self, "Holter Monitor", "Holter module is not available.")
             return
 
-        # Toggle Holter mode
-        self.holter_mode_enabled = not self.holter_mode_enabled
-        
-        # Update button style to show it's active
-        holter_btn = None
-        for btn, text in self.menu_buttons:
-            if text == "Holter":
-                holter_btn = btn
-                break
-        
-        if holter_btn:
-            if self.holter_mode_enabled:
-                holter_btn.setText("Holter: ON")
-                holter_btn.setStyleSheet("""
-                    QPushButton {
-                        background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
-                            stop:0 #2ecc71, stop:1 #27ae60);
-                        color: white;
-                        border: 2px solid #27ae60;
-                        border-radius: 8px;
-                        padding: 8px 12px;
-                        font-size: 13px;
-                        font-weight: 900;
-                        text-align: center;
-                        margin: 4px 0;
-                    }
-                """)
-                # Hide standard report button in Holter mode to avoid confusion
-                if hasattr(self, 'generate_report_btn'):
-                    self.generate_report_btn.setVisible(False)
-                
-                QMessageBox.information(self, "Holter Mode", 
-                    "Holter Mode Enabled.\nWaves and metrics will display normally.\nClick 'Start' to record; Click 'Stop' to generate Holter report.")
-            else:
-                holter_btn.setText("Holter")
-                holter_btn.setStyleSheet("""
-                    QPushButton {
-                        background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
-                            stop:0 #E65100, stop:1 #ff8c00);
-                        color: white;
-                        border: 2px solid #E65100;
-                        border-radius: 8px;
-                        padding: 8px 12px;
-                        font-size: 13px;
-                        font-weight: 900;
-                        text-align: center;
-                        margin: 4px 0;
-                    }
-                """)
-                # Show standard report button when Holter mode is OFF
-                if hasattr(self, 'generate_report_btn'):
-                    self.generate_report_btn.setVisible(True)
-                
-                QMessageBox.information(self, "Holter Mode", "Holter Mode Disabled. Standard ECG testing only.")
+        default_info = {}
+        try:
+            if hasattr(self.stacked_widget.parent(), 'patient_details'):
+                default_info = dict(self.stacked_widget.parent().patient_details or {})
+        except Exception:
+            default_info = {}
+
+        if self._holter_patient_info:
+            default_info.update(self._holter_patient_info)
+
+        os.makedirs(self._holter_output_dir, exist_ok=True)
+        dialog = HolterStartDialog(self, patient_info=default_info, output_dir=self._holter_output_dir)
+        if dialog.exec_() != QDialog.Accepted:
+            return
+
+        result = dialog.get_result()
+        if not result:
+            return
+
+        patient_info, duration_hours, output_dir = result
+        self._holter_patient_info = patient_info
+        self._holter_duration_hours = duration_hours
+        self._holter_output_dir = output_dir
+        self.holter_mode_enabled = True
+        self._set_holter_button_state(True)
+
+        acquisition_running = bool(
+            (self.serial_reader and getattr(self.serial_reader, 'running', False))
+            or (hasattr(self, 'demo_toggle') and self.demo_toggle.isChecked())
+        )
+
+        if acquisition_running and not (self._holter_writer and self._holter_writer.is_running):
+            self._start_holter_session_internal()
+
+        if self._holter_ui is None or not self._holter_ui.isVisible():
+            self._holter_ui = HolterMainWindow(
+                parent=self,
+                session_dir=self._holter_writer.session_dir if self._holter_writer else "",
+                patient_info=self._holter_patient_info,
+                writer=self._holter_writer,
+                live_source=self,
+                duration_hours=self._holter_duration_hours,
+            )
+        else:
+            self._holter_ui.patient_info = self._holter_patient_info
+            self._holter_ui.attach_writer(self._holter_writer,
+                                          self._holter_writer.session_dir if self._holter_writer else "",
+                                          self._holter_patient_info)
+
+        self._holter_ui.showMaximized()
+        self._holter_ui.raise_()
+        self._holter_ui.activateWindow()
+
+        if not acquisition_running:
+            QMessageBox.information(
+                self,
+                "Holter Mode Ready",
+                "Holter mode is armed.\n\nClick Start (or enable Demo Mode) to begin recording. "
+                "The professional 12‑lead Holter workspace has been opened and the comprehensive report will be generated when the recording stops."
+            )
 
     def _start_holter_session_internal(self):
         """Internal helper to start a Holter session during acquisition"""
-        # Get patient info from dashboard
-        patient_info = {}
-        try:
-            if hasattr(self.stacked_widget.parent(), 'patient_details'):
-                patient_info = self.stacked_widget.parent().patient_details
-        except Exception:
-            pass
+        if self._holter_writer and self._holter_writer.is_running:
+            return
 
-        # Use a default recording directory
-        out_dir = os.path.join(os.getcwd(), "recordings")
+        # Get patient info from setup dialog or dashboard
+        patient_info = dict(self._holter_patient_info or {})
+        if not patient_info:
+            try:
+                if hasattr(self.stacked_widget.parent(), 'patient_details'):
+                    patient_info = dict(self.stacked_widget.parent().patient_details or {})
+            except Exception:
+                patient_info = {}
+
+        # Use configured recording directory
+        out_dir = self._holter_output_dir or os.path.join(os.getcwd(), "recordings")
         os.makedirs(out_dir, exist_ok=True)
         
         # Create the stream writer
@@ -8150,6 +8210,13 @@ class ECGTestPage(QWidget):
         # Show Holter badge
         if hasattr(self, 'holter_badge'):
             self.holter_badge.setVisible(True)
+
+        if self._holter_ui:
+            try:
+                self._holter_ui.attach_writer(self._holter_writer, session_dir, patient_info)
+                self._holter_ui.show()
+            except Exception as e:
+                print(f"[Holter] UI attach warning: {e}")
             
         print(f"[Holter] Automatic recording started in {session_dir}")
 
@@ -8179,10 +8246,21 @@ class ECGTestPage(QWidget):
             
             self._holter_writer = None
             self._holter_worker = None
+            self.holter_mode_enabled = False
+            self._set_holter_button_state(False)
             
             # Hide Holter badge
             if hasattr(self, 'holter_badge'):
                 self.holter_badge.setVisible(False)
+
+            if self._holter_ui:
+                try:
+                    self._holter_ui.load_completed_session(summary['session_dir'], summary['patient_info'])
+                    self._holter_ui.showNormal()
+                    self._holter_ui.raise_()
+                    self._holter_ui.activateWindow()
+                except Exception as e:
+                    print(f"[Holter] UI completion warning: {e}")
 
     def update_plots(self):
         """Update all ECG plots with current data using PyQtGraph (GitHub version)"""

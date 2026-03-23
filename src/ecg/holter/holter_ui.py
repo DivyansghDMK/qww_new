@@ -23,18 +23,26 @@ import os
 import sys
 import json
 import time
+import math
 from datetime import datetime
 from typing import Optional, List
+
+import numpy as np
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QDialog, QLineEdit, QComboBox, QSlider, QGroupBox, QFrame,
     QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView,
     QSizePolicy, QScrollArea, QGridLayout, QSpinBox, QMessageBox,
-    QFileDialog, QApplication, QProgressBar, QSplitter
+    QFileDialog, QApplication, QProgressBar, QSplitter, QTextEdit
 )
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread
 from PyQt5.QtGui import QFont, QColor, QPalette
+
+try:
+    import pyqtgraph as pg
+except Exception:
+    pg = None
 
 # ── Colour palette ─────────────────────────────────────────────────────────────
 COL_ORANGE  = "#E65100"
@@ -87,8 +95,8 @@ class HolterStartDialog(QDialog):
     def __init__(self, parent=None, patient_info: dict = None, output_dir: str = "recordings"):
         super().__init__(parent)
         self.setWindowTitle("Start Holter Recording")
-        self.setMinimumWidth(520)
-        self.setStyleSheet(f"background: white; color: {COL_DARK};")
+        self.setMinimumWidth(640)
+        self.setStyleSheet(f"background: {COL_DARK}; color: white;")
         self.output_dir = output_dir
         self._result_info = None
         self._result_duration = 24
@@ -101,41 +109,60 @@ class HolterStartDialog(QDialog):
         layout.setContentsMargins(24, 24, 24, 24)
 
         # ── Title ──
-        title = QLabel("🫀  Holter Monitor — Start Recording")
+        title = QLabel("🫀  Holter Monitor — Professional Setup")
         title.setStyleSheet(f"""
-            background: {COL_ORANGE};
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                stop:0 {COL_ORANGE}, stop:1 {COL_BLUE});
             color: white;
-            font-size: 16px;
+            font-size: 18px;
             font-weight: bold;
-            padding: 12px 16px;
-            border-radius: 8px;
+            padding: 14px 18px;
+            border-radius: 12px;
         """)
         layout.addWidget(title)
 
+        subtitle = QLabel("Enter the patient details, choose the study duration, and launch the live 12‑lead Holter workspace.")
+        subtitle.setWordWrap(True)
+        subtitle.setStyleSheet("color: #C7D2E1; font-size: 12px; padding: 0 2px 4px 2px;")
+        layout.addWidget(subtitle)
+
         # ── Patient Info Group ──
         pg = QGroupBox("Patient Information")
-        pg.setStyleSheet(f"QGroupBox {{ font-weight: bold; color: {COL_DARK}; border: 2px solid {COL_ORANGE}; border-radius: 8px; margin-top: 8px; padding-top: 8px; }}")
+        pg.setStyleSheet(f"""
+            QGroupBox {{
+                font-weight: bold;
+                color: white;
+                border: 1px solid #32435A;
+                border-radius: 12px;
+                margin-top: 8px;
+                padding-top: 14px;
+                background: #111827;
+            }}
+        """)
         pg_layout = QGridLayout(pg)
         pg_layout.setSpacing(8)
 
         fields = [
             ("Patient Name",   "patient_name",  info.get("patient_name", "")),
             ("Age",            "age",           str(info.get("age", ""))),
+            ("Email",          "email",         info.get("email", "")),
             ("Doctor",         "doctor",        info.get("doctor", "")),
-            ("Organisation",   "org",           info.get("Org.", "")),
-            ("Phone",          "phone",         info.get("doctor_mobile", "")),
+            ("Organisation",   "org",           info.get("Org.", info.get("org", ""))),
+            ("Phone",          "phone",         info.get("doctor_mobile", info.get("phone", ""))),
         ]
         self._fields = {}
         for row, (label, key, default) in enumerate(fields):
             lbl = QLabel(label + ":")
-            lbl.setStyleSheet("font-weight: bold; font-size: 12px;")
+            lbl.setStyleSheet("font-weight: bold; font-size: 12px; color: #D9E1EC;")
             edit = QLineEdit(default)
             edit.setStyleSheet(f"""
                 QLineEdit {{
-                    border: 2px solid #ddd;
-                    border-radius: 6px;
-                    padding: 6px;
+                    border: 1px solid #42556F;
+                    border-radius: 8px;
+                    padding: 8px 10px;
                     font-size: 12px;
+                    background: #0F172A;
+                    color: white;
                 }}
                 QLineEdit:focus {{ border-color: {COL_ORANGE}; }}
             """)
@@ -145,19 +172,21 @@ class HolterStartDialog(QDialog):
 
         # Gender
         lbl_g = QLabel("Gender:")
-        lbl_g.setStyleSheet("font-weight: bold; font-size: 12px;")
+        lbl_g.setStyleSheet("font-weight: bold; font-size: 12px; color: #D9E1EC;")
         self._gender = QComboBox()
         self._gender.addItems(["Select", "Male", "Female", "Other"])
-        gender_val = info.get("gender", "Select")
+        gender_val = info.get("gender", info.get("sex", "Select"))
         idx = self._gender.findText(gender_val)
         if idx >= 0:
             self._gender.setCurrentIndex(idx)
         self._gender.setStyleSheet(f"""
             QComboBox {{
-                border: 2px solid #ddd;
-                border-radius: 6px;
-                padding: 6px;
+                border: 1px solid #42556F;
+                border-radius: 8px;
+                padding: 8px 10px;
                 font-size: 12px;
+                background: #0F172A;
+                color: white;
             }}
             QComboBox:focus {{ border-color: {COL_ORANGE}; }}
         """)
@@ -167,14 +196,26 @@ class HolterStartDialog(QDialog):
 
         # ── Recording Settings Group ──
         rg = QGroupBox("Recording Settings")
-        rg.setStyleSheet(f"QGroupBox {{ font-weight: bold; color: {COL_DARK}; border: 2px solid {COL_BLUE}; border-radius: 8px; margin-top: 8px; padding-top: 8px; }}")
+        rg.setStyleSheet(f"""
+            QGroupBox {{
+                font-weight: bold;
+                color: white;
+                border: 1px solid #32435A;
+                border-radius: 12px;
+                margin-top: 8px;
+                padding-top: 14px;
+                background: #111827;
+            }}
+        """)
         rg_layout = QGridLayout(rg)
         rg_layout.setSpacing(8)
 
-        rg_layout.addWidget(QLabel("Duration:"), 0, 0)
+        duration_lbl = QLabel("How many hours:")
+        duration_lbl.setStyleSheet("font-weight: bold; font-size: 12px; color: #D9E1EC;")
+        rg_layout.addWidget(duration_lbl, 0, 0)
         self._duration = QComboBox()
         self._duration.addItems(["24 hours", "48 hours", "Custom"])
-        self._duration.setStyleSheet("border: 2px solid #ddd; border-radius: 6px; padding: 6px; font-size: 12px;")
+        self._duration.setStyleSheet("border: 1px solid #42556F; border-radius: 8px; padding: 8px 10px; font-size: 12px; background: #0F172A; color: white;")
         self._duration.currentTextChanged.connect(self._on_duration_changed)
         rg_layout.addWidget(self._duration, 0, 1)
 
@@ -183,13 +224,15 @@ class HolterStartDialog(QDialog):
         self._custom_hours.setValue(24)
         self._custom_hours.setSuffix(" hours")
         self._custom_hours.setVisible(False)
-        self._custom_hours.setStyleSheet("border: 2px solid #ddd; border-radius: 6px; padding: 6px; font-size: 12px;")
+        self._custom_hours.setStyleSheet("border: 1px solid #42556F; border-radius: 8px; padding: 8px 10px; font-size: 12px; background: #0F172A; color: white;")
         rg_layout.addWidget(self._custom_hours, 1, 1)
 
-        rg_layout.addWidget(QLabel("Output Directory:"), 2, 0)
+        output_lbl = QLabel("Output Directory:")
+        output_lbl.setStyleSheet("font-weight: bold; font-size: 12px; color: #D9E1EC;")
+        rg_layout.addWidget(output_lbl, 2, 0)
         dir_row = QHBoxLayout()
         self._dir_label = QLabel(self.output_dir)
-        self._dir_label.setStyleSheet("font-size: 11px; color: #555;")
+        self._dir_label.setStyleSheet("font-size: 11px; color: #B0C4DE;")
         dir_row.addWidget(self._dir_label, 1)
         browse_btn = QPushButton("Browse")
         browse_btn.setStyleSheet(_btn_style(COL_BLUE, "white", "#1976D2"))
@@ -204,7 +247,7 @@ class HolterStartDialog(QDialog):
         cancel_btn = QPushButton("Cancel")
         cancel_btn.setStyleSheet(_btn_style("#757575", "white", "#616161"))
         cancel_btn.clicked.connect(self.reject)
-        start_btn = QPushButton("▶  Start Holter Recording")
+        start_btn = QPushButton("▶  Open Holter Workspace")
         start_btn.setStyleSheet(_btn_style(COL_GREEN, "white", "#388E3C"))
         start_btn.setMinimumHeight(44)
         start_btn.clicked.connect(self._on_start)
@@ -225,7 +268,13 @@ class HolterStartDialog(QDialog):
         # Build patient info
         info = {key: field.text().strip() for key, field in self._fields.items()}
         info['gender'] = self._gender.currentText()
+        info['sex'] = info['gender']
         info['name'] = info.get('patient_name', 'Unknown')
+        info['Org.'] = info.get('org', '')
+
+        if not info.get('patient_name'):
+            QMessageBox.warning(self, "Missing Name", "Please enter the patient name before opening Holter mode.")
+            return
 
         # Duration
         dur_text = self._duration.currentText()
@@ -867,6 +916,262 @@ class HolterReplayPanel(QWidget):
             self.seek_requested.emit(t)
 
 
+class HolterWaveGridPanel(QFrame):
+    """Professional 12‑lead Holter waveform workspace."""
+
+    LEADS = ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"]
+
+    def __init__(self, parent=None, live_source=None, replay_engine=None):
+        super().__init__(parent)
+        self.live_source = live_source
+        self.replay_engine = replay_engine
+        self.window_sec = 8.0
+        self._lead_widgets = []
+        self._replay_buffer = None
+        self.setStyleSheet("background: #101722; border: 1px solid #2B3B50; border-radius: 14px;")
+        self._build_ui()
+
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self.refresh_waveforms)
+        self._timer.start(150)
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
+
+        header = QHBoxLayout()
+        title = QLabel("12‑Lead Live Workspace")
+        title.setStyleSheet("color: white; font-size: 16px; font-weight: bold;")
+        subtitle = QLabel("Professional Holter view with synchronized moving strips.")
+        subtitle.setStyleSheet("color: #94A3B8; font-size: 11px;")
+        header_col = QVBoxLayout()
+        header_col.addWidget(title)
+        header_col.addWidget(subtitle)
+        header.addLayout(header_col)
+        header.addStretch()
+        speed = QLabel("Paper Speed 25mm/s  |  Gain 10mm/mV")
+        speed.setStyleSheet(f"color: {COL_ORANGE}; font-size: 11px; font-weight: bold;")
+        header.addWidget(speed)
+        layout.addLayout(header)
+
+        if pg is None:
+            fallback = QLabel("pyqtgraph is not available, so the live Holter waveform grid cannot be rendered in this environment.")
+            fallback.setWordWrap(True)
+            fallback.setStyleSheet("color: #FCA5A5; font-size: 12px; padding: 16px;")
+            layout.addWidget(fallback)
+            return
+
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(8)
+
+        pg.setConfigOptions(antialias=True, background="#0B1220", foreground="#CBD5E1")
+        for idx, lead in enumerate(self.LEADS):
+            card = QFrame()
+            card.setStyleSheet("background: #0B1220; border: 1px solid #213147; border-radius: 10px;")
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(6, 6, 6, 6)
+            card_layout.setSpacing(4)
+
+            label = QLabel(lead)
+            label.setStyleSheet("color: #E2E8F0; font-size: 12px; font-weight: bold; padding-left: 4px;")
+            card_layout.addWidget(label)
+
+            plot = pg.PlotWidget()
+            plot.setMenuEnabled(False)
+            plot.setMouseEnabled(x=False, y=False)
+            plot.hideButtons()
+            plot.setBackground("#0B1220")
+            plot.showGrid(x=True, y=True, alpha=0.16)
+            plot.getAxis("left").setStyle(showValues=False)
+            plot.getAxis("bottom").setStyle(showValues=False)
+            plot.setYRange(-1.6, 1.6, padding=0)
+            plot.setContentsMargins(0, 0, 0, 0)
+            curve = plot.plot(pen=pg.mkPen(COL_GREEN_ECG, width=1.6))
+            card_layout.addWidget(plot, 1)
+
+            self._lead_widgets.append((curve, plot))
+            row, col = divmod(idx, 4)
+            grid.addWidget(card, row, col)
+
+        layout.addLayout(grid, 1)
+
+    def set_replay_engine(self, replay_engine):
+        self.replay_engine = replay_engine
+
+    def set_live_source(self, live_source):
+        self.live_source = live_source
+
+    def set_replay_frame(self, data):
+        self._replay_buffer = data
+        self.refresh_waveforms()
+
+    def _normalize_signal(self, signal):
+        arr = np.asarray(signal, dtype=float).flatten()
+        if arr.size == 0:
+            return np.zeros(400, dtype=float)
+        arr = arr[-max(300, int(500 * self.window_sec)):]
+        arr = np.nan_to_num(arr, nan=0.0)
+        arr = arr - np.median(arr)
+        peak = float(np.percentile(np.abs(arr), 95)) if arr.size else 1.0
+        peak = peak if peak > 1e-6 else 1.0
+        return arr / peak
+
+    def _get_live_data(self):
+        source_data = getattr(self.live_source, "data", None)
+        if not source_data:
+            return None
+        leads = []
+        for idx in range(min(len(self.LEADS), len(source_data))):
+            leads.append(self._normalize_signal(source_data[idx]))
+        while len(leads) < len(self.LEADS):
+            leads.append(np.zeros(400, dtype=float))
+        return leads
+
+    def refresh_waveforms(self):
+        if not self._lead_widgets:
+            return
+
+        if self._replay_buffer is not None:
+            lead_data = [self._normalize_signal(sig) for sig in self._replay_buffer]
+        elif self.replay_engine is not None:
+            try:
+                data = self.replay_engine.get_all_leads_data(window_sec=self.window_sec)
+                lead_data = [self._normalize_signal(sig) for sig in data]
+            except Exception:
+                lead_data = None
+        else:
+            lead_data = self._get_live_data()
+
+        if not lead_data:
+            return
+
+        for idx, (curve, plot) in enumerate(self._lead_widgets):
+            signal = lead_data[idx] if idx < len(lead_data) else np.zeros(400, dtype=float)
+            x = np.arange(signal.size, dtype=float)
+            curve.setData(x, signal)
+            plot.setXRange(0, max(1, signal.size - 1), padding=0)
+
+
+class HolterInsightPanel(QFrame):
+    """Narrative summary that turns the metrics into a clinical-style report preview."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet("background: #101722; border: 1px solid #2B3B50; border-radius: 14px;")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
+
+        title = QLabel("Comprehensive Report Preview")
+        title.setStyleSheet("color: white; font-size: 15px; font-weight: bold;")
+        layout.addWidget(title)
+
+        self._report = QTextEdit()
+        self._report.setReadOnly(True)
+        self._report.setMinimumHeight(170)
+        self._report.setStyleSheet("""
+            QTextEdit {
+                background: #0B1220;
+                color: #DCE7F4;
+                border: 1px solid #223247;
+                border-radius: 10px;
+                padding: 8px;
+                font-size: 12px;
+            }
+        """)
+        layout.addWidget(self._report)
+
+    def update_text(self, patient_info: dict, summary: dict):
+        name = patient_info.get("patient_name") or patient_info.get("name") or "Unknown patient"
+        age = patient_info.get("age", "—")
+        sex = patient_info.get("gender") or patient_info.get("sex") or "—"
+        email = patient_info.get("email", "—")
+        duration_sec = summary.get("duration_sec", 0)
+        duration_hr = duration_sec / 3600 if duration_sec else 0
+        avg_hr = summary.get("avg_hr", 0)
+        min_hr = summary.get("min_hr", 0)
+        max_hr = summary.get("max_hr", 0)
+        quality = summary.get("avg_quality", 0) * 100
+        arrhythmias = summary.get("arrhythmia_counts", {})
+        top_events = ", ".join(f"{label} ({count})" for label, count in sorted(arrhythmias.items(), key=lambda item: -item[1])[:4]) or "No clinically significant arrhythmia burden detected."
+
+        if avg_hr >= 100:
+            rhythm = "predominantly tachycardic trend"
+        elif 0 < avg_hr <= 60:
+            rhythm = "predominantly bradycardic trend"
+        else:
+            rhythm = "predominantly sinus-range rhythm"
+
+        narrative = (
+            f"Patient: {name} | Age/Sex: {age}/{sex} | Email: {email}\n\n"
+            f"Study summary:\n"
+            f"• Recording duration: {duration_hr:.1f} hours\n"
+            f"• Average heart rate: {avg_hr:.0f} bpm (range {min_hr:.0f}–{max_hr:.0f} bpm)\n"
+            f"• Signal quality: {quality:.1f}%\n"
+            f"• Longest RR interval: {summary.get('longest_rr_ms', 0):.0f} ms\n"
+            f"• HRV profile: SDNN {summary.get('sdnn', 0):.1f} ms, rMSSD {summary.get('rmssd', 0):.1f} ms, pNN50 {summary.get('pnn50', 0):.2f}%\n\n"
+            f"Interpretation:\n"
+            f"The recording demonstrates a {rhythm}. Key events identified during automated analysis: {top_events}\n\n"
+            f"Suggested final report wording:\n"
+            f"“Holter monitoring for {name} shows {rhythm} with an average heart rate of {avg_hr:.0f} bpm. "
+            f"The minimum recorded rate was {min_hr:.0f} bpm and the maximum recorded rate was {max_hr:.0f} bpm. "
+            f"Overall signal quality was {quality:.1f}%, enabling comprehensive review of the 12‑lead trends and event strips.”"
+        )
+        self._report.setPlainText(narrative)
+
+
+class HolterSummaryCards(QFrame):
+    """Quick professional KPI cards shown above the analysis tabs."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._value_labels = {}
+        self.setStyleSheet("background: #101722; border: 1px solid #2B3B50; border-radius: 14px;")
+        self._build_ui()
+
+    def _build_ui(self):
+        layout = QGridLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setHorizontalSpacing(10)
+        layout.setVerticalSpacing(10)
+
+        cards = [
+            ("Average HR", "avg_hr", "bpm"),
+            ("Min / Max HR", "range_hr", "bpm"),
+            ("Total Beats", "beats", ""),
+            ("Pauses", "pauses", "events"),
+            ("Signal Quality", "quality", "%"),
+            ("HRV (SDNN)", "sdnn", "ms"),
+        ]
+        for idx, (title, key, unit) in enumerate(cards):
+            frame = QFrame()
+            frame.setStyleSheet("background: #0B1220; border: 1px solid #223247; border-radius: 12px;")
+            box = QVBoxLayout(frame)
+            box.setContentsMargins(12, 10, 12, 10)
+            box.setSpacing(4)
+            lbl = QLabel(title)
+            lbl.setStyleSheet("color: #94A3B8; font-size: 11px; font-weight: bold;")
+            val = QLabel("—")
+            val.setStyleSheet("color: white; font-size: 18px; font-weight: bold;")
+            unit_lbl = QLabel(unit)
+            unit_lbl.setStyleSheet(f"color: {COL_ORANGE}; font-size: 10px;")
+            box.addWidget(lbl)
+            box.addWidget(val)
+            box.addWidget(unit_lbl)
+            self._value_labels[key] = val
+            layout.addWidget(frame, 0 if idx < 3 else 1, idx % 3)
+
+    def update_summary(self, summary: dict):
+        self._value_labels["avg_hr"].setText(f"{summary.get('avg_hr', 0):.0f}")
+        self._value_labels["range_hr"].setText(f"{summary.get('min_hr', 0):.0f} / {summary.get('max_hr', 0):.0f}")
+        self._value_labels["beats"].setText(f"{summary.get('total_beats', 0):,}")
+        self._value_labels["pauses"].setText(str(summary.get("pauses", 0)))
+        self._value_labels["quality"].setText(f"{summary.get('avg_quality', 0) * 100:.1f}")
+        self._value_labels["sdnn"].setText(f"{summary.get('sdnn', 0):.1f}")
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # 7. HOLTER MAIN WINDOW  — orchestrates everything
 # ══════════════════════════════════════════════════════════════════════════════
@@ -879,13 +1184,17 @@ class HolterMainWindow(QDialog):
 
     def __init__(self, parent=None, session_dir: str = "",
                  patient_info: dict = None,
-                 writer=None):
+                 writer=None,
+                 live_source=None,
+                 duration_hours: int = 24):
         super().__init__(parent)
         self.setWindowTitle("Holter ECG Monitor & Analysis")
-        self.setMinimumSize(1200, 800)
+        self.setMinimumSize(1380, 860)
         self.session_dir = session_dir
         self.patient_info = patient_info or (writer.patient_info if writer else {})
         self._writer = writer
+        self._live_source = live_source
+        self._duration_hours = duration_hours
         self._replay_engine = None
         self._metrics_list = []
         self._summary = {}
@@ -914,6 +1223,8 @@ class HolterMainWindow(QDialog):
         stats = self._writer.get_live_stats()
         if hasattr(self, '_status_bar'):
             self._status_bar.update_stats(stats['bpm'], stats['arrhythmias'])
+        if hasattr(self, "_wave_panel"):
+            self._wave_panel.refresh_waveforms()
         
         # Periodic reload of metrics if not too many
         if stats['elapsed'] % 30 < 2:  # roughly every 30s
@@ -922,6 +1233,10 @@ class HolterMainWindow(QDialog):
 
     def _refresh_ui(self):
         """Refresh all panels with latest summary/metrics"""
+        if hasattr(self, "_summary_cards"):
+            self._summary_cards.update_summary(self._summary)
+        if hasattr(self, "_insight_panel"):
+            self._insight_panel.update_text(self.patient_info, self._summary)
         if hasattr(self, '_overview_panel'):
             self._overview_panel.update_summary(self._summary)
         if hasattr(self, '_hrv_panel'):
@@ -931,9 +1246,14 @@ class HolterMainWindow(QDialog):
             if self._replay_engine:
                 events = self._replay_engine.get_events_list()
             self._events_panel.load_events(events, self._summary)
+        if hasattr(self, "_wave_panel"):
+            self._wave_panel.set_live_source(self._live_source)
+            self._wave_panel.set_replay_engine(self._replay_engine)
+            self._wave_panel.refresh_waveforms()
 
     def _load_session(self):
         """Load JSONL metrics and build replay engine."""
+        self._metrics_list = []
         jsonl_path = os.path.join(self.session_dir, 'metrics.jsonl')
         if os.path.exists(jsonl_path):
             try:
@@ -1013,7 +1333,7 @@ class HolterMainWindow(QDialog):
         tb_layout = QHBoxLayout(toolbar)
         tb_layout.setContentsMargins(12, 4, 12, 4)
 
-        title_lbl = QLabel("HOLTER ECG ANALYSIS")
+        title_lbl = QLabel("HOLTER ECG ANALYSIS SUITE")
         title_lbl.setStyleSheet(f"color: {COL_ORANGE}; font-size: 16px; font-weight: bold;")
         tb_layout.addWidget(title_lbl)
 
@@ -1027,6 +1347,9 @@ class HolterMainWindow(QDialog):
         dur_sec = self._summary.get('duration_sec', 0)
         dur_h = int(dur_sec // 3600)
         dur_m = int((dur_sec % 3600) // 60)
+        if dur_sec <= 0:
+            dur_h = self._duration_hours
+            dur_m = 0
         d_lbl = QLabel(f"  |  Duration: {dur_h}h {dur_m}m")
         d_lbl.setStyleSheet("color: #aaa; font-size: 12px;")
         tb_layout.addWidget(d_lbl)
@@ -1048,9 +1371,67 @@ class HolterMainWindow(QDialog):
 
         # ── Live status bar (only during recording) ──
         if self._writer:
-            self._status_bar = HolterStatusBar(self, target_hours=24)
+            self._status_bar = HolterStatusBar(self, target_hours=self._duration_hours)
             self._status_bar.stop_requested.connect(self._stop_recording)
             main_layout.addWidget(self._status_bar)
+
+        body = QWidget()
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(12, 12, 12, 12)
+        body_layout.setSpacing(12)
+
+        self._summary_cards = HolterSummaryCards()
+        body_layout.addWidget(self._summary_cards)
+
+        workspace = QSplitter(Qt.Horizontal)
+        workspace.setChildrenCollapsible(False)
+        workspace.setStyleSheet("""
+            QSplitter::handle {
+                background: #223247;
+                width: 2px;
+            }
+        """)
+
+        left = QWidget()
+        left_layout = QVBoxLayout(left)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(12)
+
+        self._wave_panel = HolterWaveGridPanel(live_source=self._live_source, replay_engine=self._replay_engine)
+        left_layout.addWidget(self._wave_panel, 2)
+
+        self._insight_panel = HolterInsightPanel()
+        left_layout.addWidget(self._insight_panel, 1)
+
+        right = QWidget()
+        right_layout = QVBoxLayout(right)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(12)
+
+        self._overview_panel = HolterOverviewPanel()
+        self._overview_panel.update_summary(self._summary)
+        right_layout.addWidget(self._overview_panel, 1)
+
+        self._events_panel = HolterEventsPanel()
+        events = []
+        if self._replay_engine:
+            events = self._replay_engine.get_events_list()
+        else:
+            for m in self._metrics_list:
+                for a in m.get('arrhythmias', []):
+                    t = m['t']
+                    h = int(t // 3600)
+                    mn = int((t % 3600) // 60)
+                    s = int(t % 60)
+                    events.append({'timestamp': t, 'label': a, 'time_str': f"{h:02d}:{mn:02d}:{s:02d}"})
+        self._events_panel.load_events(events, self._summary)
+        self._events_panel.seek_requested.connect(self._on_seek_requested)
+        right_layout.addWidget(self._events_panel, 1)
+
+        workspace.addWidget(left)
+        workspace.addWidget(right)
+        workspace.setSizes([930, 390])
+        body_layout.addWidget(workspace, 3)
 
         # ── Tab widget ──
         self._tabs = QTabWidget()
@@ -1075,42 +1456,57 @@ class HolterMainWindow(QDialog):
             QTabBar::tab:hover {{ color: white; }}
         """)
 
-        # Overview tab
-        self._overview_panel = HolterOverviewPanel()
-        self._overview_panel.update_summary(self._summary)
-        self._tabs.addTab(self._overview_panel, "📊  Overview")
-
         # HRV tab
         self._hrv_panel = HolterHRVPanel()
         self._hrv_panel.update_hrv(self._metrics_list, self._summary)
         self._tabs.addTab(self._hrv_panel, "📈  HRV Analysis")
 
-        # Events tab
-        self._events_panel = HolterEventsPanel()
-        events = []
-        if self._replay_engine:
-            events = self._replay_engine.get_events_list()
-        else:
-            # Build from metrics
-            for m in self._metrics_list:
-                for a in m.get('arrhythmias', []):
-                    t = m['t']
-                    h = int(t // 3600)
-                    mn = int((t % 3600) // 60)
-                    s = int(t % 60)
-                    events.append({'timestamp': t, 'label': a, 'time_str': f"{h:02d}:{mn:02d}:{s:02d}"})
-        self._events_panel.load_events(events, self._summary)
-        self._tabs.addTab(self._events_panel, "⚡  Events")
-
         # Replay tab
-        duration = self._summary.get('duration_sec', 86400)
+        duration = self._summary.get('duration_sec', self._duration_hours * 3600)
         self._replay_panel = HolterReplayPanel(duration_sec=duration)
         if self._replay_engine:
             self._replay_panel.set_replay_engine(self._replay_engine)
-            self._replay_panel.seek_requested.connect(self._replay_engine.seek)
+            self._replay_panel.seek_requested.connect(self._on_seek_requested)
         self._tabs.addTab(self._replay_panel, "▶  Replay")
 
-        main_layout.addWidget(self._tabs, 1)
+        body_layout.addWidget(self._tabs, 1)
+        main_layout.addWidget(body, 1)
+        self._refresh_ui()
+
+    def _on_seek_requested(self, target_sec: float):
+        if self._replay_engine:
+            self._replay_engine.seek(target_sec)
+            try:
+                self._wave_panel.set_replay_frame(self._replay_engine.get_all_leads_data(window_sec=8.0))
+            except Exception:
+                pass
+
+    def attach_writer(self, writer, session_dir: str = "", patient_info: dict = None):
+        self._writer = writer
+        if session_dir:
+            self.session_dir = session_dir
+        if patient_info:
+            self.patient_info = patient_info
+        if writer and not hasattr(self, "_status_bar"):
+            self._status_bar = HolterStatusBar(self, target_hours=self._duration_hours)
+            self._status_bar.stop_requested.connect(self._stop_recording)
+            self.layout().insertWidget(1, self._status_bar)
+        if writer and not hasattr(self, "_live_timer"):
+            self._live_timer = QTimer(self)
+            self._live_timer.timeout.connect(self._update_live_ui)
+        if writer and hasattr(self, "_live_timer") and not self._live_timer.isActive():
+            self._live_timer.start(1000)
+        self._refresh_ui()
+
+    def load_completed_session(self, session_dir: str, patient_info: dict = None):
+        self.session_dir = session_dir
+        if patient_info:
+            self.patient_info = patient_info
+        self._writer = None
+        self._load_session()
+        if hasattr(self, "_replay_panel") and self._replay_engine:
+            self._replay_panel.set_replay_engine(self._replay_engine)
+        self._refresh_ui()
 
     def _stop_recording(self):
         """Finalize the recording and switch to review mode"""
@@ -1125,8 +1521,7 @@ class HolterMainWindow(QDialog):
                                     f"Holter recording saved to:\n{summary.get('session_dir', '')}")
             
             # Switch to review mode
-            self._load_session()
-            self._refresh_ui()
+            self.load_completed_session(summary.get('session_dir', ''), self.patient_info)
 
     def _generate_report(self):
         """Trigger report generation."""

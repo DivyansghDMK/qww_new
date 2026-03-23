@@ -127,6 +127,8 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
          'Report Date', datetime.now().strftime('%Y-%m-%d %H:%M')],
         ['Doctor',       patient_info.get('doctor', '—'),
          'Organisation', patient_info.get('Org.', patient_info.get('org', '—'))],
+        ['Email',        patient_info.get('email', '—'),
+         'Phone',        patient_info.get('phone', patient_info.get('doctor_mobile', '—'))],
     ]
 
     pinfo_table = Table(pinfo_data, colWidths=[35*mm, 55*mm, 45*mm, 45*mm])
@@ -177,6 +179,17 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
     ]))
     story.append(stats_table)
 
+    story.append(Paragraph("Clinical Impression", h2_style))
+    arrhy_counts = summary.get('arrhythmia_counts', {})
+    top_events = ", ".join(f"{label} ({count})" for label, count in sorted(arrhy_counts.items(), key=lambda item: -item[1])[:4]) or "No significant arrhythmias detected"
+    avg_quality = summary.get('avg_quality', 0) * 100
+    impression_text = (
+        f"This Holter study for <b>{pname}</b> covers <b>{dur_h}h {dur_m}m</b> with an average heart rate of "
+        f"<b>{avg_hr:.0f} bpm</b> (minimum <b>{min_hr:.0f} bpm</b>, maximum <b>{max_hr:.0f} bpm</b>). "
+        f"Overall signal quality was <b>{avg_quality:.1f}%</b>. The automated event summary shows: <b>{top_events}</b>."
+    )
+    story.append(Paragraph(impression_text, body_style))
+
     # ── Section 2: HRV Analysis ────────────────────────────────────────────────
     story.append(Paragraph("2. HEART RATE VARIABILITY (HRV)", h1_style))
     story.append(HRFlowable(width="100%", thickness=1, color=ORANGE, spaceAfter=2*mm))
@@ -216,7 +229,6 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
     story.append(Paragraph("3. ARRHYTHMIA SUMMARY", h1_style))
     story.append(HRFlowable(width="100%", thickness=1, color=ORANGE, spaceAfter=2*mm))
 
-    arrhy_counts = summary.get('arrhythmia_counts', {})
     if arrhy_counts:
         arrhy_data = [['Arrhythmia Type', 'Episodes', 'Burden']]
         total_chunks = max(1, summary.get('chunks_analyzed', 1))
