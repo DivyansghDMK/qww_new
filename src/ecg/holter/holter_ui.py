@@ -958,6 +958,20 @@ class HolterReplayPanel(QWidget):
         # Controls row
         ctrl_row = QHBoxLayout()
 
+        self._play_btn = QPushButton("▶ Play")
+        self._play_btn.setStyleSheet(_btn_style("#1E7D34", "white", "#249542"))
+        self._play_btn.setFixedHeight(28)
+        self._play_btn.clicked.connect(self._toggle_playback)
+        ctrl_row.addWidget(self._play_btn)
+
+        ctrl_row.addWidget(QLabel("Speed:"))
+        self._speed_combo = QComboBox()
+        self._speed_combo.addItems(["0.5x", "1x", "2x", "4x"])
+        self._speed_combo.setCurrentText("1x")
+        self._speed_combo.setStyleSheet("background: #1E2A3A; color: white; border: 1px solid #444; padding: 4px; border-radius: 4px;")
+        self._speed_combo.currentTextChanged.connect(self._on_speed_changed)
+        ctrl_row.addWidget(self._speed_combo)
+
         # Lead selector
         ctrl_row.addWidget(QLabel("Lead:"))
         self._lead_combo = QComboBox()
@@ -995,6 +1009,7 @@ class HolterReplayPanel(QWidget):
         self._replay_engine = engine
         self._slider.setRange(0, int(engine.duration_sec))
         engine.set_position_callback(self._on_position_update)
+        self._on_speed_changed(self._speed_combo.currentText())
 
     def _on_slider(self, value):
         h = value // 3600
@@ -1016,6 +1031,25 @@ class HolterReplayPanel(QWidget):
         if self._replay_engine:
             t = self._replay_engine.seek_to_event(ev_type, direction)
             self.seek_requested.emit(t)
+
+    def _toggle_playback(self):
+        if not self._replay_engine:
+            return
+        if self._replay_engine.is_playing():
+            self._replay_engine.pause()
+            self._play_btn.setText("▶ Play")
+        else:
+            self._replay_engine.play()
+            self._play_btn.setText("⏸ Pause")
+
+    def _on_speed_changed(self, text: str):
+        if not self._replay_engine:
+            return
+        try:
+            speed = float(text.replace("x", "").strip())
+        except Exception:
+            speed = 1.0
+        self._replay_engine.set_speed(speed)
 
 
 class HolterWaveGridPanel(QFrame):
@@ -1291,7 +1325,13 @@ class HolterMainWindow(QDialog):
                  duration_hours: int = 24):
         super().__init__(parent)
         self.setWindowTitle("Holter ECG Monitor & Analysis")
-        self.setMinimumSize(1380, 860)
+        self.setMinimumSize(1024, 680)
+        screen = QApplication.primaryScreen()
+        if screen:
+            g = screen.availableGeometry()
+            self.resize(max(1024, int(g.width() * 0.92)), max(680, int(g.height() * 0.9)))
+        else:
+            self.resize(1360, 860)
         self.session_dir = session_dir
         self.patient_info = patient_info or (writer.patient_info if writer else {})
         self._writer = writer
@@ -1343,6 +1383,14 @@ class HolterMainWindow(QDialog):
             self._overview_panel.update_summary(self._summary)
         if hasattr(self, '_hrv_panel'):
             self._hrv_panel.update_hrv(self._metrics_list, self._summary)
+        if hasattr(self, '_lorenz_panel'):
+            self._lorenz_panel.update_from_metrics(self._metrics_list)
+        if hasattr(self, '_hist_panel'):
+            self._hist_panel.update_from_metrics(self._metrics_list)
+        if hasattr(self, '_af_panel'):
+            self._af_panel.update_from_metrics(self._metrics_list, self._summary.get('duration_sec', 0))
+        if hasattr(self, '_report_table_panel'):
+            self._report_table_panel.update_from_metrics(self._metrics_list)
         if hasattr(self, '_events_panel'):
             events = []
             if self._replay_engine:
@@ -1532,11 +1580,17 @@ class HolterMainWindow(QDialog):
 
         workspace.addWidget(left)
         workspace.addWidget(right)
-        workspace.setSizes([930, 390])
+        workspace.setStretchFactor(0, 3)
+        workspace.setStretchFactor(1, 2)
         body_layout.addWidget(workspace, 3)
 
         # ── Tab widget ──
         self._tabs = QTabWidget()
+        self._tabs.setDocumentMode(True)
+        self._tabs.setUsesScrollButtons(True)
+        self._tabs.setElideMode(Qt.ElideRight)
+        self._tabs.tabBar().setMovable(True)
+        self._tabs.tabBar().setExpanding(False)
         self._tabs.setStyleSheet(f"""
             QTabWidget::pane {{
                 border: none;
@@ -1649,7 +1703,14 @@ class HolterMainWindow(QDialog):
              "Preview, print, reanalysis, patient information"]), "🛠️  Tools")
 
         body_layout.addWidget(self._tabs, 1)
-        main_layout.addWidget(body, 1)
+
+        body_scroll = QScrollArea()
+        body_scroll.setWidgetResizable(True)
+        body_scroll.setFrameShape(QFrame.NoFrame)
+        body_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        body_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        body_scroll.setWidget(body)
+        main_layout.addWidget(body_scroll, 1)
         self._refresh_ui()
 
     def _on_seek_requested(self, target_sec: float):
