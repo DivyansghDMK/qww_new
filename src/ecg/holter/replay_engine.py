@@ -50,6 +50,7 @@ class HolterReplayEngine:
         self._on_data: Optional[callable] = None        # (lead_idx, data_array)
         self._on_position: Optional[callable] = None    # (current_sec)
         self._on_arrhythmia_event: Optional[callable] = None  # (event)
+        self._last_event_emit_sec: float = -1.0
 
     # ── Metrics loading ───────────────────────────────────────────────────────
 
@@ -163,6 +164,50 @@ class HolterReplayEngine:
             self._on_data(data)
         if self._on_position:
             self._on_position(self._current_sec, self.duration_sec)
+        if self._on_arrhythmia_event and self._arrhythmia_events:
+            for t, label in self._arrhythmia_events:
+                if self._last_event_emit_sec < t <= self._current_sec:
+                    self._on_arrhythmia_event(t, label)
+            self._last_event_emit_sec = self._current_sec
+
+    # ── Playback loop ─────────────────────────────────────────────────────────
+
+    def play(self):
+        """Start replay loop."""
+        if self._playing:
+            return
+        self._playing = True
+        self._stop_event.clear()
+        self._playback_thread = threading.Thread(target=self._playback_loop, daemon=True, name="HolterReplayLoop")
+        self._playback_thread.start()
+
+    def pause(self):
+        """Pause replay without resetting position."""
+        self._playing = False
+        self._stop_event.set()
+        if self._playback_thread and self._playback_thread.is_alive():
+            self._playback_thread.join(timeout=0.5)
+        self._playback_thread = None
+
+    def set_speed(self, speed: float):
+        self._playback_speed = max(0.25, min(float(speed), 8.0))
+
+    def is_playing(self) -> bool:
+        return self._playing
+
+    def _playback_loop(self):
+        # Use a UI-friendly refresh cadence for replay frames.
+        target_fps = 25.0
+        dt_wall = 1.0 / target_fps
+        while self._playing and not self._stop_event.is_set():
+            self._current_sec += dt_wall * self._playback_speed
+            if self._current_sec >= self.duration_sec:
+                self._current_sec = self.duration_sec
+                self._emit_frame()
+                self._playing = False
+                break
+            self._emit_frame()
+            time.sleep(dt_wall)
 
     # ── Summary statistics ─────────────────────────────────────────────────────
 
@@ -235,4 +280,5 @@ class HolterReplayEngine:
         return f"{h:02d}:{m:02d}:{s:02d}"
 
     def close(self):
+        self.pause()
         self._reader.close()

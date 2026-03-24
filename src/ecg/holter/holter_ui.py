@@ -45,18 +45,18 @@ except Exception:
     pg = None
 
 # ── Colour palette ─────────────────────────────────────────────────────────────
-COL_ORANGE  = "#E65100"
-COL_DARK    = "#1A1A2E"
-COL_BLUE    = "#1565C0"
+COL_ORANGE  = "#34C759"
+COL_DARK    = "#3A3E42"
+COL_BLUE    = "#2D9CFF"
 COL_GREEN   = "#2E7D32"
 COL_RED     = "#B71C1C"
 COL_LIGHT   = "#FFF8F0"
 COL_GRAY    = "#F5F5F5"
-COL_BG      = "#0D1117"    # dark ECG-style background
+COL_BG      = "#202326"    # dark ECG-style background
 COL_GREEN_ECG = "#00FF00"  # ECG trace green
 
 
-def _btn_style(bg="#E65100", fg="white", hover="#FF6D00"):
+def _btn_style(bg=COL_ORANGE, fg="white", hover="#22C55E"):
     return f"""
         QPushButton {{
             background: {bg};
@@ -112,7 +112,7 @@ class HolterStartDialog(QDialog):
         title = QLabel("🫀  Holter Monitor — Professional Setup")
         title.setStyleSheet(f"""
             background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                stop:0 {COL_ORANGE}, stop:1 {COL_BLUE});
+                stop:0 #064E3B, stop:1 #0E7490);
             color: white;
             font-size: 18px;
             font-weight: bold;
@@ -240,6 +240,12 @@ class HolterStartDialog(QDialog):
         dir_row.addWidget(browse_btn)
         rg_layout.addLayout(dir_row, 2, 1)
 
+        self._recording_count_label = QLabel("")
+        self._recording_count_label.setStyleSheet("font-size: 12px; color: #86EFAC; font-weight: 600;")
+        rg_layout.addWidget(QLabel("Recorded Sessions:"), 3, 0)
+        rg_layout.addWidget(self._recording_count_label, 3, 1)
+        self._refresh_recording_count()
+
         layout.addWidget(rg)
 
         # ── Buttons ──
@@ -263,6 +269,22 @@ class HolterStartDialog(QDialog):
         if d:
             self._result_dir = d
             self._dir_label.setText(d)
+            self._refresh_recording_count()
+
+    def _refresh_recording_count(self):
+        root = self._result_dir or self.output_dir
+        count = 0
+        try:
+            if os.path.isdir(root):
+                for name in os.listdir(root):
+                    session_dir = os.path.join(root, name)
+                    if not os.path.isdir(session_dir):
+                        continue
+                    if os.path.exists(os.path.join(session_dir, "recording.ecgh")):
+                        count += 1
+        except Exception:
+            count = 0
+        self._recording_count_label.setText(f"{count} completed recording(s)")
 
     def _on_start(self):
         # Build patient info
@@ -672,7 +694,258 @@ class HolterHRVPanel(QWidget):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 5. HOLTER EVENTS PANEL  (like reference Image 7)
+# 5b. PROFESSIONAL WORKSTATION TABS
+# ══════════════════════════════════════════════════════════════════════════════
+
+class HolterRecordManagementPanel(QWidget):
+    """Record browser with filters + import/export actions."""
+    def __init__(self, output_dir: str = "recordings"):
+        super().__init__()
+        self.output_dir = output_dir
+        self._build_ui()
+        self.refresh_records()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        search_row = QHBoxLayout()
+        self._search = QLineEdit()
+        self._search.setPlaceholderText("Search patient / reporter / status")
+        self._search.textChanged.connect(self.refresh_records)
+        self._filter = QComboBox()
+        self._filter.addItems(["All", "Today", "Yesterday", "This Week", "This Month", "This Year"])
+        self._filter.currentTextChanged.connect(self.refresh_records)
+        search_row.addWidget(QLabel("Search:"))
+        search_row.addWidget(self._search, 2)
+        search_row.addWidget(QLabel("Filter:"))
+        search_row.addWidget(self._filter)
+        layout.addLayout(search_row)
+
+        action_row = QHBoxLayout()
+        action_row.addStretch()
+        for txt in ["Browse", "Import", "Export", "Backup", "Delete"]:
+            btn = QPushButton(txt)
+            btn.setStyleSheet(_btn_style(COL_BLUE, "white", "#53AEFF"))
+            btn.setMinimumWidth(90)
+            action_row.addWidget(btn)
+        action_row.addStretch()
+        layout.addLayout(action_row)
+
+        cols = ["Name", "Age", "Gender", "Record Time", "Duration", "Channel",
+                "Import Time", "Record Status", "Reporter", "Conclusion"]
+        self._table = QTableWidget(0, len(cols))
+        self._table.setHorizontalHeaderLabels(cols)
+        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self._table.setStyleSheet("QTableWidget{background:#131619;color:#DDE3EA;gridline-color:#2f353b;}")
+        layout.addWidget(self._table, 1)
+
+    def refresh_records(self):
+        self._table.setRowCount(0)
+        if not os.path.isdir(self.output_dir):
+            return
+        query = self._search.text().strip().lower()
+        for name in sorted(os.listdir(self.output_dir), reverse=True):
+            session_dir = os.path.join(self.output_dir, name)
+            if not os.path.isdir(session_dir):
+                continue
+            if not os.path.exists(os.path.join(session_dir, "recording.ecgh")):
+                continue
+            p_name = name.split("_", 2)[-1].replace("_", " ")
+            row_values = [p_name, "-", "-", name[:19], "-", "3", name[:19], "Completed", "System", "-"]
+            if query and not any(query in str(v).lower() for v in row_values):
+                continue
+            r = self._table.rowCount()
+            self._table.insertRow(r)
+            for c, v in enumerate(row_values):
+                self._table.setItem(r, c, QTableWidgetItem(str(v)))
+
+
+class HolterPlaceholderPanel(QWidget):
+    """Generic structured panel for advanced modules not fully implemented yet."""
+    def __init__(self, title: str, bullet_points: List[str]):
+        super().__init__()
+        layout = QVBoxLayout(self)
+        title_lbl = QLabel(title)
+        title_lbl.setStyleSheet(f"font-size:16px;font-weight:700;color:{COL_BLUE};")
+        layout.addWidget(title_lbl)
+        grid = QGridLayout()
+        for i, text in enumerate(bullet_points):
+            chip = QLabel(f"• {text}")
+            chip.setStyleSheet("color:#BFD4E8;padding:8px;border:1px solid #2f3b48;border-radius:8px;background:#111820;")
+            grid.addWidget(chip, i // 2, i % 2)
+        layout.addLayout(grid)
+        note = QLabel("This professional module scaffold is ready for live data wiring.")
+        note.setStyleSheet("color:#7f9ab4;font-style:italic;padding-top:6px;")
+        layout.addWidget(note)
+        layout.addStretch(1)
+
+
+class HolterLorenzPanel(QWidget):
+    """Basic Lorenz/Poincaré plot RR(n) vs RR(n+1)."""
+    def __init__(self):
+        super().__init__()
+        self._plot = None
+        layout = QVBoxLayout(self)
+        title = QLabel("Lorenz / Poincaré Plot")
+        title.setStyleSheet(f"font-size:15px;font-weight:700;color:{COL_BLUE};")
+        layout.addWidget(title)
+        if pg is None:
+            fallback = QLabel("pyqtgraph not available. Lorenz scatter cannot be rendered in this environment.")
+            fallback.setStyleSheet("color:#9AB1C7;")
+            layout.addWidget(fallback)
+            layout.addStretch(1)
+            return
+        self._plot = pg.PlotWidget()
+        self._plot.setBackground("#10161C")
+        self._plot.showGrid(x=True, y=True, alpha=0.2)
+        self._plot.setLabel("left", "RR(n+1) ms")
+        self._plot.setLabel("bottom", "RR(n) ms")
+        layout.addWidget(self._plot, 1)
+
+    def update_from_metrics(self, metrics_list: list):
+        if self._plot is None:
+            return
+        rr = [float(m.get("rr_ms", 0)) for m in metrics_list if m.get("rr_ms", 0) > 0]
+        self._plot.clear()
+        if len(rr) < 3:
+            return
+        x = np.array(rr[:-1], dtype=float)
+        y = np.array(rr[1:], dtype=float)
+        sc = pg.ScatterPlotItem(x=x, y=y, size=4, pen=None, brush=pg.mkBrush(88, 255, 88, 180))
+        self._plot.addItem(sc)
+
+
+class HolterHistogramPanel(QWidget):
+    """RR histogram with mode/filter controls."""
+    def __init__(self):
+        super().__init__()
+        self._plot = None
+        layout = QVBoxLayout(self)
+        row = QHBoxLayout()
+        self._mode = QComboBox()
+        self._mode.addItems(["RR Interval", "RRI Ratio", "Heart Rate"])
+        row.addWidget(QLabel("Mode:"))
+        row.addWidget(self._mode)
+        self._beat_filter = QComboBox()
+        self._beat_filter.addItems(["Common", "SVE", "VE", "Paced", "Other"])
+        row.addWidget(QLabel("Beat Type:"))
+        row.addWidget(self._beat_filter)
+        row.addStretch()
+        layout.addLayout(row)
+        if pg is None:
+            lbl = QLabel("pyqtgraph not available. Histogram cannot be rendered in this environment.")
+            lbl.setStyleSheet("color:#9AB1C7;")
+            layout.addWidget(lbl)
+            return
+        self._plot = pg.PlotWidget()
+        self._plot.setBackground("#10161C")
+        self._plot.showGrid(x=True, y=True, alpha=0.2)
+        layout.addWidget(self._plot, 1)
+
+    def update_from_metrics(self, metrics_list: list):
+        if self._plot is None:
+            return
+        rr = [float(m.get("rr_ms", 0)) for m in metrics_list if m.get("rr_ms", 0) > 0]
+        self._plot.clear()
+        if not rr:
+            return
+        y, edges = np.histogram(np.array(rr), bins=20)
+        centers = (edges[:-1] + edges[1:]) / 2.0
+        widths = np.diff(edges)
+        bars = pg.BarGraphItem(x=centers, height=y, width=widths * 0.95, brush=pg.mkBrush(80, 200, 255, 130), pen=pg.mkPen("#2D9CFF", width=1))
+        self._plot.addItem(bars)
+
+
+class HolterAFAnalysisPanel(QWidget):
+    """Dedicated AF list + burden summary."""
+    def __init__(self):
+        super().__init__()
+        layout = QVBoxLayout(self)
+        top = QHBoxLayout()
+        self._burden = QLabel("AF burden: 0.00%")
+        self._burden.setStyleSheet("color:#8EE68E;font-weight:700;")
+        top.addWidget(self._burden)
+        top.addStretch()
+        for t in ["Parameters", "Next Event", "Remove All"]:
+            b = QPushButton(t)
+            b.setStyleSheet(_btn_style(COL_BLUE, "white", "#53AEFF"))
+            top.addWidget(b)
+        layout.addLayout(top)
+        self._table = QTableWidget(0, 3)
+        self._table.setHorizontalHeaderLabels(["Start time", "Duration", "Type"])
+        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        layout.addWidget(self._table, 1)
+        self._empty = QLabel("There are no items to show.")
+        self._empty.setStyleSheet("color:#9AB1C7;")
+        layout.addWidget(self._empty)
+
+    def update_from_metrics(self, metrics_list: list, duration_sec: float):
+        af_events = []
+        for m in metrics_list:
+            arr = [a for a in m.get("arrhythmias", []) if "af" in str(a).lower()]
+            for a in arr:
+                af_events.append((float(m.get("t", 0.0)), str(a)))
+        self._table.setRowCount(0)
+        for idx, (t, name) in enumerate(af_events):
+            self._table.insertRow(idx)
+            hh = int(t // 3600)
+            mm = int((t % 3600) // 60)
+            ss = int(t % 60)
+            self._table.setItem(idx, 0, QTableWidgetItem(f"{hh:02d}:{mm:02d}:{ss:02d}"))
+            self._table.setItem(idx, 1, QTableWidgetItem("00:30"))
+            self._table.setItem(idx, 2, QTableWidgetItem(name))
+        self._empty.setVisible(len(af_events) == 0)
+        burden = (len(af_events) * 30.0 / max(duration_sec, 1.0)) * 100.0
+        self._burden.setText(f"AF burden: {burden:.2f}%")
+
+
+class HolterReportTablePanel(QWidget):
+    """Hourly report table (beats/HR/VE/SVE/pauses)."""
+    def __init__(self):
+        super().__init__()
+        layout = QVBoxLayout(self)
+        cols = ["Hour", "Beats", "Min HR", "Avg HR", "Max HR",
+                "VE Iso", "VE Cpl", "VE Runs", "VE Total", "VE %",
+                "SVE Iso", "SVE Cpl", "SVE Runs", "SVE Total", "SVE %",
+                "Pauses"]
+        self._table = QTableWidget(0, len(cols))
+        self._table.setHorizontalHeaderLabels(cols)
+        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        layout.addWidget(self._table, 1)
+
+    def update_from_metrics(self, metrics_list: list):
+        hourly = {}
+        for m in metrics_list:
+            h = int(float(m.get("t", 0)) // 3600)
+            hourly.setdefault(h, []).append(m)
+        self._table.setRowCount(0)
+        total_beats = 0
+        for h in sorted(hourly.keys()):
+            chunks = hourly[h]
+            beats = int(sum(c.get("beat_count", 0) for c in chunks))
+            hrs = [float(c.get("hr_mean", 0)) for c in chunks if c.get("hr_mean", 0) > 0]
+            ve_total = sum(1 for c in chunks for a in c.get("arrhythmias", []) if "ve" in str(a).lower() or "v" == str(a).lower())
+            sve_total = sum(1 for c in chunks for a in c.get("arrhythmias", []) if "sve" in str(a).lower() or str(a).lower().startswith("s "))
+            pauses = int(sum(c.get("pauses", 0) for c in chunks))
+            total_beats += beats
+            row = [
+                f"{h:02d}:00", beats,
+                f"{min(hrs):.0f}" if hrs else "-", f"{(sum(hrs)/len(hrs)):.0f}" if hrs else "-", f"{max(hrs):.0f}" if hrs else "-",
+                0, 0, 0, ve_total, f"{(100*ve_total/max(beats,1)):.1f}",
+                0, 0, 0, sve_total, f"{(100*sve_total/max(beats,1)):.1f}",
+                pauses
+            ]
+            r = self._table.rowCount()
+            self._table.insertRow(r)
+            for c, v in enumerate(row):
+                self._table.setItem(r, c, QTableWidgetItem(str(v)))
+        if self._table.rowCount() > 0:
+            r = self._table.rowCount()
+            self._table.insertRow(r)
+            self._table.setItem(r, 0, QTableWidgetItem("Total"))
+            self._table.setItem(r, 1, QTableWidgetItem(str(total_beats)))
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 6. HOLTER EVENTS PANEL  (like reference Image 7)
 # ══════════════════════════════════════════════════════════════════════════════
 
 class HolterEventsPanel(QWidget):
@@ -856,6 +1129,20 @@ class HolterReplayPanel(QWidget):
         # Controls row
         ctrl_row = QHBoxLayout()
 
+        self._play_btn = QPushButton("▶ Play")
+        self._play_btn.setStyleSheet(_btn_style("#1E7D34", "white", "#249542"))
+        self._play_btn.setFixedHeight(28)
+        self._play_btn.clicked.connect(self._toggle_playback)
+        ctrl_row.addWidget(self._play_btn)
+
+        ctrl_row.addWidget(QLabel("Speed:"))
+        self._speed_combo = QComboBox()
+        self._speed_combo.addItems(["0.5x", "1x", "2x", "4x"])
+        self._speed_combo.setCurrentText("1x")
+        self._speed_combo.setStyleSheet("background: #1E2A3A; color: white; border: 1px solid #444; padding: 4px; border-radius: 4px;")
+        self._speed_combo.currentTextChanged.connect(self._on_speed_changed)
+        ctrl_row.addWidget(self._speed_combo)
+
         # Lead selector
         ctrl_row.addWidget(QLabel("Lead:"))
         self._lead_combo = QComboBox()
@@ -893,6 +1180,7 @@ class HolterReplayPanel(QWidget):
         self._replay_engine = engine
         self._slider.setRange(0, int(engine.duration_sec))
         engine.set_position_callback(self._on_position_update)
+        self._on_speed_changed(self._speed_combo.currentText())
 
     def _on_slider(self, value):
         h = value // 3600
@@ -914,6 +1202,25 @@ class HolterReplayPanel(QWidget):
         if self._replay_engine:
             t = self._replay_engine.seek_to_event(ev_type, direction)
             self.seek_requested.emit(t)
+
+    def _toggle_playback(self):
+        if not self._replay_engine:
+            return
+        if self._replay_engine.is_playing():
+            self._replay_engine.pause()
+            self._play_btn.setText("▶ Play")
+        else:
+            self._replay_engine.play()
+            self._play_btn.setText("⏸ Pause")
+
+    def _on_speed_changed(self, text: str):
+        if not self._replay_engine:
+            return
+        try:
+            speed = float(text.replace("x", "").strip())
+        except Exception:
+            speed = 1.0
+        self._replay_engine.set_speed(speed)
 
 
 class HolterWaveGridPanel(QFrame):
@@ -1189,7 +1496,13 @@ class HolterMainWindow(QDialog):
                  duration_hours: int = 24):
         super().__init__(parent)
         self.setWindowTitle("Holter ECG Monitor & Analysis")
-        self.setMinimumSize(1380, 860)
+        self.setMinimumSize(1024, 680)
+        screen = QApplication.primaryScreen()
+        if screen:
+            g = screen.availableGeometry()
+            self.resize(max(1024, int(g.width() * 0.92)), max(680, int(g.height() * 0.9)))
+        else:
+            self.resize(1360, 860)
         self.session_dir = session_dir
         self.patient_info = patient_info or (writer.patient_info if writer else {})
         self._writer = writer
@@ -1241,6 +1554,14 @@ class HolterMainWindow(QDialog):
             self._overview_panel.update_summary(self._summary)
         if hasattr(self, '_hrv_panel'):
             self._hrv_panel.update_hrv(self._metrics_list, self._summary)
+        if hasattr(self, '_lorenz_panel'):
+            self._lorenz_panel.update_from_metrics(self._metrics_list)
+        if hasattr(self, '_hist_panel'):
+            self._hist_panel.update_from_metrics(self._metrics_list)
+        if hasattr(self, '_af_panel'):
+            self._af_panel.update_from_metrics(self._metrics_list, self._summary.get('duration_sec', 0))
+        if hasattr(self, '_report_table_panel'):
+            self._report_table_panel.update_from_metrics(self._metrics_list)
         if hasattr(self, '_events_panel'):
             events = []
             if self._replay_engine:
@@ -1430,11 +1751,17 @@ class HolterMainWindow(QDialog):
 
         workspace.addWidget(left)
         workspace.addWidget(right)
-        workspace.setSizes([930, 390])
+        workspace.setStretchFactor(0, 3)
+        workspace.setStretchFactor(1, 2)
         body_layout.addWidget(workspace, 3)
 
         # ── Tab widget ──
         self._tabs = QTabWidget()
+        self._tabs.setDocumentMode(True)
+        self._tabs.setUsesScrollButtons(True)
+        self._tabs.setElideMode(Qt.ElideRight)
+        self._tabs.tabBar().setMovable(True)
+        self._tabs.tabBar().setExpanding(False)
         self._tabs.setStyleSheet(f"""
             QTabWidget::pane {{
                 border: none;
@@ -1456,6 +1783,13 @@ class HolterMainWindow(QDialog):
             QTabBar::tab:hover {{ color: white; }}
         """)
 
+        # Record Management tab
+        record_dir = self.session_dir if self.session_dir else os.path.join(os.getcwd(), "recordings")
+        if os.path.isfile(record_dir):
+            record_dir = os.path.dirname(record_dir)
+        self._record_mgmt_panel = HolterRecordManagementPanel(output_dir=record_dir)
+        self._tabs.addTab(self._record_mgmt_panel, "📋  Record Management")
+
         # HRV tab
         self._hrv_panel = HolterHRVPanel()
         self._hrv_panel.update_hrv(self._metrics_list, self._summary)
@@ -1469,8 +1803,70 @@ class HolterMainWindow(QDialog):
             self._replay_panel.seek_requested.connect(self._on_seek_requested)
         self._tabs.addTab(self._replay_panel, "▶  Replay")
 
+        self._template_panel = HolterPlaceholderPanel(
+            "Template View",
+            ["Tabs: All / N / S / V / P / AF-Af / X / Other",
+             "Unknown beat marker (?) and ranking modes",
+             "Overlay waveform viewer per template group",
+             "Grid of template thumbnails by class"])
+        self._tabs.addTab(self._template_panel, "🔲  Template")
+
+        self._hist_panel = HolterHistogramPanel()
+        self._tabs.addTab(self._hist_panel, "📊  Histogram")
+
+        self._lorenz_panel = HolterLorenzPanel()
+        self._tabs.addTab(self._lorenz_panel, "〰️  Lorenz")
+
+        self._af_panel = HolterAFAnalysisPanel()
+        self._tabs.addTab(self._af_panel, "🔬  AF Analysis")
+
+        self._tabs.addTab(HolterPlaceholderPanel(
+            "ST Tendency",
+            ["CH1/CH2/CH3 ST trend over full recording",
+             "ST elevation/depression in mV",
+             "ReScan / Next Event / Remove All / Reset",
+             "Conclusion box + Save/Quote template"]), "📉  ST Tendency")
+
+        self._tabs.addTab(HolterPlaceholderPanel(
+            "Edit Event",
+            ["Event list with tachy/brady/long RR summaries",
+             "3-channel ECG strip preview",
+             "HR max/min and sinus max/min stats",
+             "Manual event add/remove controls"]), "✏️  Edit Event")
+
+        self._tabs.addTab(HolterPlaceholderPanel(
+            "Edit Strips",
+            ["Auto strips: max HR, min HR, sinus max/min",
+             "Thumbnail previews for CH1/CH2/CH3",
+             "Forward / backward strip navigation",
+             "Adjust strip position and print length"]), "🎞️  Edit Strips")
+
+        self._tabs.addTab(HolterPlaceholderPanel(
+            "Edit Report - Tendency",
+            ["ST/T wave/rhythm trend tabs",
+             "HR trend over full duration",
+             "Left rail: Statistic / Table / Tendency / Summation",
+             "Save and print-ready workflow"]), "📋  Report Tendency")
+
+        self._report_table_panel = HolterReportTablePanel()
+        self._tabs.addTab(self._report_table_panel, "📑  Report Table")
+
+        self._tabs.addTab(HolterPlaceholderPanel(
+            "General Tools",
+            ["Measuring ruler / parallel ruler / magnifier",
+             "Gain settings and paper speed controls",
+             "Add event, adjust strip position, full disclosure",
+             "Preview, print, reanalysis, patient information"]), "🛠️  Tools")
+
         body_layout.addWidget(self._tabs, 1)
-        main_layout.addWidget(body, 1)
+
+        body_scroll = QScrollArea()
+        body_scroll.setWidgetResizable(True)
+        body_scroll.setFrameShape(QFrame.NoFrame)
+        body_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        body_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        body_scroll.setWidget(body)
+        main_layout.addWidget(body_scroll, 1)
         self._refresh_ui()
 
     def _on_seek_requested(self, target_sec: float):
