@@ -941,57 +941,33 @@ class ECGTestPage(QWidget):
 
         # Style menu buttons AFTER they're created - Compact styling
         for i, btn in enumerate(created_buttons):
-            text = ecg_menu_buttons[i][0]
             color = ecg_menu_buttons[i][2]
-            
-            # Special style for Holter button to make it very visible
-            if text == "Holter":
-                btn.setStyleSheet(f"""
-                    QPushButton {{
-                        background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
-                            stop:0 {color}, stop:1 #ff8c00);
-                        color: white;
-                        border: 2px solid {color};
-                        border-radius: 8px;
-                        padding: 8px 12px;
-                        font-size: 13px;
-                        font-weight: 900;
-                        text-align: center;
-                        margin: 4px 0;
-                    }}
-                    QPushButton:hover {{
-                        background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
-                            stop:0 #ff8c00, stop:1 {color});
-                        border: 2px solid #ffcc99;
-                    }}
-                """)
-            else:
-                btn.setStyleSheet(f"""
-                    QPushButton {{
-                        background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
-                            stop:0 #ffffff, stop:1 #f8f9fa);
-                        color: #1a1a1a;
-                        border: 2px solid #e9ecef;  /* Reduced from 3px */
-                        border-radius: 8px;  /* Reduced from 15px */
-                        padding: 8px 12px;  /* Reduced from 15px 20px */
-                        font-size: 12px;  /* Reduced from 16px */
-                        font-weight: bold;
-                        text-align: left;
-                        margin: 2px 0;  /* Reduced from 4px */
-                    }}
-                    QPushButton:hover {{
-                        background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
-                            stop:0 #fff5f0, stop:1 #ffe0cc);
-                        border: 2px solid {color};  /* Reduced from 4px */
-                        color: {color};
-                    }}
-                    QPushButton:pressed {{
-                        background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
-                            stop:0 #ffe0cc, stop:1 #ffcc99);
-                        border: 2px solid {color};  /* Reduced from 4px */
-                        color: {color};
-                    }}
-                """)
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
+                        stop:0 #ffffff, stop:1 #f8f9fa);
+                    color: #1a1a1a;
+                    border: 2px solid #e9ecef;  /* Reduced from 3px */
+                    border-radius: 8px;  /* Reduced from 15px */
+                    padding: 8px 12px;  /* Reduced from 15px 20px */
+                    font-size: 12px;  /* Reduced from 16px */
+                    font-weight: bold;
+                    text-align: left;
+                    margin: 2px 0;  /* Reduced from 4px */
+                }}
+                QPushButton:hover {{
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
+                        stop:0 #fff5f0, stop:1 #ffe0cc);
+                    border: 2px solid {color};  /* Reduced from 4px */
+                    color: {color};
+                }}
+                QPushButton:pressed {{
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
+                        stop:0 #ffe0cc, stop:1 #ffcc99);
+                    border: 2px solid {color};  /* Reduced from 4px */
+                    color: {color};
+                }}
+            """)
 
         created_buttons[0].clicked.disconnect()
         created_buttons[0].clicked.connect(self.ecg_menu.show_save_ecg)
@@ -8071,15 +8047,15 @@ class ECGTestPage(QWidget):
             holter_btn.setStyleSheet("""
                 QPushButton {
                     background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                        stop:0 #2ecc71, stop:1 #27ae60);
-                    color: white;
-                    border: 2px solid #27ae60;
+                        stop:0 #ffffff, stop:1 #f8f9fa);
+                    color: #1b5e20;
+                    border: 2px solid #2e7d32;
                     border-radius: 8px;
                     padding: 8px 12px;
-                    font-size: 13px;
-                    font-weight: 900;
-                    text-align: center;
-                    margin: 4px 0;
+                    font-size: 12px;
+                    font-weight: bold;
+                    text-align: left;
+                    margin: 2px 0;
                 }
             """)
         else:
@@ -8087,15 +8063,15 @@ class ECGTestPage(QWidget):
             holter_btn.setStyleSheet("""
                 QPushButton {
                     background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                        stop:0 #E65100, stop:1 #ff8c00);
-                    color: white;
-                    border: 2px solid #E65100;
+                        stop:0 #ffffff, stop:1 #f8f9fa);
+                    color: #1a1a1a;
+                    border: 2px solid #e9ecef;
                     border-radius: 8px;
                     padding: 8px 12px;
-                    font-size: 13px;
-                    font-weight: 900;
-                    text-align: center;
-                    margin: 4px 0;
+                    font-size: 12px;
+                    font-weight: bold;
+                    text-align: left;
+                    margin: 2px 0;
                 }
             """)
 
@@ -8106,6 +8082,13 @@ class ECGTestPage(QWidget):
         """Open professional Holter setup and workspace."""
         if not HOLTER_AVAILABLE:
             QMessageBox.warning(self, "Holter Monitor", "Holter module is not available.")
+            return
+
+        # If Holter is already armed, reopen the same workspace immediately.
+        if self.holter_mode_enabled and self._holter_ui is not None:
+            self._holter_ui.showMaximized()
+            self._holter_ui.raise_()
+            self._holter_ui.activateWindow()
             return
 
         default_info = {}

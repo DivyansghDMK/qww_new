@@ -45,18 +45,18 @@ except Exception:
     pg = None
 
 # ── Colour palette ─────────────────────────────────────────────────────────────
-COL_ORANGE  = "#E65100"
-COL_DARK    = "#1A1A2E"
-COL_BLUE    = "#1565C0"
+COL_ORANGE  = "#34C759"
+COL_DARK    = "#3A3E42"
+COL_BLUE    = "#2D9CFF"
 COL_GREEN   = "#2E7D32"
 COL_RED     = "#B71C1C"
 COL_LIGHT   = "#FFF8F0"
 COL_GRAY    = "#F5F5F5"
-COL_BG      = "#0D1117"    # dark ECG-style background
+COL_BG      = "#202326"    # dark ECG-style background
 COL_GREEN_ECG = "#00FF00"  # ECG trace green
 
 
-def _btn_style(bg="#E65100", fg="white", hover="#FF6D00"):
+def _btn_style(bg=COL_ORANGE, fg="white", hover="#22C55E"):
     return f"""
         QPushButton {{
             background: {bg};
@@ -112,7 +112,7 @@ class HolterStartDialog(QDialog):
         title = QLabel("🫀  Holter Monitor — Professional Setup")
         title.setStyleSheet(f"""
             background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                stop:0 {COL_ORANGE}, stop:1 {COL_BLUE});
+                stop:0 #064E3B, stop:1 #0E7490);
             color: white;
             font-size: 18px;
             font-weight: bold;
@@ -240,6 +240,12 @@ class HolterStartDialog(QDialog):
         dir_row.addWidget(browse_btn)
         rg_layout.addLayout(dir_row, 2, 1)
 
+        self._recording_count_label = QLabel("")
+        self._recording_count_label.setStyleSheet("font-size: 12px; color: #86EFAC; font-weight: 600;")
+        rg_layout.addWidget(QLabel("Recorded Sessions:"), 3, 0)
+        rg_layout.addWidget(self._recording_count_label, 3, 1)
+        self._refresh_recording_count()
+
         layout.addWidget(rg)
 
         # ── Buttons ──
@@ -263,6 +269,22 @@ class HolterStartDialog(QDialog):
         if d:
             self._result_dir = d
             self._dir_label.setText(d)
+            self._refresh_recording_count()
+
+    def _refresh_recording_count(self):
+        root = self._result_dir or self.output_dir
+        count = 0
+        try:
+            if os.path.isdir(root):
+                for name in os.listdir(root):
+                    session_dir = os.path.join(root, name)
+                    if not os.path.isdir(session_dir):
+                        continue
+                    if os.path.exists(os.path.join(session_dir, "recording.ecgh")):
+                        count += 1
+        except Exception:
+            count = 0
+        self._recording_count_label.setText(f"{count} completed recording(s)")
 
     def _on_start(self):
         # Build patient info
@@ -672,7 +694,87 @@ class HolterHRVPanel(QWidget):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 5. HOLTER EVENTS PANEL  (like reference Image 7)
+# 5b. PROFESSIONAL WORKSTATION TABS
+# ══════════════════════════════════════════════════════════════════════════════
+
+class HolterRecordManagementPanel(QWidget):
+    """Record browser with filters + import/export actions."""
+    def __init__(self, output_dir: str = "recordings"):
+        super().__init__()
+        self.output_dir = output_dir
+        self._build_ui()
+        self.refresh_records()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        actions = QHBoxLayout()
+        self._search = QLineEdit()
+        self._search.setPlaceholderText("Search patient / reporter / status")
+        self._search.textChanged.connect(self.refresh_records)
+        self._filter = QComboBox()
+        self._filter.addItems(["All", "Today", "Yesterday", "This Week", "This Month", "This Year"])
+        self._filter.currentTextChanged.connect(self.refresh_records)
+        actions.addWidget(QLabel("Search:"))
+        actions.addWidget(self._search, 2)
+        actions.addWidget(QLabel("Filter:"))
+        actions.addWidget(self._filter)
+        for txt in ["Browse", "Import", "Export", "Backup", "Delete"]:
+            btn = QPushButton(txt)
+            btn.setStyleSheet(_btn_style(COL_BLUE, "white", "#53AEFF"))
+            actions.addWidget(btn)
+        layout.addLayout(actions)
+
+        cols = ["Name", "Age", "Gender", "Record Time", "Duration", "Channel",
+                "Import Time", "Record Status", "Reporter", "Conclusion"]
+        self._table = QTableWidget(0, len(cols))
+        self._table.setHorizontalHeaderLabels(cols)
+        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self._table.setStyleSheet("QTableWidget{background:#131619;color:#DDE3EA;gridline-color:#2f353b;}")
+        layout.addWidget(self._table, 1)
+
+    def refresh_records(self):
+        self._table.setRowCount(0)
+        if not os.path.isdir(self.output_dir):
+            return
+        query = self._search.text().strip().lower()
+        for name in sorted(os.listdir(self.output_dir), reverse=True):
+            session_dir = os.path.join(self.output_dir, name)
+            if not os.path.isdir(session_dir):
+                continue
+            if not os.path.exists(os.path.join(session_dir, "recording.ecgh")):
+                continue
+            p_name = name.split("_", 2)[-1].replace("_", " ")
+            row_values = [p_name, "-", "-", name[:19], "-", "3", name[:19], "Completed", "System", "-"]
+            if query and not any(query in str(v).lower() for v in row_values):
+                continue
+            r = self._table.rowCount()
+            self._table.insertRow(r)
+            for c, v in enumerate(row_values):
+                self._table.setItem(r, c, QTableWidgetItem(str(v)))
+
+
+class HolterPlaceholderPanel(QWidget):
+    """Generic structured panel for advanced modules not fully implemented yet."""
+    def __init__(self, title: str, bullet_points: List[str]):
+        super().__init__()
+        layout = QVBoxLayout(self)
+        title_lbl = QLabel(title)
+        title_lbl.setStyleSheet(f"font-size:16px;font-weight:700;color:{COL_BLUE};")
+        layout.addWidget(title_lbl)
+        grid = QGridLayout()
+        for i, text in enumerate(bullet_points):
+            chip = QLabel(f"• {text}")
+            chip.setStyleSheet("color:#BFD4E8;padding:8px;border:1px solid #2f3b48;border-radius:8px;background:#111820;")
+            grid.addWidget(chip, i // 2, i % 2)
+        layout.addLayout(grid)
+        note = QLabel("This professional module scaffold is ready for live data wiring.")
+        note.setStyleSheet("color:#7f9ab4;font-style:italic;padding-top:6px;")
+        layout.addWidget(note)
+        layout.addStretch(1)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 6. HOLTER EVENTS PANEL  (like reference Image 7)
 # ══════════════════════════════════════════════════════════════════════════════
 
 class HolterEventsPanel(QWidget):
@@ -1456,6 +1558,13 @@ class HolterMainWindow(QDialog):
             QTabBar::tab:hover {{ color: white; }}
         """)
 
+        # Record Management tab
+        record_dir = self.session_dir if self.session_dir else os.path.join(os.getcwd(), "recordings")
+        if os.path.isfile(record_dir):
+            record_dir = os.path.dirname(record_dir)
+        self._record_mgmt_panel = HolterRecordManagementPanel(output_dir=record_dir)
+        self._tabs.addTab(self._record_mgmt_panel, "📋  Record Management")
+
         # HRV tab
         self._hrv_panel = HolterHRVPanel()
         self._hrv_panel.update_hrv(self._metrics_list, self._summary)
@@ -1468,6 +1577,76 @@ class HolterMainWindow(QDialog):
             self._replay_panel.set_replay_engine(self._replay_engine)
             self._replay_panel.seek_requested.connect(self._on_seek_requested)
         self._tabs.addTab(self._replay_panel, "▶  Replay")
+
+        self._tabs.addTab(HolterPlaceholderPanel(
+            "Template View",
+            ["Tabs: All / N / S / V / P / AF-Af / X / Other",
+             "Unknown beat marker (?) and ranking modes",
+             "Overlay waveform viewer per template group",
+             "Grid of template thumbnails by class"]), "🔲  Template")
+
+        self._tabs.addTab(HolterPlaceholderPanel(
+            "Histogram",
+            ["Modes: RR Interval / RRI Ratio / Heart Rate",
+             "Beat type filters: Common, SVE, VE, Paced, Other",
+             "Dual mark, log scale, and range selection bins",
+             "Search beats and grid view per selected bin"]), "📊  Histogram")
+
+        self._tabs.addTab(HolterPlaceholderPanel(
+            "Lorenz / Poincaré",
+            ["Full RR scatter plot with cluster coloring",
+             "Normal cluster highlighting and ellipse",
+             "Template waveform overlay heatmap",
+             "Template group thumbnails with beat count"]), "〰️  Lorenz")
+
+        self._tabs.addTab(HolterPlaceholderPanel(
+            "AF Analysis",
+            ["AF episode timeline and event list",
+             "Parameters, Next Event, Remove All controls",
+             "No-episode state: 'There are no items to show'",
+             "Beat strip grid sorted by RRI/Time/Prematurity/Similarity"]), "🔬  AF Analysis")
+
+        self._tabs.addTab(HolterPlaceholderPanel(
+            "ST Tendency",
+            ["CH1/CH2/CH3 ST trend over full recording",
+             "ST elevation/depression in mV",
+             "ReScan / Next Event / Remove All / Reset",
+             "Conclusion box + Save/Quote template"]), "📉  ST Tendency")
+
+        self._tabs.addTab(HolterPlaceholderPanel(
+            "Edit Event",
+            ["Event list with tachy/brady/long RR summaries",
+             "3-channel ECG strip preview",
+             "HR max/min and sinus max/min stats",
+             "Manual event add/remove controls"]), "✏️  Edit Event")
+
+        self._tabs.addTab(HolterPlaceholderPanel(
+            "Edit Strips",
+            ["Auto strips: max HR, min HR, sinus max/min",
+             "Thumbnail previews for CH1/CH2/CH3",
+             "Forward / backward strip navigation",
+             "Adjust strip position and print length"]), "🎞️  Edit Strips")
+
+        self._tabs.addTab(HolterPlaceholderPanel(
+            "Edit Report - Tendency",
+            ["ST/T wave/rhythm trend tabs",
+             "HR trend over full duration",
+             "Left rail: Statistic / Table / Tendency / Summation",
+             "Save and print-ready workflow"]), "📋  Report Tendency")
+
+        self._tabs.addTab(HolterPlaceholderPanel(
+            "Edit Report - Table",
+            ["Hour-by-hour beats and HR min/avg/max",
+             "VE/SVE isolated/couplets/runs/total/%",
+             "Pauses per hour and total row",
+             "Export-ready clinical summary"]), "📑  Report Table")
+
+        self._tabs.addTab(HolterPlaceholderPanel(
+            "General Tools",
+            ["Measuring ruler / parallel ruler / magnifier",
+             "Gain settings and paper speed controls",
+             "Add event, adjust strip position, full disclosure",
+             "Preview, print, reanalysis, patient information"]), "🛠️  Tools")
 
         body_layout.addWidget(self._tabs, 1)
         main_layout.addWidget(body, 1)
