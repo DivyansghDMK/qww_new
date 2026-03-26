@@ -3110,16 +3110,16 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
         if os.path.exists(logo_path):
             canvas.saveState()
             if canvas.getPageNumber() in [1, 2]:  # Landscape pages
-                logo_w, logo_h = 100, 30
+                logo_w, logo_h = 120, 40
                 page_width, page_height = canvas._pagesize
                 # Align with 12:1 format positioning
                 x = page_width - logo_w - 35
-                y = page_height - logo_h - 10
+                y = page_height - logo_h
             else:
-                logo_w, logo_h = 100, 30
+                logo_w, logo_h = 120, 40
                 page_width, page_height = canvas._pagesize
                 x = page_width - logo_w - 35
-                y = page_height - logo_h - 10
+                y = page_height - logo_h
             try:
                 canvas.drawImage(logo_path, x, y, width=logo_w, height=logo_h, preserveAspectRatio=True, mask='auto')
             except Exception:
@@ -3227,7 +3227,7 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     # A4 landscape: 842 x 595, minus reduced margins (20 each side) = 802 x 555
     # This allows taller drawing to fit patient info at Y=528
     total_width = 780  # Fits in landscape frame (802 - margin)
-    total_height = 540  # Increased to fit patient info at Y=528 comfortably (555 - margin)
+    total_height = 555  # Match landscape frame height so top labels (y≈545) are not clipped
     master_drawing = Drawing(total_width, total_height)
     
     # Define positions for 5 one-minute segments (LANDSCAPE MODE - POSITIONED FOR 540 HEIGHT)
