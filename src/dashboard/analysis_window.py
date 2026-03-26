@@ -1011,13 +1011,27 @@ class ECGAnalysisWindow(QDialog):
                 ax.text(x3, col3_row, f"RV5+SV1: {str(rv5plus).replace(' mV','')}",
                         fontsize=7, va='top')
 
-            # Brand (right)
-            ax.text(PAGE_W - MR, yb,       "DECK⚡MOUNT",
-                    fontsize=10, fontweight='bold', color='#0000cc', ha='right', va='top')
-            ax.text(PAGE_W - MR, yb+lh*2,  "25.0mm/s  0.5-25Hz  AC:50Hz  10.0mm/mV",
-                    fontsize=5.5, ha='right', va='top', color='#555')
-            ax.text(PAGE_W - MR, yb+lh*3,  f"Date & Time: {pat.get('report_date','')}",
-                    fontsize=5.5, ha='right', va='top', color='#555')
+            # Brand (right) — matches 12:1 ECG report style
+            # Draw a subtle background box behind the logo
+            from matplotlib.patches import FancyBboxPatch as _FBP
+            logo_bx = PAGE_W - MR - 42
+            logo_by = yb - 1.0
+            logo_bw = 42
+            logo_bh = lh * 1.6
+            logo_box = _FBP((logo_bx, logo_by), logo_bw, logo_bh,
+                            boxstyle="square,pad=0",
+                            linewidth=0, facecolor='#FFC107', zorder=10,
+                            transform=ax.transData, clip_on=False)
+            ax.add_patch(logo_box)
+            # "DECK" in black, "\u26a1" in black on yellow box, "MOUNT" in black
+            ax.text(PAGE_W - MR, yb, "DECK\u26a1MOUNT",
+                    fontsize=9, fontweight='bold', color='#111111',
+                    ha='right', va='top', zorder=11,
+                    family='monospace')
+            ax.text(PAGE_W - MR, yb+lh*1.7,  "25.0 mm/s  0.5\u201325Hz  AC:50Hz  10.0 mm/mV",
+                    fontsize=5.5, ha='right', va='top', color='#555', zorder=10)
+            ax.text(PAGE_W - MR, yb+lh*2.5,  f"Date: {pat.get('report_date','')}",
+                    fontsize=5.5, ha='right', va='top', color='#555', zorder=10)
 
             # ── 12 Lead strips ───────────────────────────────────────────────
             ws = self._window_samples()
@@ -1053,36 +1067,46 @@ class ECGAnalysisWindow(QDialog):
                     wy_mm    = mid_y - seg_mm[:len(wx_mm)]     # upward deflection = smaller y
                     ax.plot(wx_mm, wy_mm, color='black', linewidth=0.5, zorder=5)
 
-            # ── Footer ───────────────────────────────────────────────────────
+            # ── Footer signature block ────────────────────────────────────────
             ft = PAGE_H - MB - FOOTER_H
-            ax.text(ML, ft + 14, "Doctor Name: ________________________",
+            ax.text(ML, ft + 9,  "Reference Report Confirmed by:",
+                    fontsize=6, va='top', color='#333', fontstyle='italic')
+            ax.text(ML, ft + 14, "Doctor Name ________________________",
                     fontsize=7, va='top', color='black')
-            ax.text(ML, ft + 19, "Doctor Sign:  ________________________",
+            ax.text(ML, ft + 19, "Doctor Sign  ________________________",
                     fontsize=7, va='top', color='black')
 
-            # Conclusion box
+            # Conclusion box — transparent fill, arrows in title (matches 12:1 style)
             bx, by = 95.0, ft + 2.0
-            bw, bh = PAGE_W - bx - MR, 18.0
+            bw, bh = PAGE_W - bx - MR, 20.0
             from matplotlib.patches import Rectangle as MRect2
             rect = MRect2((bx, by), bw, bh,
-                          linewidth=0.8, edgecolor='black', facecolor='white', zorder=8)
+                          linewidth=0.8, edgecolor='#333333',
+                          facecolor='none', zorder=8)   # transparent fill
             ax.add_patch(rect)
-            ax.text(bx + bw/2, by + 1.0, "CONCLUSION",
-                    fontsize=6.5, fontweight='bold', ha='center', va='top', zorder=9)
+            # Arrow-labelled title matching 12:1 format
+            ax.text(bx + bw/2, by + 1.0, "\u2192 CONCLUSION \u2190",
+                    fontsize=6.5, fontweight='bold', ha='center', va='top',
+                    color='black', zorder=9)
+            # Thin separator line under title
+            ax.plot([bx + 1, bx + bw - 1], [by + 5.5, by + 5.5],
+                    color='#aaa', linewidth=0.5, zorder=9)
 
             cols = 3;  col_w = (bw - 4.0) / cols;  rh2 = 3.5
             for idx2, line in enumerate(conclusions[:9]):
                 row2 = idx2 // cols;  col2 = idx2 % cols
                 tx = bx + 2.0 + col2 * col_w
-                ty = by + 6.0 + row2 * rh2
+                ty = by + 7.0 + row2 * rh2
                 if ty + rh2 > by + bh:
                     break
                 ax.text(tx, ty, f"{idx2+1}. {line}", fontsize=5.5, va='top', zorder=9)
 
-            # Footer brand
-            brand = "Deckmount Electronics Pvt Ltd | RhythmPro ECG | IEC 60601 | Made in India"
+            # Footer brand — full address matching 12:1 style
+            brand = ("Deckmount Electronics Pvt. Ltd., Plot No. 389, Phase 5, "
+                     "Udyog Vihar, Sector 19, Gurgaon, Haryana 122016  |  "
+                     "RhythmPro ECG  |  IEC 60601  |  MADE IN INDIA")
             ax.text(PAGE_W/2, PAGE_H - MB + 1, brand,
-                    fontsize=6, ha='center', va='top', color='#333', zorder=9)
+                    fontsize=5.5, ha='center', va='top', color='#444', zorder=9)
 
             with PdfPages(path) as pdf:
                 pdf.savefig(fig, bbox_inches='tight')
@@ -1242,4 +1266,3 @@ class ECGAnalysisWindow(QDialog):
                 fontsize=6, ha='center', va='top', color='#333', zorder=9)
         
         return fig
-
