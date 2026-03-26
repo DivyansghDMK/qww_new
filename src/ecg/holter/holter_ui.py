@@ -674,7 +674,7 @@ class HolterReplayPanel(QWidget):
             strip = ECGStripCanvas(height=60, color="#00FF00", pen_width=0.7)
             strip.set_gain(1.0)
             self._ch_strips.append(strip)
-            right_layout.addWidget(strip)
+            ecg_right_layout.addWidget(strip)
 
         # Mini overview strip at bottom
         self._mini_strip = ECGStripCanvas(height=40, color="#00AA00")
