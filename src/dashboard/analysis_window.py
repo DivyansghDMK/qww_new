@@ -11,6 +11,7 @@ import os
 import json
 import numpy as np
 from datetime import datetime
+from pathlib import Path
 
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QFont
@@ -93,6 +94,9 @@ class ECGAnalysisWindow(QDialog):
         self.reports = []
         self.current_report = None
         self.current_report_path = ""
+
+        project_root = Path(__file__).resolve().parents[2]
+        self.analysis_pdf_logo_path = project_root / "assets" / "electronics_logo.png"
 
         self.lead_data = {lead: np.array([]) for lead in self.LEADS}
         self.sampling_rate = 500.0
@@ -1011,26 +1015,35 @@ class ECGAnalysisWindow(QDialog):
                 ax.text(x3, col3_row, f"RV5+SV1: {str(rv5plus).replace(' mV','')}",
                         fontsize=7, va='top')
 
-            # Brand (right) — matches 12:1 ECG report style
-            # Draw a subtle background box behind the logo
-            from matplotlib.patches import FancyBboxPatch as _FBP
-            logo_bx = PAGE_W - MR - 42
-            logo_by = yb - 1.0
-            logo_bw = 42
-            logo_bh = lh * 1.6
-            logo_box = _FBP((logo_bx, logo_by), logo_bw, logo_bh,
-                            boxstyle="square,pad=0",
-                            linewidth=0, facecolor='#FFC107', zorder=10,
-                            transform=ax.transData, clip_on=False)
-            ax.add_patch(logo_box)
-            # "DECK" in black, "\u26a1" in black on yellow box, "MOUNT" in black
-            ax.text(PAGE_W - MR, yb, "DECK\u26a1MOUNT",
-                    fontsize=9, fontweight='bold', color='#111111',
-                    ha='right', va='top', zorder=11,
-                    family='monospace')
-            ax.text(PAGE_W - MR, yb+lh*1.7,  "25.0 mm/s  0.5\u201325Hz  AC:50Hz  10.0 mm/mV",
+            # Brand (right): prefers provided Electronics logo image
+            logo_left = PAGE_W - MR - 55.0
+            logo_top = yb - 1.0
+            logo_bottom = yb + lh * 2.2
+
+            logo_drawn = False
+            try:
+                if self.analysis_pdf_logo_path.exists():
+                    import matplotlib.image as mpimg
+                    logo_img = mpimg.imread(str(self.analysis_pdf_logo_path))
+                    ax.imshow(
+                        logo_img,
+                        extent=[logo_left, PAGE_W - MR, logo_bottom, logo_top],
+                        aspect='auto',
+                        zorder=10,
+                    )
+                    logo_drawn = True
+            except Exception:
+                logo_drawn = False
+
+            if not logo_drawn:
+                ax.text(PAGE_W - MR, yb, "ELECTRONICS",
+                        fontsize=8, fontweight='bold', color='#111111',
+                        ha='right', va='top', zorder=11,
+                        family='monospace')
+
+            ax.text(PAGE_W - MR, yb+lh*2.4, "25.0 mm/s  0.5–25Hz  AC:50Hz  10.0 mm/mV",
                     fontsize=5.5, ha='right', va='top', color='#555', zorder=10)
-            ax.text(PAGE_W - MR, yb+lh*2.5,  f"Date: {pat.get('report_date','')}",
+            ax.text(PAGE_W - MR, yb+lh*3.2, f"Date: {pat.get('report_date','')}",
                     fontsize=5.5, ha='right', va='top', color='#555', zorder=10)
 
             # ── 12 Lead strips ───────────────────────────────────────────────
@@ -1052,20 +1065,21 @@ class ECGAnalysisWindow(QDialog):
                 ax.text(ML + 11, lbl_y, lead,
                         fontsize=6.5, fontweight='bold', color='black', va='top', zorder=7)
 
-                # Waveform — full ECG trace, centred per-lead
+                # Waveform — strict 12:1 strip window from current frame
                 data_arr = self.lead_data.get(lead, np.array([]))
                 total_samples = len(data_arr)
                 if total_samples > 0:
-                    seg      = data_arr.astype(float)
-                    # Use per-lead median as baseline (removes DC offset / baseline wander)
-                    baseline = float(np.median(seg))
-                    seg_mm   = (seg - baseline) / ADC_PER_MM   # ADC → mm
-                    wx0      = ML + 13.0
-                    wx_mm    = wx0 + np.arange(total_samples) * MM_PER_SAMPLE
-                    mask     = wx_mm <= (PAGE_W - MR)
-                    wx_mm    = wx_mm[mask]
-                    wy_mm    = mid_y - seg_mm[:len(wx_mm)]     # upward deflection = smaller y
-                    ax.plot(wx_mm, wy_mm, color='black', linewidth=0.5, zorder=5)
+                    segment = data_arr[st:en].astype(float)
+                    if segment.size > 1:
+                        baseline = float(np.median(segment))
+                        seg_mm = (segment - baseline) / ADC_PER_MM   # ADC → mm
+                        seg_mm = np.clip(seg_mm, -HALF_CELL, HALF_CELL)
+
+                        wx0 = ML + 13.0
+                        wx1 = PAGE_W - MR
+                        wx_mm = np.linspace(wx0, wx1, segment.size)
+                        wy_mm = mid_y - seg_mm  # upward deflection = smaller y
+                        ax.plot(wx_mm, wy_mm, color='black', linewidth=0.5, zorder=5)
 
             # ── Footer signature block ────────────────────────────────────────
             ft = PAGE_H - MB - FOOTER_H
@@ -1109,7 +1123,7 @@ class ECGAnalysisWindow(QDialog):
                     fontsize=5.5, ha='center', va='top', color='#444', zorder=9)
 
             with PdfPages(path) as pdf:
-                pdf.savefig(fig, bbox_inches='tight')
+                pdf.savefig(fig, bbox_inches=None)
                 
                 # ADDED: Second page for automatic/manual annotations
                 if self.manual_annotations:
