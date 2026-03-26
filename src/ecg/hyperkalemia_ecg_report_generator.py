@@ -3432,7 +3432,7 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     # Landscape A4 frame dimensions (landscape_width - 40, landscape_height - 40)
     # A4 landscape: 842 x 595, minus reduced margins (20 each side) = 802 x 555
     total_width = 780  # Fits in landscape frame (802 - margin)
-    total_height = 540  # Height for patient info and graphs
+    total_height = 540  # Keep within landscape frame height to avoid ReportLab LayoutError
     master_drawing = Drawing(total_width, total_height)
     
     # Load saved ECG data to get V1-V6 leads (and Lead II to match main ECG report)
@@ -3790,15 +3790,15 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     # ==================== ADD PATIENT INFO TO PAGE 2 (LANDSCAPE MODE - POSITIONED PROPERLY) ====================
     
     # LEFT SIDE: Patient Info (SHIFTED LEFT + UP)
-    patient_name_label = String(-15, 545, f"Name: {full_name}",  # Shifted UP: 535 → 545
+    patient_name_label = String(-15, 530, f"Name: {full_name}",  # Shifted UP: 535 → 545
                                 fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(patient_name_label)
     
-    patient_age_label = String(-15, 525, f"Age: {age}",  # Shifted UP: 515 → 525
+    patient_age_label = String(-15, 510, f"Age: {age}",  # Shifted UP: 515 → 525
                                fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(patient_age_label)
     
-    patient_gender_label = String(-15, 505, f"Gender: {gender}",  # Shifted UP: 495 → 505
+    patient_gender_label = String(-15, 490, f"Gender: {gender}",  # Shifted UP: 495 → 505
                                   fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(patient_gender_label)
     
@@ -3810,20 +3810,20 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     else:
         date_part, time_part = "____", "____"
     
-    date_label = String(670, 515, f"Date: {date_part}",  # Shifted RIGHT by 30: 640→670
+    date_label = String(670, 500, f"Date: {date_part}",  # Shifted RIGHT by 30: 640→670
                        fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(date_label)
     
-    time_label = String(670,  500, f"Time: {time_part}",  # Shifted RIGHT by 30: 640→670
+    time_label = String(670, 485, f"Time: {time_part}",  # Shifted RIGHT by 30: 640→670
                        fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(time_label)
 
     # Org. and Phone No. labels below Date/Time (15 points below Time)
-    org_label = String(670, 485, f"Org: {patient_org}",  # Shifted RIGHT by 30: 640→670
+    org_label = String(670, 470, f"Org: {patient_org}",  # Shifted RIGHT by 30: 640→670
                     fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
     master_drawing.add(org_label)
     
-    phone_label = String(670, 470, f"Phone No: {patient_doctor_mobile}",  # Shifted RIGHT by 30: 640→670
+    phone_label = String(670, 455, f"Phone No: {patient_doctor_mobile}",  # Shifted RIGHT by 30: 640→670
                       fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
     master_drawing.add(phone_label)
     
@@ -3857,45 +3857,45 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
         print(" Page 2 (ECG waves): No metrics available in hyper_metric.json, using zeros")
     
     # LEFT COLUMN (130, y) - HR, PR, QRS, RR (SHIFTED UP BY 20 POINTS)
-    hr_label = String(210, 548, f"HR    : {HR} bpm", fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    hr_label = String(210, 533, f"HR    : {HR} bpm", fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(hr_label)
     
-    pr_label = String(210, 528, f"PR    : {PR} ms", fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    pr_label = String(210, 513, f"PR    : {PR} ms", fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(pr_label)
     
-    qrs_label = String(210, 508, f"QRS : {QRS} ms", fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    qrs_label = String(210, 493, f"QRS : {QRS} ms", fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(qrs_label)
     
-    rr_label = String(210, 490, f"RR    : {RR} ms", fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    rr_label = String(210, 475, f"RR    : {RR} ms", fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(rr_label)
     
     # QT (LEFT COLUMN - below RR)
-    qt_label = String(210, 470, f"QT    : {QT} ms", fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    qt_label = String(210, 455, f"QT    : {QT} ms", fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(qt_label)
     
     # QTc (LEFT COLUMN - below QT)
-    qtc_label = String(210, 450, f"QTc   : {QTc} ms", fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    qtc_label = String(210, 435, f"QTc   : {QTc} ms", fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(qtc_label)
     
     # RIGHT COLUMN (350, y) - Add dummy labels to match table layout
     # P/QRS/T Axis (SAME LINE AS HR)
-    p_qrs_label = String(350, 548, "P/QRS/T  : --/--/--°", fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    p_qrs_label = String(350, 533, "P/QRS/T  : --/--/--°", fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(p_qrs_label)
     
     # RV5/SV1 (SAME LINE AS PR)
-    rv5_sv_label = String(350, 528, "RV5/SV1  : -- mV/-- mV", fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    rv5_sv_label = String(350, 513, "RV5/SV1  : -- mV/-- mV", fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(rv5_sv_label)
     
     # RV5+SV1 (SAME LINE AS QRS)
-    rv5_sv1_sum_label = String(350, 508, "RV5+SV1 : -- mV", fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    rv5_sv1_sum_label = String(350, 493, "RV5+SV1 : -- mV", fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(rv5_sv1_sum_label)
     
     # QTcF (SAME LINE AS RR)
-    qtcf_label = String(350, 490, "QTCF       : --", fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    qtcf_label = String(350, 475, "QTCF       : --", fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(qtcf_label)
     
     # ST (SAME LINE AS QT - shifted up by 15)
-    st_label = String(350, 470, f"ST            : {ST} ms", fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    st_label = String(350, 455, f"ST            : {ST} ms", fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(st_label)
     
     # Filter Band and Speed/Gain (merged in one line)
