@@ -2513,6 +2513,9 @@ class HolterMainWindow(QDialog):
             QMessageBox.information(self, "Recording Complete",
                                     f"Holter recording saved to:\n{summary.get('session_dir', '')}")
             self.load_completed_session(summary.get('session_dir', ''), summary.get('patient_info', {}))
+            
+            # Auto-generate report when recording is stopped
+            self._generate_report()
 
     def _generate_report(self):
         from PyQt5.QtWidgets import QProgressDialog
@@ -2528,6 +2531,17 @@ class HolterMainWindow(QDialog):
                 patient_info=self.patient_info,
                 summary=self._summary,
             )
+            
+            # Save to history
+            try:
+                from dashboard.history_window import append_history_entry
+                h_pat = self.patient_info.copy() if self.patient_info else {}
+                if 'patient_name' not in h_pat and 'name' in h_pat:
+                    h_pat['patient_name'] = h_pat['name']
+                append_history_entry(h_pat, path, report_type="Holter")
+            except Exception as h_err:
+                print(f"Failed to append Holter history: {h_err}")
+                
             progress.close()
             QMessageBox.information(self, "Report Generated", f"Holter report saved:\n{path}")
         except Exception as e:

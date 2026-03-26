@@ -50,10 +50,10 @@ class AutoSyncService:
         modified_files = []
         
         try:
-            # Check reports directory for new/modified PDFs and JSONs
+            # Check reports directory for new/modified PDFs and JSONs (recursively)
             if self.reports_dir.exists():
-                # Glob for PDFs
-                for file_path in self.reports_dir.glob("ECG_Report_*.pdf"):
+                # Glob for ALL PDFs in reports directory recursively
+                for file_path in self.reports_dir.rglob("*.pdf"):
                     if self._is_file_modified(file_path):
                         modified_files.append(file_path)
                         # Also check for JSON twin in same dir

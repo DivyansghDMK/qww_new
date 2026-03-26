@@ -24,7 +24,7 @@ class Lead12BlackPage(QWidget):
     def __init__(self, parent=None, dashboard=None):
         super().__init__(parent)
         self.dashboard = dashboard
-        self.setStyleSheet("background: black;")
+        self.setStyleSheet("background: white;")
         layout = QVBoxLayout(self)
         self.canvases = []
         self.lines = []
@@ -39,12 +39,11 @@ class Lead12BlackPage(QWidget):
             layout.addWidget(label, alignment=Qt.AlignLeft)
             fig = Figure(figsize=(2, 2), facecolor='black')
             ax = fig.add_subplot(111)
-            ax.set_facecolor('black')
+            ax.set_facecolor('white')
             ax.set_xticks([])
             ax.set_yticks([])
             ax.set_ylim(-3, 3)
-            ax.axvline(x=0, color='white', linestyle='--', linewidth=1)
-            ax.set_title("", color='white', fontsize=12, loc='left')
+            ax.set_title("", color='black', fontsize=12, loc='left')
             line, = ax.plot(np.zeros(self.window_size), color='lime', lw=1)
             canvas = FigureCanvas(fig)
             layout.addWidget(canvas)
@@ -66,7 +65,7 @@ class Lead12BlackPage(QWidget):
         for i in range(12):
             # Slide a window over the simulated ECG for animation
             self.ptrs[i] = (self.ptrs[i] + 1) % (len(self.ecg_buffers[i]) - self.window_size)
-            window = self.ecg_buffers[i][self.ptrs[i]:self.ptrs[i]+self.window_size]
+            window = np.roll(self.ecg_buffers[i], -self.ptrs[i])[:self.window_size]
             self.lines[i].set_ydata(window)
             # --- P peak detection and labeling for each lead ---
             if len(window) >= 1000:

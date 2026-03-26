@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QPixmap
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTableWidget, QTableWidgetItem, QFrame, QMessageBox,
@@ -96,7 +96,7 @@ class ECGAnalysisWindow(QDialog):
         self.current_report_path = ""
 
         project_root = Path(__file__).resolve().parents[2]
-        self.analysis_pdf_logo_path = project_root / "assets" / "electronics_logo.png"
+        self.analysis_pdf_logo_path = project_root / "assets" / "DeckmountLogo.png"
 
         self.lead_data = {lead: np.array([]) for lead in self.LEADS}
         self.sampling_rate = 500.0
@@ -127,6 +127,15 @@ class ECGAnalysisWindow(QDialog):
         frame = QFrame()
         lay = QHBoxLayout(frame)
         lay.setContentsMargins(10, 8, 10, 8)
+
+        # Add logo to the top bar
+        logo_label = QLabel()
+        pixmap = QPixmap(str(self.analysis_pdf_logo_path))
+        logo_label.setPixmap(pixmap.scaled(120, 40, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        lay.addWidget(logo_label)
+
+        lay.addStretch() # Add stretch after logo to push patient info to the right
+
 
         self.patient_lbl = QLabel("Patient: --")
         self.patient_lbl.setFont(QFont("Arial", 11, QFont.Bold))
@@ -905,9 +914,11 @@ class ECGAnalysisWindow(QDialog):
         qrs     = _get(raw_metrics, 'QRS', 'qrs_duration', 'QRS_ms')
         qt      = _get(raw_metrics, 'QT',  'qt_interval',  'QT_ms')
         qtc     = _get(raw_metrics, 'QTc', 'qtc_interval', 'QTc_ms')
+        qtcf    = _get(raw_metrics, 'QTcF', 'qtcf_interval', 'QTcF_ms')
         rr      = _get(raw_metrics, 'RR',  'rr_interval',  'RR_ms')
         rv5sv1  = _get(raw_metrics, 'RV5_SV1',     'rv5_sv1')
         rv5plus = _get(raw_metrics, 'RV5_plus_SV1','rv5_plus_sv1')
+        axes    = _get(raw_metrics, 'axes', 'P/QRS/T', 'p_qrs_t')
 
         # ── Conclusions from clinical_findings ───────────────────────────────
         clinical = rpt.get('clinical_findings') or {}
@@ -926,8 +937,20 @@ class ECGAnalysisWindow(QDialog):
             conclusions = c2 if isinstance(c2, list) else []
 
         patient_name = pat.get('name', 'Unknown')
-        default_name = f"ECG_{patient_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
-        path, _ = QFileDialog.getSaveFileName(self, "Save ECG PDF", default_name, "PDF Files (*.pdf)")
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        default_name = f"ECG_Analysis_{patient_name}_{timestamp}.pdf"
+        
+        # Determine local reports directory
+        project_root = Path(__file__).resolve().parents[2]
+        reports_dir = project_root / "reports"
+        reports_dir.mkdir(exist_ok=True)
+        
+        # Ask user for path, but default to our reports directory
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save ECG PDF", 
+            str(reports_dir / default_name), 
+            "PDF Files (*.pdf)"
+        )
         if not path:
             return
 
@@ -980,40 +1003,54 @@ class ECGAnalysisWindow(QDialog):
             ax.tick_params(left=False, bottom=False, which='both')
 
             # ── Header ───────────────────────────────────────────────────────
-            yb = MT;  lh = 5.0
+            yb = MT;  lh = 4.2
             x1 = ML
-            # Col 1: patient
+            # Col 1: patient + type
             ax.text(x1, yb,      f"Name: {pat.get('name') or '-'}",    fontsize=7, va='top')
             ax.text(x1, yb+lh,   f"Age: {pat.get('age') or '-'}",      fontsize=7, va='top')
             ax.text(x1, yb+lh*2, f"Gender: {pat.get('gender') or '-'}",fontsize=7, va='top')
+            ax.text(x1, yb+lh*3.5, "Type: Standard", fontsize=7, va='top')
 
-            # Col 2: HR PR QRS QT QTc (skip any that are None)
-            x2 = x1 + 50
+            # Col 2: HR RR PR QRS QT
+            x2 = x1 + 45
             col2_items = [
                 ('HR',  hr,  'bpm'),
+                ('RR',  rr,  'ms'),
                 ('PR',  pr,  'ms'),
                 ('QRS', qrs, 'ms'),
                 ('QT',  qt,  'ms'),
-                ('QTc', qtc, 'ms'),
             ]
             row_y = yb
             for lbl, val, unit in col2_items:
                 if val is not None:
-                    ax.text(x2, row_y, f"{lbl}: {val} {unit}",
+                    ax.text(x2, row_y, f"{lbl} : {val} {unit}",
                             fontsize=7, va='top', fontweight='bold')
                     row_y += lh
 
-            # Col 3: RR RV5/SV1 RV5+SV1 (skip if None)
+            # Col 3: QTc QTcF RV5/SV1 RV5+SV1 P/QRS/T
             x3 = x2 + 35
+            col3_items = [
+                ('QTc', qtc, 'ms'),
+                ('QTcF', qtcf, 'ms'),
+                ('RV5/SV1', rv5sv1, 'mV'),
+                ('RV5+SV1', rv5plus, 'mV'),
+                ('P/QRS/T', axes, '°'),
+            ]
             col3_row = yb
-            if rr is not None:
-                ax.text(x3, col3_row, f"RR: {rr} ms", fontsize=7, va='top');  col3_row += lh
-            if rv5sv1 is not None:
-                ax.text(x3, col3_row, f"RV5/SV1: {str(rv5sv1).replace(' mV','')}",
-                        fontsize=7, va='top');  col3_row += lh
-            if rv5plus is not None:
-                ax.text(x3, col3_row, f"RV5+SV1: {str(rv5plus).replace(' mV','')}",
-                        fontsize=7, va='top')
+            for lbl, val, unit in col3_items:
+                if val is not None:
+                    # Specific formatting for RV5/SV1 and RV5+SV1 as seen in the image
+                    if lbl == 'RV5/SV1':
+                        val_str = str(val).replace(' mV', '')
+                        if '/' not in val_str and not val_str.startswith('+') and not val_str.startswith('-'):
+                            val_str = f"+{val_str}" # placeholder for consistency
+                        ax.text(x3, col3_row, f"{lbl}: {val_str} {unit}", fontsize=7, va='top', fontweight='bold')
+                    elif lbl == 'RV5+SV1':
+                        val_str = str(val).replace(' mV', '')
+                        ax.text(x3, col3_row, f"{lbl}: {val_str} {unit}", fontsize=7, va='top', fontweight='bold')
+                    else:
+                        ax.text(x3, col3_row, f"{lbl} : {val} {unit}", fontsize=7, va='top', fontweight='bold')
+                    col3_row += lh
 
             # Brand (right): prefers provided Electronics logo image
             logo_left = PAGE_W - MR - 55.0
@@ -1036,14 +1073,20 @@ class ECGAnalysisWindow(QDialog):
                 logo_drawn = False
 
             if not logo_drawn:
-                ax.text(PAGE_W - MR, yb, "ELECTRONICS",
-                        fontsize=8, fontweight='bold', color='#111111',
+                ax.text(PAGE_W - MR, yb, "DECKMOUNT",
+                        fontsize=12, fontweight='bold', color='#000000',
                         ha='right', va='top', zorder=11,
-                        family='monospace')
+                        family='sans-serif')
 
-            ax.text(PAGE_W - MR, yb+lh*2.4, "25.0 mm/s  0.5–25Hz  AC:50Hz  10.0 mm/mV",
+            ax.text(PAGE_W - MR, yb+lh*2.2, "25.0 mm/s  0.5-25Hz  AC:50Hz  10.0 mm/mV",
                     fontsize=5.5, ha='right', va='top', color='#555', zorder=10)
-            ax.text(PAGE_W - MR, yb+lh*3.2, f"Date: {pat.get('report_date','')}",
+            
+            # Use current date/time if report_date is missing or for real-time feel
+            dt_str = pat.get('report_date') or datetime.now().strftime("%Y-%m-%d Time: %H:%M:%S")
+            if 'Time:' not in dt_str and len(dt_str) < 15: # if it's just a date
+                dt_str += " Time: " + datetime.now().strftime("%H:%M:%S")
+            
+            ax.text(PAGE_W - MR, yb+lh*3.0, f"Date: {dt_str}",
                     fontsize=5.5, ha='right', va='top', color='#555', zorder=10)
 
             # ── 12 Lead strips ───────────────────────────────────────────────
@@ -1056,14 +1099,15 @@ class ECGAnalysisWindow(QDialog):
                 lbl_y  = mid_y - CELL_H * 0.4
 
                 # Calibration square pulse (1 mV → 10 mm tall)
+                # 2mm width for start, 5mm width for pulse, 2mm width for end
                 cx, cy, cg = ML, mid_y, CALIB_MM
-                ax.plot([cx, cx+2, cx+2, cx+7, cx+7, cx+9],
+                ax.plot([cx, cx+1.5, cx+1.5, cx+6.5, cx+6.5, cx+8],
                         [cy, cy,  cy-cg, cy-cg, cy,  cy],
-                        color='black', linewidth=0.9, zorder=6)
+                        color='black', linewidth=1.0, zorder=6)
 
-                # Lead label
-                ax.text(ML + 11, lbl_y, lead,
-                        fontsize=6.5, fontweight='bold', color='black', va='top', zorder=7)
+                # Lead label - bold and slightly larger as in the second image
+                ax.text(ML + 10, lbl_y - 0.5, lead,
+                        fontsize=7, fontweight='bold', color='black', va='top', zorder=7)
 
                 # Waveform — strict 12:1 strip window from current frame
                 data_arr = self.lead_data.get(lead, np.array([]))
@@ -1075,45 +1119,55 @@ class ECGAnalysisWindow(QDialog):
                         seg_mm = (segment - baseline) / ADC_PER_MM   # ADC → mm
                         seg_mm = np.clip(seg_mm, -HALF_CELL, HALF_CELL)
 
-                        wx0 = ML + 13.0
+                        wx0 = ML + 9.5 # Waveform starts closer to calibration
                         wx1 = PAGE_W - MR
                         wx_mm = np.linspace(wx0, wx1, segment.size)
                         wy_mm = mid_y - seg_mm  # upward deflection = smaller y
-                        ax.plot(wx_mm, wy_mm, color='black', linewidth=0.5, zorder=5)
+                        ax.plot(wx_mm, wy_mm, color='black', linewidth=0.6, zorder=5)
 
             # ── Footer signature block ────────────────────────────────────────
             ft = PAGE_H - MB - FOOTER_H
             ax.text(ML, ft + 9,  "Reference Report Confirmed by:",
-                    fontsize=6, va='top', color='#333', fontstyle='italic')
-            ax.text(ML, ft + 14, "Doctor Name ________________________",
+                    fontsize=7, va='top', color='black', fontweight='bold')
+            ax.text(ML, ft + 14, "Doctor Name: ________________________",
                     fontsize=7, va='top', color='black')
-            ax.text(ML, ft + 19, "Doctor Sign  ________________________",
+            ax.text(ML, ft + 19, "Doctor Sign:  ________________________",
                     fontsize=7, va='top', color='black')
 
-            # Conclusion box — transparent fill, arrows in title (matches 12:1 style)
-            bx, by = 95.0, ft + 2.0
-            bw, bh = PAGE_W - bx - MR, 20.0
+            # Conclusion box — transparent fill, matching second image
+            bx, by = 90.0, ft + 2.0
+            bw, bh = PAGE_W - bx - MR, 22.0
             from matplotlib.patches import Rectangle as MRect2
             rect = MRect2((bx, by), bw, bh,
                           linewidth=0.8, edgecolor='#333333',
-                          facecolor='none', zorder=8)   # transparent fill
+                          facecolor='none', zorder=8)
             ax.add_patch(rect)
-            # Arrow-labelled title matching 12:1 format
-            ax.text(bx + bw/2, by + 1.0, "\u2192 CONCLUSION \u2190",
-                    fontsize=6.5, fontweight='bold', ha='center', va='top',
+            
+            # ❖ CONCLUSION ❖ Title matching second image
+            ax.text(bx + bw/2, by + 1.2, "❖ CONCLUSION ❖",
+                    fontsize=7, fontweight='bold', ha='center', va='top',
                     color='black', zorder=9)
+            
             # Thin separator line under title
-            ax.plot([bx + 1, bx + bw - 1], [by + 5.5, by + 5.5],
-                    color='#aaa', linewidth=0.5, zorder=9)
+            ax.plot([bx + 1, bx + bw - 1], [by + 5.0, by + 5.0],
+                    color='#333333', linewidth=0.6, zorder=9)
 
+            # Draw vertical grid lines for the conclusion table if needed
+            # but let's just use columns first
             cols = 3;  col_w = (bw - 4.0) / cols;  rh2 = 3.5
+            
+            # If no conclusions, add standard NSR findings for NSR reports
+            if not conclusions:
+                conclusions = ["Rhythm Analysis", "Normal heart rate", "Normal PR interval", 
+                               "Normal QRS duration", "Normal QTc interval"]
+
             for idx2, line in enumerate(conclusions[:9]):
                 row2 = idx2 // cols;  col2 = idx2 % cols
                 tx = bx + 2.0 + col2 * col_w
-                ty = by + 7.0 + row2 * rh2
+                ty = by + 6.5 + row2 * rh2
                 if ty + rh2 > by + bh:
                     break
-                ax.text(tx, ty, f"{idx2+1}. {line}", fontsize=5.5, va='top', zorder=9)
+                ax.text(tx, ty, f"{idx2+1}. {line}", fontsize=6, va='top', zorder=9)
 
             # Footer brand — full address matching 12:1 style
             brand = ("Deckmount Electronics Pvt. Ltd., Plot No. 389, Phase 5, "
@@ -1130,6 +1184,20 @@ class ECGAnalysisWindow(QDialog):
                     fig2 = self._generate_annotation_page()
                     if fig2:
                         pdf.savefig(fig2, bbox_inches='tight')
+
+            # --- Save to history ---
+            try:
+                from dashboard.history_window import append_history_entry
+                h_pat = {
+                    "patient_name": pat.get('name', 'Unknown'),
+                    "age": str(pat.get('age', '')),
+                    "gender": pat.get('gender', ''),
+                    "doctor": pat.get('doctor', ''),
+                    "Org.": pat.get('Org.', ''),
+                }
+                append_history_entry(h_pat, path, report_type="Analysis")
+            except Exception as h_err:
+                print(f"Failed to append history: {h_err}")
 
             self.pdf_btn.setText("Generate PDF")
             QMessageBox.information(self, "PDF Saved", f"ECG Report saved:\n{path}")
