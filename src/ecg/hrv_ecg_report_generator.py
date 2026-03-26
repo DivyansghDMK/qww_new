@@ -3227,7 +3227,7 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     # A4 landscape: 842 x 595, minus reduced margins (20 each side) = 802 x 555
     # This allows taller drawing to fit patient info at Y=528
     total_width = 780  # Fits in landscape frame (802 - margin)
-    total_height = 540  # Keep within landscape frame height to avoid ReportLab LayoutError
+    total_height = 555  # Match landscape frame height so top labels (y≈545) are not clipped
     master_drawing = Drawing(total_width, total_height)
     
     # Define positions for 5 one-minute segments (LANDSCAPE MODE - POSITIONED FOR 540 HEIGHT)
