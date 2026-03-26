@@ -3469,17 +3469,17 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     
     # 12:1 Format - Header Labels (Left, Middle, Right)
     # COLUMN 1 (Left): Name, Age, Gender, Type
-    master_drawing.add(String(-15, 545, f"Name: {full_name}", fontSize=7, fontName="Helvetica", fillColor=colors.black))
-    master_drawing.add(String(-15, 538, f"Age: {age}", fontSize=7, fontName="Helvetica", fillColor=colors.black))
-    master_drawing.add(String(-15, 531, f"Gender: {gender}", fontSize=7, fontName="Helvetica", fillColor=colors.black))
-    master_drawing.add(String(-15, 520, "Type: Standard", fontSize=7, fontName="Helvetica", fillColor=colors.black))
+    master_drawing.add(String(-15, 530, f"Name: {full_name}", fontSize=7, fontName="Helvetica", fillColor=colors.black))
+    master_drawing.add(String(-15, 523, f"Age: {age}", fontSize=7, fontName="Helvetica", fillColor=colors.black))
+    master_drawing.add(String(-15, 516, f"Gender: {gender}", fontSize=7, fontName="Helvetica", fillColor=colors.black))
+    master_drawing.add(String(-15, 505, "Type: Standard", fontSize=7, fontName="Helvetica", fillColor=colors.black))
 
     # COLUMN 2 (Middle-Left): HR, RR, PR, QRS, QT
-    master_drawing.add(String(120, 545, f"HR : {hr_val} bpm", fontSize=7, fontName="Helvetica-Bold", fillColor=colors.black))
-    master_drawing.add(String(120, 538, f"RR : {rr_val} ms", fontSize=7, fontName="Helvetica-Bold", fillColor=colors.black))
-    master_drawing.add(String(120, 531, f"PR : {pr_val} ms", fontSize=7, fontName="Helvetica-Bold", fillColor=colors.black))
-    master_drawing.add(String(120, 524, f"QRS : {qrs_val} ms", fontSize=7, fontName="Helvetica-Bold", fillColor=colors.black))
-    master_drawing.add(String(120, 517, f"QT : {qt_val} ms", fontSize=7, fontName="Helvetica-Bold", fillColor=colors.black))
+    master_drawing.add(String(120, 530, f"HR : {hr_val} bpm", fontSize=7, fontName="Helvetica-Bold", fillColor=colors.black))
+    master_drawing.add(String(120, 523, f"RR : {rr_val} ms", fontSize=7, fontName="Helvetica-Bold", fillColor=colors.black))
+    master_drawing.add(String(120, 516, f"PR : {pr_val} ms", fontSize=7, fontName="Helvetica-Bold", fillColor=colors.black))
+    master_drawing.add(String(120, 509, f"QRS : {qrs_val} ms", fontSize=7, fontName="Helvetica-Bold", fillColor=colors.black))
+    master_drawing.add(String(120, 502, f"QT : {qt_val} ms", fontSize=7, fontName="Helvetica-Bold", fillColor=colors.black))
 
     # COLUMN 3 (Middle-Right): QTc, QTcF, RV5/SV1, RV5+SV1, P/QRS/T
     # For HRV, we use values from original_metrics_from_json or defaults
@@ -3488,11 +3488,11 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     rv5_sv1_sum = original_metrics_from_json.get("RV5_plus_SV1_mV", 0)
     p_mm, qrs_mm, t_mm = original_metrics_from_json.get("P_QRS_T_mm", [0, 0, 0])
     
-    master_drawing.add(String(230, 545, f"QTc : {qtc_val} ms", fontSize=7, fontName="Helvetica-Bold", fillColor=colors.black))
-    master_drawing.add(String(230, 538, f"QTcF : {original_metrics_from_json.get('QTCF') or '-'} ms", fontSize=7, fontName="Helvetica-Bold", fillColor=colors.black))
-    master_drawing.add(String(230, 531, f"RV5/SV1: +{rv5_mv}/-{sv1_mv} mV", fontSize=7, fontName="Helvetica-Bold", fillColor=colors.black))
-    master_drawing.add(String(230, 524, f"RV5+SV1: {rv5_sv1_sum} mV", fontSize=7, fontName="Helvetica-Bold", fillColor=colors.black))
-    master_drawing.add(String(230, 517, f"P/QRS/T: {p_mm}/{qrs_mm}/{t_mm}°", fontSize=7, fontName="Helvetica-Bold", fillColor=colors.black))
+    master_drawing.add(String(230, 530, f"QTc : {qtc_val} ms", fontSize=7, fontName="Helvetica-Bold", fillColor=colors.black))
+    master_drawing.add(String(230, 523, f"QTcF : {original_metrics_from_json.get('QTCF') or '-'} ms", fontSize=7, fontName="Helvetica-Bold", fillColor=colors.black))
+    master_drawing.add(String(230, 516, f"RV5/SV1: +{rv5_mv}/-{sv1_mv} mV", fontSize=7, fontName="Helvetica-Bold", fillColor=colors.black))
+    master_drawing.add(String(230, 509, f"RV5+SV1: {rv5_sv1_sum} mV", fontSize=7, fontName="Helvetica-Bold", fillColor=colors.black))
+    master_drawing.add(String(230, 502, f"P/QRS/T: {p_mm}/{qrs_mm}/{t_mm}°", fontSize=7, fontName="Helvetica-Bold", fillColor=colors.black))
 
     # COLUMN 4 (Right): Date/Time + Settings
     if date_time_str:
@@ -3504,11 +3504,11 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     
     # Metadata text aligned to right (standard 12:1)
     metadata_text = f"25.0 mm/s  0.5-25Hz  AC:50Hz  10.0 mm/mV"
-    master_drawing.add(String(610, 525, metadata_text, fontSize=5.5, fontName="Helvetica", fillColor=colors.grey))
-    master_drawing.add(String(610, 518, f"Date: {date_part} Time: {time_part}", fontSize=5.5, fontName="Helvetica", fillColor=colors.grey))
+    master_drawing.add(String(610, 510, metadata_text, fontSize=5.5, fontName="Helvetica", fillColor=colors.grey))
+    master_drawing.add(String(610, 503, f"Date: {date_part} Time: {time_part}", fontSize=5.5, fontName="Helvetica", fillColor=colors.grey))
     
     # Lead label shifted left of the waveform area
-    master_drawing.add(String(-15, 485, f"Lead: {selected_lead}", fontSize=8, fontName="Helvetica-Bold", fillColor=colors.black))
+    master_drawing.add(String(-15, 470, f"Lead: {selected_lead}", fontSize=8, fontName="Helvetica-Bold", fillColor=colors.black))
     
     # ==================== VITAL PARAMETERS (LANDSCAPE MODE - 2 COLUMNS SIDE BY SIDE) ====================
     has_rr_array = 'rr_all_for_hrv' in locals() and isinstance(rr_all_for_hrv, list) and len(rr_all_for_hrv) > 2
@@ -3548,12 +3548,12 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
         master_drawing,
         205,
         [
-            (555, f"HR    : {HR} bpm"),
-            (540, f"PR    : {PR} ms"),
-            (525, f"QRS : {QRS} ms"),
-            (510, f"RR    : {RR} ms"),
-            (495, f"QT     : {QT} ms"),
-            (480, f"QTc   : {QTc} ms"),
+            (535, f"HR    : {HR} bpm"),
+            (520, f"PR    : {PR} ms"),
+            (505, f"QRS : {QRS} ms"),
+            (490, f"RR    : {RR} ms"),
+            (475, f"QT     : {QT} ms"),
+            (460, f"QTc   : {QTc} ms"),
         ],
     )
     
@@ -3565,18 +3565,18 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     p_axis = data.get('p_axis', '--').replace('°', '')
     qrs_axis = data.get('qrs_axis', '--').replace('°', '')
     t_axis = data.get('t_axis', '--').replace('°', '')
-    p_qrs_label = String(350, 555, f"P/QRS/T  : {p_axis}/{qrs_axis}/{t_axis}°", fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    p_qrs_label = String(350, 535, f"P/QRS/T  : {p_axis}/{qrs_axis}/{t_axis}°", fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(p_qrs_label)
     
     # RV5/SV1
     rv5 = data.get('rv5', 0.0)
     sv1 = data.get('sv1', 0.0)
-    rv5_sv_label = String(350, 540, f"RV5/SV1  : {rv5:.3f}/{sv1:.3f} mV", fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    rv5_sv_label = String(350, 520, f"RV5/SV1  : {rv5:.3f}/{sv1:.3f} mV", fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(rv5_sv_label)
     
     # RV5+SV1
     rv5_sv1_sum = rv5 + abs(sv1)
-    rv5_sv1_sum_label = String(350, 525, f"RV5+SV1 : {rv5_sv1_sum:.3f} mV", fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    rv5_sv1_sum_label = String(350, 505, f"RV5+SV1 : {rv5_sv1_sum:.3f} mV", fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(rv5_sv1_sum_label)
     
     # QTCF
@@ -3585,12 +3585,12 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
         qtcf_text = f"QTCF       : {qtcf:.0f} ms"
     else:
         qtcf_text = "QTCF       : -- ms"
-    qtcf_label = String(350, 510, qtcf_text, fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    qtcf_label = String(350, 490, qtcf_text, fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(qtcf_label)
 
     
     master_drawing.add(String(
-        350, 480,
+        350, 460,
         f"{wave_speed_mm_s} mm/s   {filter_band}   AC : {ac_frequency}   {wave_gain_mm_mv} mm/mV",
         fontSize=10, fontName="Helvetica", fillColor=colors.black
     ))
@@ -4125,7 +4125,7 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
                         num_segments = len(rr_intervals_calc) // segment_length
                         f.write(f"   Segments used: {num_segments}\n")
                         f.write(f"   Segment length: {segment_length} intervals per segment\n")
-                        f.write(f"   SDANN = std(segment_averages) = {sdann:.2f} ms ✓\n")
+                        f.write(f"   SDANN = std(segment_averages) = {sdann:.2f} ms [OK]\n")
                 else:
                     f.write("RR intervals: Not available (insufficient data)\n")
             else:
