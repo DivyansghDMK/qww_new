@@ -1427,13 +1427,9 @@ class ECGTestPage(QWidget):
             return False
 
     def _start_generate_report_cooldown(self, seconds: int = 10, reason: str = ""):
-        """Disable Generate Report button for a countdown window, then re-enable."""
+        """Compatibility shim: cooldown removed; keep Generate Report immediately available."""
         if not hasattr(self, "generate_report_btn"):
             return
-
-        # ── FIX: Reset flag on each new click — prevents stuck state on rapid clicks ──
-        self._report_generating = False
-        # ──────────────────────────────────────────────────────────────────────────────
 
         try:
             for timer in self.countdown_timers:
@@ -1443,50 +1439,13 @@ class ECGTestPage(QWidget):
         except Exception:
             pass
 
-        # During active acquisition / demo mode we show green style even when disabled
-        # so text size remains stable; actual clickability is controlled via setEnabled.
-        green_style = getattr(self, "green_button_style", "") or """
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #4CAF50, stop:1 #45a049);
-                color: white;
-                border: 2px solid #4CAF50;
-                border-radius: 6px;
-                padding: 4px 8px;
-                font-size: 10px;
-                font-weight: bold;
-                text-align: center;
-            }
-        """
-
-        self.generate_report_btn.setEnabled(False)
-        self.generate_report_btn.setStyleSheet(green_style)
-        self.generate_report_btn.setText(f"Generate Report ({seconds})")
-
-        def _finish_cooldown():
-            # Re-enable when acquisition is running or demo mode is ON.
-            can_enable = self._can_generate_report()
-            if can_enable:
-                self.generate_report_btn.setEnabled(True)
-                self.generate_report_btn.setStyleSheet(green_style)
-            self.generate_report_btn.setText("Generate Report")
-            self.countdown_timers.clear()
-            if reason:
-                print(f" Generate Report button enabled after {seconds} seconds from {reason}")
-
-        for remaining in range(seconds - 1, 0, -1):
-            delay_ms = (seconds - remaining) * 1000
-            timer = QTimer()
-            timer.setSingleShot(True)
-            timer.timeout.connect(lambda r=remaining: self.generate_report_btn.setText(f"Generate Report ({r})"))
-            timer.start(delay_ms)
-            self.countdown_timers.append(timer)
-
-        final_timer = QTimer()
-        final_timer.setSingleShot(True)
-        final_timer.timeout.connect(_finish_cooldown)
-        final_timer.start(seconds * 1000)
-        self.countdown_timers.append(final_timer)
+        can_enable = self._can_generate_report()
+        self.generate_report_btn.setEnabled(bool(can_enable))
+        if hasattr(self, "green_button_style") and self.green_button_style:
+            self.generate_report_btn.setStyleSheet(self.green_button_style)
+        self._refresh_report_btn_label()
+        if reason:
+            print(f" Generate Report cooldown skipped ({reason})")
 
     def on_demo_toggle_changed(self, checked):
         self.update_demo_toggle_label()
