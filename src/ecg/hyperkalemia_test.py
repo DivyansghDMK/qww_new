@@ -401,9 +401,9 @@ class HyperkalemiaTestWindow(QWidget):
             plot_widget.setMenuEnabled(False)
             plot_widget.showGrid(x=False, y=False)
             
-            # Hide Y-axis labels for cleaner display (clinical standard)
-            plot_widget.getAxis('left').setTicks([])
-            plot_widget.getAxis('left').setLabel('')
+            # Show Y-axis labels to indicate 0-4096 range
+            plot_widget.getAxis('left').setPen('k')
+            plot_widget.getAxis('left').setTextPen('k')
             plot_widget.getAxis('bottom').setTextPen('k')
             plot_widget.getAxis('bottom').setPen('k')
             
@@ -607,26 +607,27 @@ class HyperkalemiaTestWindow(QWidget):
             self._silent_data_warned = False
             
             # ── Start HolterBPMController ───────────────────────────────────────
+            # Bar removed as per user request
             try:
                 if self._bpm_ctrl is not None:
                     if self._bpm_ctrl.is_running:
                         self._bpm_ctrl.stop()
                     self._bpm_ctrl.start(target_hours=0)
-                    main_layout = self.layout()
-                    if main_layout and self._bpm_ctrl.display_bar is not None:
-                        existing = [main_layout.itemAt(i).widget()
-                                    for i in range(main_layout.count())
-                                    if main_layout.itemAt(i).widget() is not None]
-                        if self._bpm_ctrl.display_bar not in existing:
-                            main_layout.insertWidget(0, self._bpm_ctrl.display_bar)
-                        self._bpm_ctrl.display_bar.show()
+                    # main_layout = self.layout()
+                    # if main_layout and self._bpm_ctrl.display_bar is not None:
+                    #     existing = [main_layout.itemAt(i).widget()
+                    #                 for i in range(main_layout.count())
+                    #                 if main_layout.itemAt(i).widget() is not None]
+                    #     if self._bpm_ctrl.display_bar not in existing:
+                    #         main_layout.insertWidget(0, self._bpm_ctrl.display_bar)
+                    #     self._bpm_ctrl.display_bar.show()
                         
-                        # Start 3-second BPM UI refresh timer
-                        if not hasattr(self, '_bpm_refresh_timer'):
-                            self._bpm_refresh_timer = QTimer()
-                            self._bpm_refresh_timer.timeout.connect(self._refresh_holter_bpm_label)
-                        if not self._bpm_refresh_timer.isActive():
-                            self._bpm_refresh_timer.start(2000)
+                    # Start 3-second BPM UI refresh timer
+                    if not hasattr(self, '_bpm_refresh_timer'):
+                        self._bpm_refresh_timer = QTimer()
+                        self._bpm_refresh_timer.timeout.connect(self._refresh_holter_bpm_label)
+                    if not self._bpm_refresh_timer.isActive():
+                        self._bpm_refresh_timer.start(2000)
             except Exception as _bpm_err:
                 print(f"[HyperkalemiaTestWindow] BPM controller start error: {_bpm_err}")
             
@@ -1289,11 +1290,10 @@ class HyperkalemiaTestWindow(QWidget):
                               "No data available to generate report.")
             return
         
-        # Non-blocking save location (cross-platform) to avoid modal UI stalls.
-        from PyQt5.QtCore import QStandardPaths
-        reports_dir = QStandardPaths.writableLocation(QStandardPaths.DownloadLocation)
-        if not reports_dir:
-            reports_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'reports'))
+        # Consistently save to the local project 'reports' directory
+        current_file_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.abspath(os.path.join(current_file_dir, '..', '..'))
+        reports_dir = os.path.join(project_root, 'reports')
         os.makedirs(reports_dir, exist_ok=True)
         filepath = os.path.join(reports_dir, f"Hyperkalemia_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
         
@@ -1472,7 +1472,10 @@ class HyperkalemiaTestWindow(QWidget):
             
             print(f"✅ Hyperkalemia detection report saved successfully: {filepath}")
             try:
-                append_history_entry(patient, filepath, report_type="Hyperkalemia", username=self.username)
+                h_pat = patient.copy() if patient else {}
+                if 'patient_name' not in h_pat:
+                    h_pat['patient_name'] = f"{h_pat.get('first_name','')} {h_pat.get('last_name','')}".strip()
+                append_history_entry(h_pat, filepath, report_type="Hyperkalemia", username=self.username)
             except Exception as hist_err:
                 print(f" Failed to append Hyperkalemia history: {hist_err}")
             

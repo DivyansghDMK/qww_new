@@ -15,7 +15,7 @@ from PyQt5.QtWidgets import (
     QTextEdit, QCheckBox, QGridLayout, QListWidget,
     QListWidgetItem, QAbstractItemView, QGroupBox, QStackedWidget,
 )
-import sys, os, json, datetime, shutil, smtplib, traceback, tempfile, re
+import sys, os, json, datetime, shutil, smtplib, traceback, tempfile
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email.mime.text import MIMEText
@@ -713,11 +713,16 @@ class HistoryWindow(QDialog):
             resp = requests.get(url, timeout=12)
             if resp.status_code != 200:
                 self.rev_status_lbl.setText(
-                    f"API error: HTTP {resp.status_code} for doctorName={doc_name}"
+                    f"Cloud API Error: {resp.status_code} - {resp.reason}. Doctor: {doc_name}"
                 )
                 return
+            
             ct = resp.headers.get("Content-Type", "")
-            data = resp.json() if "application/json" in ct or resp.text.strip().startswith("[") else []
+            try:
+                data = resp.json() if "application/json" in ct or resp.text.strip().startswith("[") else []
+            except Exception as json_err:
+                self.rev_status_lbl.setText(f"Cloud Data Error: Failed to parse JSON response. {json_err}")
+                return
             if not isinstance(data, list):
                 data = []
 
@@ -929,6 +934,41 @@ class HistoryWindow(QDialog):
             if show:
                 self._add_row(entry)
 
+    def _add_stray_pdf(self, full_path, history_entries):
+        """Helper to add a stray PDF to the history list if not already present."""
+        if any(e.get("report_file") == full_path for e in history_entries):
+            return
+
+        fn = os.path.basename(full_path).lower()
+        # Only add files that look like ECG reports
+        if not any(x in fn for x in ["ecg", "hrv", "hyper", "holter", "analysis"]):
+            return
+
+        rt = "ECG"
+        if "holter" in fn: rt = "Holter"
+        elif "hyper" in fn: rt = "Hyperkalemia"
+        elif "hrv" in fn: rt = "HRV"
+        elif "analysis" in fn: rt = "Analysis"
+
+        try:
+            mtime = os.path.getmtime(full_path)
+            dt = datetime.datetime.fromtimestamp(mtime)
+            
+            history_entries.append({
+                "date": dt.strftime("%Y-%m-%d"),
+                "time": dt.strftime("%H:%M:%S"),
+                "report_type": rt,
+                "patient_name": os.path.basename(full_path).replace(".pdf", "")
+                                 .replace("ECG_Report_", "")
+                                 .replace("HRV_Report_", "")
+                                 .replace("ECG_Analysis_", "")
+                                 .replace("holter_report", "Holter_")
+                                 .replace("_", " "),
+                "report_file": full_path
+            })
+        except Exception:
+            pass
+
     # ── data loading ─────────────────────────────────────────────────────────
     def _infer_report_type(self, report_file: str = "", report_type: str = "") -> str:
         rt = (report_type or "").strip()
@@ -1009,25 +1049,60 @@ class HistoryWindow(QDialog):
                     idx = json.load(f)
                 if isinstance(idx, list):
                     for entry in idx:
-                        if "filename" in entry:
-                            report_file = os.path.join(REPORTS_DIR, entry.get("filename", ""))
-                            rt = self._infer_report_type(report_file, entry.get("report_type", ""))
-                            history_entries.append({
-                                "date": entry.get("date", ""),
-                                "time": entry.get("time", ""),
-                                "report_type": rt,
-                                "Org.": entry.get("org", ""),
-                                "doctor": entry.get("doctor", ""),
-                                "patient_name": entry.get("patient", ""),
-                                "age": entry.get("age", ""),
-                                "gender": entry.get("gender", ""),
-                                "height": entry.get("height", ""),
-                                "weight": entry.get("weight", ""),
-                                "report_file": report_file,
-                                "username": entry.get("username", ""),
-                            })
+                        fn = entry.get("filename", "").lower()
+                        # Better detection logic for report types
+                        if "holter" in fn:
+                            rt = "Holter"
+                        elif "hyper" in fn:
+                            rt = "Hyperkalemia"
+                        elif "hrv" in fn:
+                            rt = "HRV"
+                        elif "analysis" in fn:
+                            rt = "Analysis"
+                        else:
+                            rt = "ECG"
+                        
+                        history_entries.append({
+                            "date": entry.get("date", ""),
+                            "time": entry.get("time", ""),
+                            "report_type": rt,
+                            "Org.": entry.get("org", entry.get("Org.", "")),
+                            "doctor": entry.get("doctor", ""),
+                            "patient_name": entry.get("patient", entry.get("patient_name", "")),
+                            "age": entry.get("age", ""),
+                            "gender": entry.get("gender", ""),
+                            "height": entry.get("height", ""),
+                            "weight": entry.get("weight", ""),
+                            "report_file": os.path.join(REPORTS_DIR, entry.get("filename", "")),
+                            "username": entry.get("username", ""),
+                        })
             except Exception:
                 pass
+
+        # Also scan reports directory for any stray PDFs that might not be in index
+        RECORDINGS_DIR = os.path.join(BASE_DIR, "recordings")
+        scan_dirs = [REPORTS_DIR, RECORDINGS_DIR]
+        try:
+            from PyQt5.QtCore import QStandardPaths
+            downloads = QStandardPaths.writableLocation(QStandardPaths.DownloadLocation)
+            if downloads and os.path.exists(downloads):
+                scan_dirs.append(downloads)
+        except Exception:
+            pass
+
+        for sdir in scan_dirs:
+            if not os.path.exists(sdir): continue
+            
+            # Recursive scan for Holter reports which are often in subdirectories
+            if sdir == RECORDINGS_DIR:
+                for root_dir, dirs, files in os.walk(sdir):
+                    for f in files:
+                        if f.lower().endswith(".pdf") and "holter" in f.lower():
+                            self._add_stray_pdf(os.path.join(root_dir, f), history_entries)
+            else:
+                for f in os.listdir(sdir):
+                    if f.lower().endswith(".pdf"):
+                        self._add_stray_pdf(os.path.join(sdir, f), history_entries)
 
         # Fallback
         if not history_entries:
@@ -1065,7 +1140,15 @@ class HistoryWindow(QDialog):
             if self.username and entry.get("username") and entry.get("username") != self.username:
                 continue
             rf = entry.get("report_file", "") or ""
-            rt = self._infer_report_type(rf, entry.get("report_type", ""))
+            rt = entry.get("report_type", "")
+            if not rt:
+                fl = rf.lower()
+                if "holter" in fl: rt = "Holter"
+                elif "hyper" in fl: rt = "Hyperkalemia"
+                elif "hrv" in fl: rt = "HRV"
+                elif "analysis" in fl: rt = "Analysis"
+                else: rt = "ECG"
+            
             entry["report_type"] = rt
             self.all_history_entries.append(entry)
 

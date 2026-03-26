@@ -3109,18 +3109,17 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
         
         if os.path.exists(logo_path):
             canvas.saveState()
-            if canvas.getPageNumber() in [1, 2]:  # Changed from [2, 3] to [1, 2] (Page 2 is now Page 1)
-                # Page 1 & 2 are LANDSCAPE - logo at top right
-                logo_w, logo_h = 120, 40
+            if canvas.getPageNumber() in [1, 2]:  # Landscape pages
+                logo_w, logo_h = 100, 30
+                page_width, page_height = canvas._pagesize
+                # Align with 12:1 format positioning
+                x = page_width - logo_w - 35
+                y = page_height - logo_h - 10
+            else:
+                logo_w, logo_h = 100, 30
                 page_width, page_height = canvas._pagesize
                 x = page_width - logo_w - 35
-                y = page_height - logo_h + 10  # Shifted 10 points up from original position
-            else:
-                # Page 1 is PORTRAIT - position at top right (very close to top)
-                logo_w, logo_h = 120, 40
-                page_height = 842  # A4 portrait height
-                x = 595 - logo_w - 30  # 595 = A4 width, 30 = right margin
-                y = page_height - 35  # 35 points from top 
+                y = page_height - logo_h - 10
             try:
                 canvas.drawImage(logo_path, x, y, width=logo_w, height=logo_h, preserveAspectRatio=True, mask='auto')
             except Exception:
@@ -3191,6 +3190,14 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     date_time = patient.get("date_time", "")
     full_name = f"{first_name} {last_name}".strip()
     date_time_str = date_time
+    
+    # PR, QRS, QT, QTc, RR, RV5+SV1 etc. from original_metrics_from_json
+    hr_val = original_metrics_from_json.get("HR", 0)
+    rr_val = original_metrics_from_json.get("RR_ms", 0)
+    pr_val = original_metrics_from_json.get("PR", 0)
+    qrs_val = original_metrics_from_json.get("QRS", 0)
+    qt_val = original_metrics_from_json.get("QT", 0)
+    qtc_val = original_metrics_from_json.get("QTc", 0)
     
     # ==================== CALCULATE CONCLUSIONS (NEEDED FOR ECG GRAPHS PAGE) ====================
     # Conclusions are still needed for the conclusion box on the ECG graphs page (now Page 1)
@@ -3460,24 +3467,34 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     
     # ==================== ADD PATIENT INFO TO PAGE 2 (LANDSCAPE MODE - POSITIONED PROPERLY) ====================
     
-    lead_label_value = selected_lead if selected_lead else "--"
-    # LEFT SIDE: Patient Info (SHIFTED LEFT + UP)
-    patient_name_label = String(-15, 545, f"Name: {full_name}",  # Shifted UP: 535 → 545
-                                fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(patient_name_label)
+    # 12:1 Format - Header Labels (Left, Middle, Right)
+    # COLUMN 1 (Left): Name, Age, Gender, Type
+    master_drawing.add(String(-15, 545, f"Name: {full_name}", fontSize=7, fontName="Helvetica", fillColor=colors.black))
+    master_drawing.add(String(-15, 538, f"Age: {age}", fontSize=7, fontName="Helvetica", fillColor=colors.black))
+    master_drawing.add(String(-15, 531, f"Gender: {gender}", fontSize=7, fontName="Helvetica", fillColor=colors.black))
+    master_drawing.add(String(-15, 520, "Type: Standard", fontSize=7, fontName="Helvetica", fillColor=colors.black))
+
+    # COLUMN 2 (Middle-Left): HR, RR, PR, QRS, QT
+    master_drawing.add(String(120, 545, f"HR : {hr_val} bpm", fontSize=7, fontName="Helvetica-Bold", fillColor=colors.black))
+    master_drawing.add(String(120, 538, f"RR : {rr_val} ms", fontSize=7, fontName="Helvetica-Bold", fillColor=colors.black))
+    master_drawing.add(String(120, 531, f"PR : {pr_val} ms", fontSize=7, fontName="Helvetica-Bold", fillColor=colors.black))
+    master_drawing.add(String(120, 524, f"QRS : {qrs_val} ms", fontSize=7, fontName="Helvetica-Bold", fillColor=colors.black))
+    master_drawing.add(String(120, 517, f"QT : {qt_val} ms", fontSize=7, fontName="Helvetica-Bold", fillColor=colors.black))
+
+    # COLUMN 3 (Middle-Right): QTc, QTcF, RV5/SV1, RV5+SV1, P/QRS/T
+    # For HRV, we use values from original_metrics_from_json or defaults
+    rv5_mv = original_metrics_from_json.get("RV5_SV1_mV", [0, 0])[0]
+    sv1_mv = original_metrics_from_json.get("RV5_SV1_mV", [0, 0])[1]
+    rv5_sv1_sum = original_metrics_from_json.get("RV5_plus_SV1_mV", 0)
+    p_mm, qrs_mm, t_mm = original_metrics_from_json.get("P_QRS_T_mm", [0, 0, 0])
     
-    patient_age_label = String(-15, 525, f"Age: {age}",  # Shifted UP: 515 → 525
-                               fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(patient_age_label)
-    
-    patient_gender_label = String(-15, 505, f"Gender: {gender}",  # Shifted UP: 495 → 505
-                                  fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(patient_gender_label)
-    patient_lead_label_landscape = String(-15, 485, f"Lead: {lead_label_value}",
-                                          fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
-    master_drawing.add(patient_lead_label_landscape)
-    
-    # RIGHT SIDE: Date/Time (shifted UP by 20 points - aligned with patient info)
+    master_drawing.add(String(230, 545, f"QTc : {qtc_val} ms", fontSize=7, fontName="Helvetica-Bold", fillColor=colors.black))
+    master_drawing.add(String(230, 538, f"QTcF : {original_metrics_from_json.get('QTCF') or '-'} ms", fontSize=7, fontName="Helvetica-Bold", fillColor=colors.black))
+    master_drawing.add(String(230, 531, f"RV5/SV1: +{rv5_mv}/-{sv1_mv} mV", fontSize=7, fontName="Helvetica-Bold", fillColor=colors.black))
+    master_drawing.add(String(230, 524, f"RV5+SV1: {rv5_sv1_sum} mV", fontSize=7, fontName="Helvetica-Bold", fillColor=colors.black))
+    master_drawing.add(String(230, 517, f"P/QRS/T: {p_mm}/{qrs_mm}/{t_mm}°", fontSize=7, fontName="Helvetica-Bold", fillColor=colors.black))
+
+    # COLUMN 4 (Right): Date/Time + Settings
     if date_time_str:
         parts = date_time_str.split()
         date_part = parts[0] if parts else ""
@@ -3485,13 +3502,13 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     else:
         date_part, time_part = "____", "____"
     
-    date_label = String(655, 540, f"Date: {date_part}",  # Additional shift: RIGHT by 15 (670→685) and UP by 5 (535→540)
-                       fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(date_label)
+    # Metadata text aligned to right (standard 12:1)
+    metadata_text = f"25.0 mm/s  0.5-25Hz  AC:50Hz  10.0 mm/mV"
+    master_drawing.add(String(610, 525, metadata_text, fontSize=5.5, fontName="Helvetica", fillColor=colors.grey))
+    master_drawing.add(String(610, 518, f"Date: {date_part} Time: {time_part}", fontSize=5.5, fontName="Helvetica", fillColor=colors.grey))
     
-    time_label = String(655, 525, f"Time: {time_part}",  # Additional shift: RIGHT by 15 (670→685) and UP by 5 (500→525)
-                       fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(time_label)
+    # Lead label shifted left of the waveform area
+    master_drawing.add(String(-15, 485, f"Lead: {selected_lead}", fontSize=8, fontName="Helvetica-Bold", fillColor=colors.black))
     
     # ==================== VITAL PARAMETERS (LANDSCAPE MODE - 2 COLUMNS SIDE BY SIDE) ====================
     has_rr_array = 'rr_all_for_hrv' in locals() and isinstance(rr_all_for_hrv, list) and len(rr_all_for_hrv) > 2
