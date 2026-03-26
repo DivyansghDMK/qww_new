@@ -3432,7 +3432,7 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     # Landscape A4 frame dimensions (landscape_width - 40, landscape_height - 40)
     # A4 landscape: 842 x 595, minus reduced margins (20 each side) = 802 x 555
     total_width = 780  # Fits in landscape frame (802 - margin)
-    total_height = 540  # Height for patient info and graphs
+    total_height = 555  # Match landscape frame height so top labels/values are fully visible
     master_drawing = Drawing(total_width, total_height)
     
     # Load saved ECG data to get V1-V6 leads (and Lead II to match main ECG report)
