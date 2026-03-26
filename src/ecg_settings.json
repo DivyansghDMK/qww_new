@@ -14,6 +14,5 @@
   "factory_calibration": "skip",
   "factory_self_test": "skip",
   "factory_memory_reset": "keep",
-  "factory_reset": "cancel",
-  "report_format": "6_2"
+  "factory_reset": "cancel"
 }

@@ -904,7 +904,7 @@ class ECGTestPage(QWidget):
         ecg_menu_buttons = [
             ("Save ECG", self.ecg_menu.show_save_ecg, "#28a745"),
             ("Open ECG", self.ecg_menu.show_open_ecg, "#17a2b8"),
-            ("Holter", self.show_holter_menu, "#E65100"),  # Added Holter button
+            ("Holter", self.show_holter_menu, "#00FF00"),  # Added Holter button (Green)
             ("Working Mode", self.ecg_menu.show_working_mode, "#ffc107"),
             ("Report Setup", self.ecg_menu.show_report_setup, "#6c757d"),
             ("Set Filter", self.ecg_menu.show_set_filter, "#fd7e14"),
@@ -4057,13 +4057,13 @@ class ECGTestPage(QWidget):
         self.holter_badge = QLabel(" HOLTER RECORDING ")
         self.holter_badge.setStyleSheet("""
             QLabel {
-                background: #E65100;
-                color: white;
+                background: #00FF00;
+                color: black;
                 border-radius: 4px;
-                padding: 4px 8px;
+                padding: 4px 10px;
                 font-weight: bold;
                 font-size: 14px;
-                border: 1px solid white;
+                border: 2px solid black;
             }
         """)
         self.holter_badge.setVisible(False)
@@ -8147,6 +8147,62 @@ class ECGTestPage(QWidget):
         if hasattr(self, 'generate_report_btn'):
             self.generate_report_btn.setVisible(not enabled)
 
+    def _show_holter_ui(self, is_recording=True, ecgh_path=None, show_record_mgmt=False):
+        """Open the professional Holter analysis workspace."""
+        if not HOLTER_AVAILABLE:
+            QMessageBox.warning(self, "Holter Monitor", "Holter module is not available.")
+            return
+
+        if self._holter_ui is None:
+            self._holter_ui = HolterMainWindow(
+                parent=self,
+                session_dir="",
+                patient_info=self._holter_patient_info or {},
+                writer=self._holter_writer if is_recording else None,
+                live_source=self if is_recording else None,
+            )
+        
+        if not is_recording and ecgh_path:
+            # Review mode - ecgh_path is the file, but load_completed_session expects session_dir
+            session_dir = os.path.dirname(ecgh_path)
+            self._holter_ui.load_completed_session(session_dir)
+        
+        if show_record_mgmt and hasattr(self._holter_ui, '_tabs'):
+            for i in range(self._holter_ui._tabs.count()):
+                if "Record Mgmt" in self._holter_ui._tabs.tabText(i):
+                    self._holter_ui._tabs.setCurrentIndex(i)
+                    break
+
+        self._holter_ui.showMaximized()
+        self._holter_ui.raise_()
+        self._holter_ui.activateWindow()
+
+    def start_live_holter_from_dashboard(self):
+        """Automatically enable Holter mode and start acquisition"""
+        if not HOLTER_AVAILABLE:
+            return
+
+        # 1. Enable Holter Mode
+        self.holter_mode_enabled = True
+        self._set_holter_button_state(True)
+        
+        # 2. Get patient info from dashboard if available
+        try:
+            if hasattr(self.stacked_widget.parent(), 'patient_details'):
+                self._holter_patient_info = dict(self.stacked_widget.parent().patient_details or {})
+        except Exception:
+            pass
+
+        # 3. Start acquisition (Demo or Real)
+        if hasattr(self, 'demo_toggle') and self.demo_toggle.isChecked():
+            # If demo mode is already ON, just start the Holter session
+            self._start_holter_session_internal()
+        else:
+            # Try to start real acquisition
+            self.start_acquisition()
+            
+        QMessageBox.information(self, "Holter Started", "Live Holter Recording has started automatically.")
+
     def show_holter_menu(self):
         """Open professional Holter setup and workspace."""
         if not HOLTER_AVAILABLE:
@@ -8171,18 +8227,11 @@ class ECGTestPage(QWidget):
             default_info.update(self._holter_patient_info)
 
         os.makedirs(self._holter_output_dir, exist_ok=True)
-        dialog = HolterStartDialog(self, patient_info=default_info, output_dir=self._holter_output_dir)
-        if dialog.exec_() != QDialog.Accepted:
-            return
-
-        result = dialog.get_result()
-        if not result:
-            return
-
-        patient_info, duration_hours, output_dir = result
-        self._holter_patient_info = patient_info
-        self._holter_duration_hours = duration_hours
-        self._holter_output_dir = output_dir
+        
+        # User requested to bypass the prompt when starting and only ask on stop
+        self._holter_patient_info = default_info
+        self._holter_duration_hours = 24
+        
         self.holter_mode_enabled = True
         self._set_holter_button_state(True)
 
@@ -8281,6 +8330,19 @@ class ECGTestPage(QWidget):
             if self._holter_worker:
                 self._holter_worker.stop()
             
+            # Show dialog to collect patient info AFTER recording
+            dialog = HolterStartDialog(self, patient_info=summary.get('patient_info', {}), output_dir=self._holter_output_dir)
+            dialog.setWindowTitle("Save Holter Recording Details")
+            if dialog.exec_() == QDialog.Accepted:
+                patient_info, dur, out_dir = dialog.get_result()
+                summary['patient_info'] = patient_info
+                import json
+                try:
+                    with open(os.path.join(summary.get('session_dir', ''), "patient.json"), 'w') as f:
+                        json.dump(patient_info, f, indent=4)
+                except Exception as e:
+                    print(f"Failed to save patient.json: {e}")
+
             # Generate the Holter report
             from .holter.report_generator import generate_holter_report
             report_path = generate_holter_report(
@@ -8305,10 +8367,21 @@ class ECGTestPage(QWidget):
             if hasattr(self, 'holter_badge'):
                 self.holter_badge.setVisible(False)
 
+            # --- NAVIGATE BACK TO DASHBOARD ---
+            try:
+                if hasattr(self, 'stacked_widget'):
+                    # Switch back to the dashboard page (index 0)
+                    self.stacked_widget.setCurrentIndex(0)
+                    print("[Holter] Navigated back to dashboard after session stop")
+            except Exception as e:
+                print(f"Error returning to dashboard: {e}")
+            # ----------------------------------
+
             if self._holter_ui:
                 try:
                     self._holter_ui.load_completed_session(summary['session_dir'], summary['patient_info'])
-                    self._holter_ui.showNormal()
+                    # We show it after navigation so it stays on top for review
+                    self._holter_ui.showMaximized()
                     self._holter_ui.raise_()
                     self._holter_ui.activateWindow()
                 except Exception as e:

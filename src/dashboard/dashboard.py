@@ -556,7 +556,7 @@ class Dashboard(QWidget):
 
         # --- Add Holter Monitor Button ---
         self.holter_btn = QPushButton("Holter Monitor")
-        self.holter_btn.setStyleSheet("background: #E65100; color: white; border-radius: 16px; padding: 8px 24px;")
+        self.holter_btn.setStyleSheet("background: #00FF00; color: black; border-radius: 16px; padding: 8px 24px; font-weight: bold;")
         self.holter_btn.clicked.connect(self.open_holter_from_dashboard)
         self.holter_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         greet_row.addWidget(self.holter_btn)
@@ -1554,16 +1554,41 @@ class Dashboard(QWidget):
             dialog.reject()
 
     def open_holter_from_dashboard(self):
-        """Navigate to ECG page and open Holter menu"""
+        """Navigate to ECG page and open Holter menu with options"""
         try:
-            # Switch to ECG test page
-            if hasattr(self, 'ecg_test_page'):
-                self.page_stack.setCurrentWidget(self.ecg_test_page)
-                # Call show_holter_menu on the test page
-                if hasattr(self.ecg_test_page, 'show_holter_menu'):
-                    self.ecg_test_page.show_holter_menu()
-            else:
+            # Check if ECG test page is available
+            if not hasattr(self, 'ecg_test_page'):
                 QMessageBox.warning(self, "Holter Monitor", "ECG Test Page not initialized.")
+                return
+
+            # Ask user for choice: Live Holter or Previous Recording
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Holter Monitor")
+            msg.setText("Choose an action:")
+            msg.setIcon(QMessageBox.Question)
+            
+            btn_live = msg.addButton("Live Holter Analysis", QMessageBox.ActionRole)
+            btn_prev = msg.addButton("View Previous Recording", QMessageBox.ActionRole)
+            btn_cancel = msg.addButton("Cancel", QMessageBox.RejectRole)
+            
+            # Style the buttons
+            btn_live.setStyleSheet("background: #00FF00; color: black; padding: 10px 20px; font-weight: bold; border-radius: 4px;")
+            btn_prev.setStyleSheet("background: #004400; color: white; padding: 10px 20px; font-weight: bold; border-radius: 4px; border: 1px solid #00FF00;")
+            
+            msg.exec_()
+            
+            if msg.clickedButton() == btn_live:
+                # Switch to ECG test page
+                self.page_stack.setCurrentWidget(self.ecg_test_page)
+                # Enable Holter mode and start acquisition automatically
+                if hasattr(self.ecg_test_page, 'start_live_holter_from_dashboard'):
+                    self.ecg_test_page.start_live_holter_from_dashboard()
+            
+            elif msg.clickedButton() == btn_prev:
+                # Open up Holter workspace on Record Management tab
+                if hasattr(self.ecg_test_page, '_show_holter_ui'):
+                    self.ecg_test_page._show_holter_ui(is_recording=False, ecgh_path=None, show_record_mgmt=True)
+
         except Exception as e:
             print(f"Error opening Holter from dashboard: {e}")
             QMessageBox.critical(self, "Error", f"Failed to open Holter Monitor: {str(e)}")
