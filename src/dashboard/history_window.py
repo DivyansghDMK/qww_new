@@ -15,7 +15,7 @@ from PyQt5.QtWidgets import (
     QTextEdit, QCheckBox, QGridLayout, QListWidget,
     QListWidgetItem, QAbstractItemView, QGroupBox, QStackedWidget,
 )
-import sys, os, json, datetime, shutil, smtplib, traceback
+import sys, os, json, datetime, shutil, smtplib, traceback, tempfile
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email.mime.text import MIMEText
@@ -445,6 +445,7 @@ class HistoryWindow(QDialog):
         self.username = username
         self.all_history_entries = []
         self._cloud_preview_map = {}
+        self._preview_temp_pdf = ""
         self.setStyleSheet(self.STYLE)
 
         # Responsive: use 90% of screen but never less than 800x500
@@ -862,6 +863,7 @@ class HistoryWindow(QDialog):
         hh.setSectionResizeMode(hh.Stretch)
         self.table.cellClicked.connect(self._on_cell_clicked)
         self.table.cellDoubleClicked.connect(self._on_row_double_clicked)
+        self.table.itemSelectionChanged.connect(self._on_selection_changed_preview)
         layout.addWidget(self.table, 1)
 
     def _build_action_buttons(self, layout):
@@ -1059,16 +1061,57 @@ class HistoryWindow(QDialog):
         self.table.setRowHeight(row, 26)
 
     # ── interactions ─────────────────────────────────────────────────────────
+    def _on_selection_changed_preview(self):
+        """Auto-preview currently selected report row in side panel."""
+        row = self.table.currentRow()
+        if row >= 0:
+            self._load_preview_for_row(row, silent=True)
+
+    def _get_cloud_preview_url(self, row: int) -> str:
+        pi = self.table.item(row, 4)
+        di = self.table.item(row, 0)
+        if not pi or not di:
+            return ""
+        return self._cloud_preview_map.get((pi.text().strip(), di.text().strip()), "")
+
+    def _download_preview_pdf(self, url: str) -> str:
+        if not url:
+            return ""
+        try:
+            r = requests.get(url, timeout=12)
+            if r.status_code != 200:
+                return ""
+            fd, tmp_path = tempfile.mkstemp(prefix="ecg_preview_", suffix=".pdf")
+            os.close(fd)
+            with open(tmp_path, "wb") as f:
+                f.write(r.content)
+            self._preview_temp_pdf = tmp_path
+            return tmp_path
+        except Exception:
+            return ""
+
+    def _load_preview_for_row(self, row: int, silent: bool = False) -> bool:
+        rf = self._get_report_file(row)
+        if rf and os.path.exists(rf):
+            self.preview_panel.load_pdf(rf)
+            return True
+
+        cloud_url = self._get_cloud_preview_url(row)
+        cloud_pdf = self._download_preview_pdf(cloud_url) if cloud_url else ""
+        if cloud_pdf and os.path.exists(cloud_pdf):
+            self.preview_panel.load_pdf(cloud_pdf)
+            return True
+
+        self.preview_panel.clear()
+        if not silent:
+            QMessageBox.information(self, "Preview", "No preview available for this report yet.")
+        return False
+
     def _on_cell_clicked(self, row, col):
-        """Single-click: load PDF into preview panel; status col → context menu."""
+        """Single-click: load selected report in side preview panel."""
         if col == 10:
             self._show_status_menu(row)
-        else:
-            rf = self._get_report_file(row)
-            if rf and os.path.exists(rf):
-                self.preview_panel.load_pdf(rf)
-            else:
-                self.preview_panel.clear()
+        self._load_preview_for_row(row, silent=True)
 
     def _on_row_double_clicked(self, row, col):
         self._preview_selected()
@@ -1091,11 +1134,7 @@ class HistoryWindow(QDialog):
         if row < 0:
             QMessageBox.information(self, "Preview", "Select a report row first.")
             return
-        rf = self._get_report_file(row)
-        if rf and os.path.exists(rf):
-            self.preview_panel.load_pdf(rf)
-        else:
-            QMessageBox.information(self, "Preview", "No local PDF found for this entry.")
+        self._load_preview_for_row(row, silent=False)
 
     def _open_in_system(self):
         row = self.table.currentRow()
