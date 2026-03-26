@@ -970,6 +970,66 @@ class HistoryWindow(QDialog):
             pass
 
     # ── data loading ─────────────────────────────────────────────────────────
+    def _infer_report_type(self, report_file: str = "", report_type: str = "") -> str:
+        rt = (report_type or "").strip()
+        if rt:
+            return rt
+        fl = (report_file or "").lower()
+        if "hyper" in fl:
+            return "Hyperkalemia"
+        if "hrv" in fl:
+            return "HRV"
+        if "holter" in fl:
+            return "Holter"
+        if "analysis" in fl:
+            return "Analysis"
+        return "ECG"
+
+    def _add_report_file_entries(self, history_entries):
+        """Ensure all PDF reports under reports/ appear in history table."""
+        try:
+            if not os.path.exists(REPORTS_DIR):
+                return
+            known = {
+                os.path.abspath((e.get("report_file") or "")).lower()
+                for e in history_entries if e.get("report_file")
+            }
+            for root, _dirs, files in os.walk(REPORTS_DIR):
+                for fn in files:
+                    if not fn.lower().endswith('.pdf'):
+                        continue
+                    full_path = os.path.abspath(os.path.join(root, fn))
+                    if full_path.lower() in known:
+                        continue
+
+                    date_str, time_str = "", ""
+                    m = re.search(r"(20\d{2})(\d{2})(\d{2})[_-]?(\d{2})(\d{2})(\d{2})", fn)
+                    if m:
+                        date_str = f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+                        time_str = f"{m.group(4)}:{m.group(5)}:{m.group(6)}"
+                    else:
+                        ts = datetime.datetime.fromtimestamp(os.path.getmtime(full_path))
+                        date_str = ts.strftime("%Y-%m-%d")
+                        time_str = ts.strftime("%H:%M:%S")
+
+                    history_entries.append({
+                        "date": date_str,
+                        "time": time_str,
+                        "report_type": self._infer_report_type(full_path, ""),
+                        "Org.": "",
+                        "doctor": "",
+                        "patient_name": "",
+                        "age": "",
+                        "gender": "",
+                        "height": "",
+                        "weight": "",
+                        "report_file": full_path,
+                        "username": "",
+                    })
+                    known.add(full_path.lower())
+        except Exception:
+            pass
+
     def load_history(self):
         self.table.setRowCount(0)
         history_entries = []
@@ -1071,7 +1131,10 @@ class HistoryWindow(QDialog):
                 except Exception:
                     pass
 
-        # Filter by username and report type
+        # Ensure reports folder PDFs are also visible in history list
+        self._add_report_file_entries(history_entries)
+
+        # Filter by username and normalize report type
         self.all_history_entries = []
         for entry in history_entries:
             if self.username and entry.get("username") and entry.get("username") != self.username:
