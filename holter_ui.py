@@ -44,35 +44,41 @@ try:
 except Exception:
     pg = None
 
-# ── Colour palette ─────────────────────────────────────────────────────────────
-COL_ORANGE  = "#34C759"
-COL_DARK    = "#3A3E42"
-COL_BLUE    = "#2D9CFF"
-COL_GREEN   = "#2E7D32"
-COL_RED     = "#B71C1C"
-COL_LIGHT   = "#FFF8F0"
-COL_GRAY    = "#F5F5F5"
-COL_BG      = "#202326"    # dark ECG-style background
-COL_GREEN_ECG = "#00FF00"  # ECG trace green
+# ── Clinical white colour palette ─────────────────────────────────────────────
+COL_BG        = "#F4F6F8"   # page background
+COL_SURFACE   = "#FFFFFF"   # card / panel surface
+COL_DARK      = "#1A1A2E"   # toolbar / heavy elements
+COL_BORDER    = "#E2E8F0"   # card borders
+COL_TEXT      = "#111827"   # primary text
+COL_MUTED     = "#6B7280"   # secondary / label text
+COL_ORANGE    = "#2563EB"   # accent blue (action buttons)
+COL_BLUE      = "#2563EB"   # alias
+COL_GREEN     = "#16A34A"   # success / connect
+COL_RED       = "#DC2626"   # clinical alert
+COL_AMBER     = "#D97706"   # warning
+COL_LIGHT     = "#F9FAFB"
+COL_GRAY      = "#F3F4F6"
+COL_GREEN_ECG = "#000000"   # ECG trace colour (black on white)
 
 
-def _btn_style(bg=COL_ORANGE, fg="white", hover="#22C55E"):
+def _btn_style(bg="#2563EB", fg="white", hover="#1D4ED8"):
     return f"""
         QPushButton {{
             background: {bg};
             color: {fg};
             border: none;
             border-radius: 6px;
-            padding: 8px 16px;
-            font-size: 13px;
-            font-weight: bold;
+            padding: 6px 14px;
+            font-size: 12px;
+            font-weight: 600;
         }}
         QPushButton:hover {{
             background: {hover};
         }}
         QPushButton:pressed {{
             background: {bg};
-            opacity: 0.8;
+        }}
+
         }}
     """
 
@@ -1327,18 +1333,22 @@ class HolterReplayPanel(QWidget):
 
 
 class HolterWaveGridPanel(QFrame):
-    """Professional 12‑lead Holter waveform workspace."""
+    """
+    12-lead Holter waveform workspace.
+    Shows all 12 leads as full-width parallel horizontal strips
+    inside a vertical scrollable area with a thin grid background.
+    """
 
     LEADS = ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"]
 
     def __init__(self, parent=None, live_source=None, replay_engine=None):
         super().__init__(parent)
-        self.live_source = live_source
-        self.replay_engine = replay_engine
-        self.window_sec = 8.0
-        self._lead_widgets = []
+        self.live_source    = live_source
+        self.replay_engine  = replay_engine
+        self.window_sec     = 10.0
+        self._lead_widgets  = []         # (curve, plot_widget) per lead
         self._replay_buffer = None
-        self.setStyleSheet("background: #101722; border: 1px solid #2B3B50; border-radius: 14px;")
+        self.setStyleSheet(f"background: {COL_SURFACE}; border: 1px solid {COL_BORDER}; border-radius: 10px;")
         self._build_ui()
 
         self._timer = QTimer(self)
@@ -1346,66 +1356,101 @@ class HolterWaveGridPanel(QFrame):
         self._timer.start(150)
 
     def _build_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(10)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
-        header = QHBoxLayout()
-        title = QLabel("12‑Lead Live Workspace")
-        title.setStyleSheet("color: white; font-size: 16px; font-weight: bold;")
-        subtitle = QLabel("Professional Holter view with synchronized moving strips.")
-        subtitle.setStyleSheet("color: #94A3B8; font-size: 11px;")
-        header_col = QVBoxLayout()
-        header_col.addWidget(title)
-        header_col.addWidget(subtitle)
-        header.addLayout(header_col)
-        header.addStretch()
-        speed = QLabel("Paper Speed 25mm/s  |  Gain 10mm/mV")
-        speed.setStyleSheet(f"color: {COL_ORANGE}; font-size: 11px; font-weight: bold;")
-        header.addWidget(speed)
-        layout.addLayout(header)
+        # ── header bar ───────────────────────────────────────────────────
+        hdr = QFrame()
+        hdr.setFixedHeight(36)
+        hdr.setStyleSheet(f"background: {COL_SURFACE}; border-bottom: 1px solid {COL_BORDER};")
+        hdr_l = QHBoxLayout(hdr)
+        hdr_l.setContentsMargins(12, 0, 12, 0)
+        title_lbl = QLabel("12-LEAD VIEW")
+        title_lbl.setStyleSheet(f"color: {COL_MUTED}; font-size: 10px; font-weight: 700; letter-spacing: 1px;")
+        hdr_l.addWidget(title_lbl)
+        hdr_l.addStretch()
+        speed_lbl = QLabel("25 mm/s  ·  10 mm/mV")
+        speed_lbl.setStyleSheet(f"color: {COL_MUTED}; font-size: 10px;")
+        hdr_l.addWidget(speed_lbl)
+        outer.addWidget(hdr)
 
         if pg is None:
-            fallback = QLabel("pyqtgraph is not available, so the live Holter waveform grid cannot be rendered in this environment.")
-            fallback.setWordWrap(True)
-            fallback.setStyleSheet("color: #FCA5A5; font-size: 12px; padding: 16px;")
-            layout.addWidget(fallback)
+            fb = QLabel("pyqtgraph unavailable — cannot render waveforms.")
+            fb.setStyleSheet(f"color: {COL_RED}; padding: 16px; font-size: 12px;")
+            outer.addWidget(fb)
             return
 
-        grid = QGridLayout()
-        grid.setHorizontalSpacing(8)
-        grid.setVerticalSpacing(8)
+        # ── scrollable strip area ─────────────────────────────────────────
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setStyleSheet(f"""
+            QScrollArea {{ background: {COL_SURFACE}; border: none; }}
+            QScrollBar:vertical {{
+                background: {COL_GRAY}; width: 8px; border-radius: 4px;
+            }}
+            QScrollBar::handle:vertical {{
+                background: #CBD5E1; border-radius: 4px; min-height: 20px;
+            }}
+        """)
 
-        pg.setConfigOptions(antialias=True, background="#0B1220", foreground="#CBD5E1")
+        container = QWidget()
+        container.setStyleSheet(f"background: {COL_SURFACE};")
+        strip_layout = QVBoxLayout(container)
+        strip_layout.setContentsMargins(0, 0, 0, 0)
+        strip_layout.setSpacing(0)
+
+        pg.setConfigOptions(antialias=True, background='w', foreground='k')
+
         for idx, lead in enumerate(self.LEADS):
-            card = QFrame()
-            card.setStyleSheet("background: #0B1220; border: 1px solid #213147; border-radius: 10px;")
-            card_layout = QVBoxLayout(card)
-            card_layout.setContentsMargins(6, 6, 6, 6)
-            card_layout.setSpacing(4)
+            row_widget = QWidget()
+            row_widget.setFixedHeight(90)
+            row_widget.setStyleSheet(
+                f"background: {COL_SURFACE};"
+                + (f"border-bottom: 1px solid {COL_BORDER};" if idx < 11 else "")
+            )
+            row_l = QHBoxLayout(row_widget)
+            row_l.setContentsMargins(0, 0, 0, 0)
+            row_l.setSpacing(0)
 
-            label = QLabel(lead)
-            label.setStyleSheet("color: #E2E8F0; font-size: 12px; font-weight: bold; padding-left: 4px;")
-            card_layout.addWidget(label)
+            # Lead label sidebar
+            lbl_w = QWidget()
+            lbl_w.setFixedWidth(48)
+            lbl_w.setStyleSheet(f"background: {COL_GRAY}; border-right: 1px solid {COL_BORDER};")
+            lbl_l = QVBoxLayout(lbl_w)
+            lbl_l.setContentsMargins(4, 0, 4, 0)
+            lbl_lbl = QLabel(lead)
+            lbl_lbl.setStyleSheet(f"color: {COL_TEXT}; font-size: 12px; font-weight: 700;")
+            lbl_lbl.setAlignment(Qt.AlignCenter)
+            lbl_l.addWidget(lbl_lbl)
+            row_l.addWidget(lbl_w)
 
+            # Plot strip (full width, white bg, light pink minor grid)
             plot = pg.PlotWidget()
             plot.setMenuEnabled(False)
             plot.setMouseEnabled(x=False, y=False)
             plot.hideButtons()
-            plot.setBackground("#0B1220")
-            plot.showGrid(x=True, y=True, alpha=0.16)
-            plot.getAxis("left").setStyle(showValues=False)
-            plot.getAxis("bottom").setStyle(showValues=False)
-            plot.setYRange(-1.6, 1.6, padding=0)
+            plot.setBackground('w')
+            plot.showGrid(x=True, y=True, alpha=0.25)
+            plot.getAxis('left').setStyle(showValues=False)
+            plot.getAxis('bottom').setStyle(showValues=False)
+            plot.setYRange(-1.5, 1.5, padding=0)
             plot.setContentsMargins(0, 0, 0, 0)
-            curve = plot.plot(pen=pg.mkPen(COL_GREEN_ECG, width=1.6))
-            card_layout.addWidget(plot, 1)
+            plot.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+            # Thin ECG line, black on white
+            curve = plot.plot(pen=pg.mkPen(color=(0, 0, 0), width=0.7))
+            row_l.addWidget(plot, 1)
 
             self._lead_widgets.append((curve, plot))
-            row, col = divmod(idx, 4)
-            grid.addWidget(card, row, col)
+            strip_layout.addWidget(row_widget)
 
-        layout.addLayout(grid, 1)
+        strip_layout.addStretch()
+        scroll.setWidget(container)
+        outer.addWidget(scroll, 1)
 
     def set_replay_engine(self, replay_engine):
         self.replay_engine = replay_engine
@@ -1469,7 +1514,7 @@ class HolterInsightPanel(QFrame):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setStyleSheet("background: #101722; border: 1px solid #2B3B50; border-radius: 14px;")
+        self.setStyleSheet(f"background: {COL_SURFACE}; border: 1px solid {COL_BORDER}; border-radius: 8px;")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
@@ -1538,48 +1583,96 @@ class HolterSummaryCards(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._value_labels = {}
-        self.setStyleSheet("background: #101722; border: 1px solid #2B3B50; border-radius: 14px;")
+        self._max_hr_label = None
+        self.setStyleSheet(f"""
+            background: {COL_SURFACE};
+            border-bottom: 1px solid {COL_BORDER};
+            border-radius: 0px;
+        """)
         self._build_ui()
 
     def _build_ui(self):
-        layout = QGridLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setHorizontalSpacing(10)
-        layout.setVerticalSpacing(10)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(16, 10, 16, 10)
+        layout.setSpacing(0)
 
+        # 6 stat cards: AVG HR | MIN/MAX HR | TOTAL BEATS | PAUSES | HRV SDNN | SIGNAL QUALITY
         cards = [
-            ("Average HR", "avg_hr", "bpm"),
-            ("Min / Max HR", "range_hr", "bpm"),
-            ("Total Beats", "beats", ""),
-            ("Pauses", "pauses", "events"),
-            ("Signal Quality", "quality", "%"),
-            ("HRV (SDNN)", "sdnn", "ms"),
+            ("AVG HEART RATE", "avg_hr",   "{:.0f}", "bpm",       False),
+            ("MIN / MAX HR",  "range_hr",  None,    "bpm",       True),
+            ("TOTAL BEATS",   "beats",     "{:,}",  "events",    False),
+            ("PAUSES",        "pauses",    "{}",    "events",    False),
+            ("HRV SDNN",      "sdnn",      "{:.1f}","ms \u00b7 low", False),
+            ("SIGNAL QUALITY","quality",   "{:.1f}","% acceptable", False),
         ]
-        for idx, (title, key, unit) in enumerate(cards):
-            frame = QFrame()
-            frame.setStyleSheet("background: #0B1220; border: 1px solid #223247; border-radius: 12px;")
-            box = QVBoxLayout(frame)
-            box.setContentsMargins(12, 10, 12, 10)
-            box.setSpacing(4)
-            lbl = QLabel(title)
-            lbl.setStyleSheet("color: #94A3B8; font-size: 11px; font-weight: bold;")
-            val = QLabel("—")
-            val.setStyleSheet("color: white; font-size: 18px; font-weight: bold;")
+        for i, (title, key, fmt, unit, is_range) in enumerate(cards):
+            if i > 0:
+                sep = QFrame()
+                sep.setFrameShape(QFrame.VLine)
+                sep.setStyleSheet(f"color: {COL_BORDER}; max-width: 1px;")
+                layout.addWidget(sep)
+
+            card = QWidget()
+            card_l = QVBoxLayout(card)
+            card_l.setContentsMargins(20, 6, 20, 6)
+            card_l.setSpacing(2)
+
+            title_lbl = QLabel(title)
+            title_lbl.setStyleSheet(f"color: {COL_MUTED}; font-size: 10px; font-weight: 600; letter-spacing: 0.5px;")
+            card_l.addWidget(title_lbl)
+
+            val_row = QHBoxLayout()
+            val_row.setSpacing(2)
+
+            if is_range:  # MIN / MAX with separate labels
+                min_lbl = QLabel("—")
+                min_lbl.setStyleSheet(f"color: {COL_TEXT}; font-size: 22px; font-weight: 700;")
+                slash = QLabel(" / ")
+                slash.setStyleSheet(f"color: {COL_MUTED}; font-size: 16px;")
+                max_lbl = QLabel("—")
+                max_lbl.setStyleSheet(f"color: {COL_RED}; font-size: 22px; font-weight: 700;")
+                val_row.addWidget(min_lbl)
+                val_row.addWidget(slash)
+                val_row.addWidget(max_lbl)
+                val_row.addStretch()
+                self._value_labels["min_hr"] = min_lbl
+                self._max_hr_label = max_lbl
+            else:
+                val = QLabel("—")
+                val.setStyleSheet(f"color: {COL_TEXT}; font-size: 22px; font-weight: 700;")
+                val_row.addWidget(val)
+                val_row.addStretch()
+                self._value_labels[key] = val
+
+            card_l.addLayout(val_row)
+
             unit_lbl = QLabel(unit)
-            unit_lbl.setStyleSheet(f"color: {COL_ORANGE}; font-size: 10px;")
-            box.addWidget(lbl)
-            box.addWidget(val)
-            box.addWidget(unit_lbl)
-            self._value_labels[key] = val
-            layout.addWidget(frame, 0 if idx < 3 else 1, idx % 3)
+            unit_lbl.setStyleSheet(f"color: {COL_MUTED}; font-size: 10px;")
+            card_l.addWidget(unit_lbl)
+
+            layout.addWidget(card, 1)
 
     def update_summary(self, summary: dict):
-        self._value_labels["avg_hr"].setText(f"{summary.get('avg_hr', 0):.0f}")
-        self._value_labels["range_hr"].setText(f"{summary.get('min_hr', 0):.0f} / {summary.get('max_hr', 0):.0f}")
-        self._value_labels["beats"].setText(f"{summary.get('total_beats', 0):,}")
-        self._value_labels["pauses"].setText(str(summary.get("pauses", 0)))
-        self._value_labels["quality"].setText(f"{summary.get('avg_quality', 0) * 100:.1f}")
-        self._value_labels["sdnn"].setText(f"{summary.get('sdnn', 0):.1f}")
+        avg = summary.get('avg_hr', 0)
+        min_hr = summary.get('min_hr', 0)
+        max_hr = summary.get('max_hr', 0)
+        if "avg_hr" in self._value_labels:
+            self._value_labels["avg_hr"].setText(f"{avg:.0f}")
+        if "min_hr" in self._value_labels:
+            self._value_labels["min_hr"].setText(f"{min_hr:.0f}")
+        if self._max_hr_label:
+            self._max_hr_label.setText(f"{max_hr:.0f}")
+            # Flag abnormally high max HR in red
+            color = COL_RED if max_hr > 150 else COL_TEXT
+            self._max_hr_label.setStyleSheet(f"color: {color}; font-size: 22px; font-weight: 700;")
+        if "beats" in self._value_labels:
+            self._value_labels["beats"].setText(f"{summary.get('total_beats', 0):,}")
+        if "pauses" in self._value_labels:
+            self._value_labels["pauses"].setText(str(summary.get("pauses", 0)))
+        if "sdnn" in self._value_labels:
+            self._value_labels["sdnn"].setText(f"{summary.get('sdnn', 0):.1f}")
+        if "quality" in self._value_labels:
+            self._value_labels["quality"].setText(f"{summary.get('avg_quality', 0) * 100:.1f}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1600,9 +1693,14 @@ class HolterMainWindow(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Holter ECG Monitor & Analysis")
         self.setMinimumSize(1024, 680)
-        screen = QApplication.primaryScreen().availableGeometry()
-        self.resize(max(1024, int(screen.width() * 0.92)),
-                    max(680,  int(screen.height() * 0.90)))
+        # Use the screen the window will appear on (works across multiple screens)
+        try:
+            screen = QApplication.primaryScreen().availableGeometry()
+            self.resize(max(1024, int(screen.width() * 0.92)),
+                        max(680,  int(screen.height() * 0.90)))
+        except Exception:
+            self.resize(1280, 800)
+        self.showMaximized()
         self.session_dir = session_dir
         self.patient_info = patient_info or (writer.patient_info if writer else {})
         self._writer = writer
@@ -1738,239 +1836,339 @@ class HolterMainWindow(QDialog):
         }
 
     def _build_ui(self):
-        self.setStyleSheet(f"background: {COL_BG}; color: white;")
+        # ── Clinical white theme ──────────────────────────────────────────
+        self.setStyleSheet(f"""
+            QDialog {{ background: {COL_BG}; }}
+            QWidget {{ color: {COL_TEXT}; }}
+        """)
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # ── Top toolbar ──
+        # ══════════════════════════════════════════════════════════════════
+        # TOP TOOLBAR
+        # ══════════════════════════════════════════════════════════════════
         toolbar = QFrame()
-        toolbar.setFixedHeight(48)
-        toolbar.setStyleSheet(f"background: {COL_DARK}; border-bottom: 2px solid {COL_ORANGE};")
-        tb_layout = QHBoxLayout(toolbar)
-        tb_layout.setContentsMargins(12, 4, 12, 4)
+        toolbar.setFixedHeight(52)
+        toolbar.setStyleSheet(f"background: {COL_DARK}; border: none;")
+        tb_l = QHBoxLayout(toolbar)
+        tb_l.setContentsMargins(16, 0, 16, 0)
+        tb_l.setSpacing(12)
 
-        title_lbl = QLabel("HOLTER ECG ANALYSIS SUITE")
-        title_lbl.setStyleSheet(f"color: {COL_ORANGE}; font-size: 16px; font-weight: bold;")
-        tb_layout.addWidget(title_lbl)
+        # Brand
+        brand = QLabel("<b style='color:#2563EB'>HOLTER</b> "
+                       "<span style='color:#F1F5F9'>ECG ANALYSIS</span>")
+        brand.setStyleSheet("font-size: 15px;")
+        tb_l.addWidget(brand)
 
-        # Patient info
-        pname = self.patient_info.get('name', self.patient_info.get('patient_name', ''))
-        if pname:
-            p_lbl = QLabel(f"  |  Patient: {pname}")
-            p_lbl.setStyleSheet("color: #aaa; font-size: 12px;")
-            tb_layout.addWidget(p_lbl)
-
+        # Recording status indicator
         dur_sec = self._summary.get('duration_sec', 0)
-        dur_h = int(dur_sec // 3600)
-        dur_m = int((dur_sec % 3600) // 60)
+        dur_h   = int(dur_sec // 3600)
+        dur_m   = int((dur_sec % 3600) // 60)
         if dur_sec <= 0:
-            dur_h = self._duration_hours
-            dur_m = 0
-        d_lbl = QLabel(f"  |  Duration: {dur_h}h {dur_m}m")
-        d_lbl.setStyleSheet("color: #aaa; font-size: 12px;")
-        tb_layout.addWidget(d_lbl)
+            dur_h, dur_m = self._duration_hours, 0
+        is_live = bool(self._writer)
+        dot_color = "#22C55E" if is_live else "#6B7280"
+        status_text = "Recording" if is_live else "Review"
+        status_lbl = QLabel(
+            f"<span style='font-size:10px; color:{dot_color}'>&#9679;</span>  "
+            f"<span style='color:#CBD5E1; font-size:12px;'>{status_text} &middot; "
+            f"{dur_h:02d}h {dur_m:02d}m</span>"
+        )
+        status_lbl.setStyleSheet("border: 1px solid #334155; border-radius: 12px; padding: 2px 10px; background: #1E293B;")
+        tb_l.addWidget(status_lbl)
+        tb_l.addStretch()
 
-        tb_layout.addStretch()
+        # Toolbar buttons
+        for label, slot, color in [
+            ("Patient info",     None,                  "#334155"),
+            ("Export",          None,                  "#334155"),
+            ("Generate report", self._generate_report, COL_GREEN),
+        ]:
+            btn = QPushButton(label)
+            btn.setFixedHeight(34)
+            btn.setStyleSheet(_btn_style(color, "white",
+                              "#16A34A" if color == COL_GREEN else "#475569"))
+            if slot:
+                btn.clicked.connect(slot)
+            tb_l.addWidget(btn)
 
-        # Generate report button
-        report_btn = QPushButton("📄  Generate Report")
-        report_btn.setStyleSheet(_btn_style(COL_GREEN, "white", "#388E3C"))
-        report_btn.clicked.connect(self._generate_report)
-        tb_layout.addWidget(report_btn)
-
-        close_btn = QPushButton("✕  Close")
-        close_btn.setStyleSheet(_btn_style("#555", "white", "#666"))
+        close_btn = QPushButton("✕ Close")
+        close_btn.setFixedHeight(34)
+        close_btn.setStyleSheet(_btn_style("#3F3F46", "white", "#52525B"))
         close_btn.clicked.connect(self.close)
-        tb_layout.addWidget(close_btn)
+        tb_l.addWidget(close_btn)
 
         main_layout.addWidget(toolbar)
 
-        # ── Live status bar (only during recording) ──
+        # Live status bar (recording only)
         if self._writer:
             self._status_bar = HolterStatusBar(self, target_hours=self._duration_hours)
             self._status_bar.stop_requested.connect(self._stop_recording)
             main_layout.addWidget(self._status_bar)
 
-        body_scroll = QScrollArea()
-        body_scroll.setWidgetResizable(True)
-        body_scroll.setFrameShape(QFrame.NoFrame)
-        body_scroll.setStyleSheet(f"QScrollArea {{ background:{COL_BG}; border:none; }}")
-        body = QWidget()
-        body_layout = QVBoxLayout(body)
-        body_layout.setContentsMargins(12, 12, 12, 12)
-        body_layout.setSpacing(12)
-
+        # ══════════════════════════════════════════════════════════════════
+        # METRICS BAR  (6 stat cards in one horizontal strip)
+        # ══════════════════════════════════════════════════════════════════
         self._summary_cards = HolterSummaryCards()
-        body_layout.addWidget(self._summary_cards)
+        self._summary_cards.setFixedHeight(88)
+        main_layout.addWidget(self._summary_cards)
 
-        workspace = QSplitter(Qt.Horizontal)
-        workspace.setChildrenCollapsible(False)
-        workspace.setStyleSheet("""
-            QSplitter::handle {
-                background: #223247;
-                width: 2px;
-            }
-        """)
-
-        left = QWidget()
-        left_layout = QVBoxLayout(left)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(12)
-
-        self._wave_panel = HolterWaveGridPanel(live_source=self._live_source, replay_engine=self._replay_engine)
-        left_layout.addWidget(self._wave_panel, 2)
-
-        self._insight_panel = HolterInsightPanel()
-        left_layout.addWidget(self._insight_panel, 1)
-
-        right = QWidget()
-        right_layout = QVBoxLayout(right)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(12)
-
-        self._overview_panel = HolterOverviewPanel()
-        self._overview_panel.update_summary(self._summary)
-        right_layout.addWidget(self._overview_panel, 1)
-
-        self._events_panel = HolterEventsPanel()
-        events = []
-        if self._replay_engine:
-            events = self._replay_engine.get_events_list()
-        else:
-            for m in self._metrics_list:
-                for a in m.get('arrhythmias', []):
-                    t = m['t']
-                    h = int(t // 3600)
-                    mn = int((t % 3600) // 60)
-                    s = int(t % 60)
-                    events.append({'timestamp': t, 'label': a, 'time_str': f"{h:02d}:{mn:02d}:{s:02d}"})
-        self._events_panel.load_events(events, self._summary)
-        self._events_panel.seek_requested.connect(self._on_seek_requested)
-        right_layout.addWidget(self._events_panel, 1)
-
-        workspace.addWidget(left)
-        workspace.addWidget(right)
-        workspace.setStretchFactor(0, 3)   # left gets 3 parts
-        workspace.setStretchFactor(1, 2)   # right gets 2 parts
-        body_layout.addWidget(workspace, 3)
-
-        # ── Tab widget ──
+        # ══════════════════════════════════════════════════════════════════
+        # NAVIGATION TAB BAR
+        # ══════════════════════════════════════════════════════════════════
         self._tabs = QTabWidget()
         self._tabs.setUsesScrollButtons(True)
-        self._tabs.setMovable(True)
+        self._tabs.setMovable(False)
         self._tabs.setElideMode(Qt.ElideRight)
         self._tabs.tabBar().setExpanding(False)
+        self._tabs.setDocumentMode(True)
         self._tabs.setStyleSheet(f"""
             QTabWidget::pane {{
                 border: none;
                 background: {COL_BG};
             }}
             QTabBar::tab {{
-                background: {COL_DARK};
-                color: #888;
-                padding: 8px 20px;
+                background: {COL_SURFACE};
+                color: {COL_MUTED};
+                padding: 10px 22px;
                 font-size: 12px;
+                font-weight: 500;
                 border: none;
                 border-bottom: 2px solid transparent;
+                min-width: 80px;
             }}
             QTabBar::tab:selected {{
-                color: white;
+                color: {COL_TEXT};
                 border-bottom: 2px solid {COL_ORANGE};
-                font-weight: bold;
+                font-weight: 700;
+                background: {COL_SURFACE};
             }}
-            QTabBar::tab:hover {{ color: white; }}
+            QTabBar::tab:hover {{ color: {COL_TEXT}; }}
+            QTabBar {{ background: {COL_SURFACE};
+                       border-bottom: 1px solid {COL_BORDER}; }}
         """)
 
-        # Record Management tab
-        record_dir = self.session_dir if self.session_dir else os.path.join(os.getcwd(), "recordings")
-        if os.path.isfile(record_dir):
-            record_dir = os.path.dirname(record_dir)
-        self._record_mgmt_panel = HolterRecordManagementPanel(output_dir=record_dir)
-        self._tabs.addTab(self._record_mgmt_panel, "📋  Record Management")
+        # ── Tab 0: Recording (3-column layout with 12-lead workspace) ──
+        recording_tab = QWidget()
+        recording_tab.setStyleSheet(f"background: {COL_BG};")
+        rec_outer = QVBoxLayout(recording_tab)
+        rec_outer.setContentsMargins(0, 0, 0, 0)
+        rec_outer.setSpacing(0)
 
-        # HRV tab
-        self._hrv_panel = HolterHRVPanel()
-        self._hrv_panel.update_hrv(self._metrics_list, self._summary)
-        self._tabs.addTab(self._hrv_panel, "📈  HRV Analysis")
+        # Main content: splitter
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.setChildrenCollapsible(False)
+        splitter.setHandleWidth(1)
+        splitter.setStyleSheet(f"QSplitter::handle {{ background: {COL_BORDER}; }}")
 
-        # Replay tab
+        # ── LEFT: 12-lead thumbnail grid + Tools ─────────────────────────
+        left_panel = QFrame()
+        left_panel.setStyleSheet(f"background: {COL_SURFACE}; border-right: 1px solid {COL_BORDER};")
+        left_panel.setFixedWidth(280)
+        left_l = QVBoxLayout(left_panel)
+        left_l.setContentsMargins(0, 0, 0, 0)
+        left_l.setSpacing(0)
+
+        # 12-lead thumbnails header
+        thmb_hdr = QLabel("12-LEAD VIEW")
+        thmb_hdr.setFixedHeight(32)
+        thmb_hdr.setStyleSheet(
+            f"color: {COL_MUTED}; font-size: 10px; font-weight: 700;"
+            f" letter-spacing: 1px; padding-left: 12px;"
+            f" background: {COL_GRAY}; border-bottom: 1px solid {COL_BORDER};"
+        )
+        left_l.addWidget(thmb_hdr)
+
+        # Thumbnail scroll area (2-column grid)
+        thmb_scroll = QScrollArea()
+        thmb_scroll.setWidgetResizable(True)
+        thmb_scroll.setFrameShape(QFrame.NoFrame)
+        thmb_scroll.setStyleSheet(f"QScrollArea {{ background: {COL_SURFACE}; border: none; }}")
+        thmb_container = QWidget()
+        thmb_container.setStyleSheet(f"background: {COL_SURFACE};")
+        thmb_grid = QGridLayout(thmb_container)
+        thmb_grid.setContentsMargins(8, 8, 8, 8)
+        thmb_grid.setSpacing(6)
+
+        LEADS_ORDER = ["I", "II", "III", "aVR", "aVL", "aVF",
+                       "V1", "V2", "V3", "V4", "V5", "V6"]
+        self._thumb_curves = []
+        if pg is not None:
+            pg.setConfigOptions(antialias=True, background='w', foreground='k')
+            for idx, lead in enumerate(LEADS_ORDER):
+                card = QFrame()
+                card.setFixedHeight(62)
+                card.setStyleSheet(
+                    f"background: {COL_SURFACE}; border: 1px solid {COL_BORDER};"
+                    " border-radius: 8px;"
+                )
+                card_l = QVBoxLayout(card)
+                card_l.setContentsMargins(6, 4, 6, 4)
+                card_l.setSpacing(2)
+                lbl = QLabel(lead)
+                lbl.setStyleSheet(f"color: {COL_MUTED}; font-size: 10px; font-weight: 600;")
+                card_l.addWidget(lbl)
+                p = pg.PlotWidget()
+                p.setMenuEnabled(False)
+                p.setMouseEnabled(x=False, y=False)
+                p.hideButtons()
+                p.setBackground('w')
+                p.showGrid(x=False, y=False)
+                p.getAxis('left').setStyle(showValues=False)
+                p.getAxis('bottom').setStyle(showValues=False)
+                p.setYRange(-1.5, 1.5, padding=0)
+                p.setContentsMargins(0, 0, 0, 0)
+                c = p.plot(pen=pg.mkPen(color=(0, 0, 0), width=0.7))
+                card_l.addWidget(p, 1)
+                self._thumb_curves.append((c, lead))
+                thmb_grid.addWidget(card, idx // 2, idx % 2)
+
+        thmb_scroll.setWidget(thmb_container)
+        left_l.addWidget(thmb_scroll, 1)
+
+        # Tools section
+        tools_hdr = QLabel("TOOLS")
+        tools_hdr.setFixedHeight(32)
+        tools_hdr.setStyleSheet(
+            f"color: {COL_MUTED}; font-size: 10px; font-weight: 700;"
+            f" letter-spacing: 1px; padding-left: 12px;"
+            f" background: {COL_GRAY}; border-top: 1px solid {COL_BORDER};"
+            f" border-bottom: 1px solid {COL_BORDER};"
+        )
+        left_l.addWidget(tools_hdr)
+        for tool_name in ["Measuring ruler", "Magnifying glass",
+                          "Gain settings", "Add event [space]"]:
+            tbtn = QPushButton(tool_name)
+            tbtn.setFixedHeight(30)
+            tbtn.setStyleSheet(f"""
+                QPushButton {{
+                    background: {COL_SURFACE};
+                    color: {COL_TEXT};
+                    border: none;
+                    border-bottom: 1px solid {COL_BORDER};
+                    text-align: left;
+                    padding-left: 14px;
+                    font-size: 12px;
+                }}
+                QPushButton:hover {{ background: {COL_GRAY}; }}
+            """)
+            left_l.addWidget(tbtn)
+
+        splitter.addWidget(left_panel)
+
+        # ── CENTER: Full-width parallel 12-lead strips ───────────────────
+        self._wave_panel = HolterWaveGridPanel(
+            live_source=self._live_source,
+            replay_engine=self._replay_engine
+        )
+        splitter.addWidget(self._wave_panel)
+
+        # ── RIGHT: HRV summary + events ──────────────────────────────────
+        right_panel = QFrame()
+        right_panel.setFixedWidth(260)
+        right_panel.setStyleSheet(f"background: {COL_SURFACE}; border-left: 1px solid {COL_BORDER};")
+        right_l = QVBoxLayout(right_panel)
+        right_l.setContentsMargins(0, 0, 0, 0)
+        right_l.setSpacing(0)
+
+        # Overview stats
+        self._overview_panel = HolterOverviewPanel()
+        self._overview_panel.update_summary(self._summary)
+        self._overview_panel.setStyleSheet(f"background: {COL_SURFACE}; color: {COL_TEXT};")
+        right_l.addWidget(self._overview_panel, 1)
+
+        # Events
+        self._events_panel = HolterEventsPanel()
+        events = []
+        if self._replay_engine:
+            try:
+                events = self._replay_engine.get_events_list()
+            except Exception:
+                pass
+        else:
+            for m in self._metrics_list:
+                for a in m.get('arrhythmias', []):
+                    t = m.get('t', 0)
+                    h2 = int(t // 3600)
+                    mn2 = int((t % 3600) // 60)
+                    s2 = int(t % 60)
+                    events.append({'timestamp': t, 'label': a,
+                                   'time_str': f"{h2:02d}:{mn2:02d}:{s2:02d}"})
+        self._events_panel.load_events(events, self._summary)
+        self._events_panel.seek_requested.connect(self._on_seek_requested)
+        self._events_panel.setStyleSheet(f"background: {COL_SURFACE}; color: {COL_TEXT};")
+        right_l.addWidget(self._events_panel, 1)
+
+        splitter.addWidget(right_panel)
+        splitter.setStretchFactor(0, 0)   # left fixed
+        splitter.setStretchFactor(1, 1)   # center fills
+        splitter.setStretchFactor(2, 0)   # right fixed
+
+        rec_outer.addWidget(splitter, 1)
+
+        # ── BOTTOM PLAYBACK BAR ───────────────────────────────────────────
+        play_bar = QFrame()
+        play_bar.setFixedHeight(52)
+        play_bar.setStyleSheet(
+            f"background: {COL_SURFACE};"
+            f" border-top: 1px solid {COL_BORDER};"
+        )
+        pb_l = QHBoxLayout(play_bar)
+        pb_l.setContentsMargins(12, 0, 12, 0)
+        pb_l.setSpacing(6)
+
+        # Duration replay panel embedded in bar
         duration = self._summary.get('duration_sec', self._duration_hours * 3600)
         self._replay_panel = HolterReplayPanel(duration_sec=duration)
         if self._replay_engine:
             self._replay_panel.set_replay_engine(self._replay_engine)
             self._replay_panel.seek_requested.connect(self._on_seek_requested)
-        self._tabs.addTab(self._replay_panel, "▶  Replay")
+        pb_l.addWidget(self._replay_panel, 1)
 
-        self._tabs.addTab(HolterPlaceholderPanel(
-            "Template View",
-            ["Tabs: All / N / S / V / P / AF-Af / X / Other",
-             "Unknown beat marker (?) and ranking modes",
-             "Overlay waveform viewer per template group",
-             "Grid of template thumbnails by class"]), "🔲  Template")
+        rec_outer.addWidget(play_bar)
+        self._tabs.addTab(recording_tab, "Recording")
 
-        self._tabs.addTab(HolterPlaceholderPanel(
-            "Histogram",
-            ["Modes: RR Interval / RRI Ratio / Heart Rate",
-             "Beat type filters: Common, SVE, VE, Paced, Other",
-             "Dual mark, log scale, and range selection bins",
-             "Search beats and grid view per selected bin"]), "📊  Histogram")
+        # ── Other tabs ───────────────────────────────────────────────────
+        self._hrv_panel = HolterHRVPanel()
+        self._hrv_panel.update_hrv(self._metrics_list, self._summary)
+        self._tabs.addTab(self._hrv_panel, "HRV Analysis")
 
-        self._tabs.addTab(HolterPlaceholderPanel(
-            "Lorenz / Poincaré",
-            ["Full RR scatter plot with cluster coloring",
-             "Normal cluster highlighting and ellipse",
-             "Template waveform overlay heatmap",
-             "Template group thumbnails with beat count"]), "〰️  Lorenz")
-
-        self._tabs.addTab(HolterPlaceholderPanel(
-            "AF Analysis",
-            ["AF episode timeline and event list",
-             "Parameters, Next Event, Remove All controls",
-             "No-episode state: 'There are no items to show'",
-             "Beat strip grid sorted by RRI/Time/Prematurity/Similarity"]), "🔬  AF Analysis")
-
-        # ST Tendency — real panel with matplotlib chart
         self._st_panel = HolterSTTendencyPanel()
         self._st_panel.update_st(self._metrics_list)
-        self._tabs.addTab(self._st_panel, "📉  ST Tendency")
+        self._tabs.addTab(self._st_panel, "ST Tendency")
 
-        self._tabs.addTab(HolterPlaceholderPanel(
-            "Edit Event",
-            ["Event list with tachy/brady/long RR summaries",
-             "3-channel ECG strip preview",
-             "HR max/min and sinus max/min stats",
-             "Manual event add/remove controls"]), "✏️  Edit Event")
+        record_dir = self.session_dir if self.session_dir else os.path.join(os.getcwd(), "recordings")
+        if os.path.isfile(record_dir):
+            record_dir = os.path.dirname(record_dir)
+        self._record_mgmt_panel = HolterRecordManagementPanel(output_dir=record_dir)
+        self._tabs.addTab(self._record_mgmt_panel, "Records")
 
-        self._tabs.addTab(HolterPlaceholderPanel(
-            "Edit Strips",
-            ["Auto strips: max HR, min HR, sinus max/min",
-             "Thumbnail previews for CH1/CH2/CH3",
-             "Forward / backward strip navigation",
-             "Adjust strip position and print length"]), "🎞️  Edit Strips")
+        for tab_name, features in [
+            ("Replay",    ["Seek to any point in the recording",
+                           "Speed controls: 0.25× to 8×",
+                           "Event jump: AF / Brady / Tachy"]),
+            ("Events",    ["Episode timeline and event list",
+                           "Arrhythmia type / timestamp / lead",
+                           "Jump to event in strip view"]),
+            ("Histogram", ["RR Interval / Heart Rate distribution",
+                           "Bin selection and zoom",
+                           "Beat type filters: VE, SVE, Paced"]),
+            ("AF Analysis",["AF episode burden chart",
+                            "Beat strip grid by event",
+                            "Parameters and remove controls"]),
+        ]:
+            self._tabs.addTab(
+                HolterPlaceholderPanel(tab_name, features), tab_name)
 
-        self._tabs.addTab(HolterPlaceholderPanel(
-            "Edit Report - Tendency",
-            ["ST/T wave/rhythm trend tabs",
-             "HR trend over full duration",
-             "Left rail: Statistic / Table / Tendency / Summation",
-             "Save and print-ready workflow"]), "📋  Report Tendency")
-
-        # Report Table — real panel with hourly data
         self._report_table_panel = HolterReportTablePanel()
         self._report_table_panel.update_table(self._metrics_list, self._summary)
-        self._tabs.addTab(self._report_table_panel, "📑  Report Table")
+        self._tabs.addTab(self._report_table_panel, "Report Table")
 
-        self._tabs.addTab(HolterPlaceholderPanel(
-            "General Tools",
-            ["Measuring ruler / parallel ruler / magnifier",
-             "Gain settings and paper speed controls",
-             "Add event, adjust strip position, full disclosure",
-             "Preview, print, reanalysis, patient information"]), "🛠️  Tools")
+        self._insight_panel = HolterInsightPanel()
+        self._tabs.addTab(self._insight_panel, "Summary")
 
-        body_layout.addWidget(self._tabs, 1)
-        body_scroll.setWidget(body)
-        main_layout.addWidget(body_scroll, 1)
+        main_layout.addWidget(self._tabs, 1)
         self._refresh_ui()
 
     def _on_seek_requested(self, target_sec: float):
@@ -2032,7 +2230,14 @@ class HolterMainWindow(QDialog):
         QApplication.processEvents()
 
         try:
-            from .report_generator import generate_holter_report
+            # Prefer the root-level report_generator (pink-grid ECG-style report)
+            import importlib.util as _ilu, os as _os
+            _rg_root = _os.path.join(
+                _os.path.dirname(_os.path.abspath(__file__)), 'report_generator.py')
+            _spec = _ilu.spec_from_file_location('holter_report_gen', _rg_root)
+            _mod  = _ilu.module_from_spec(_spec)
+            _spec.loader.exec_module(_mod)
+            generate_holter_report = _mod.generate_holter_report
             path = generate_holter_report(
                 session_dir=self.session_dir,
                 patient_info=self.patient_info,

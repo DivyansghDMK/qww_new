@@ -1,534 +1,392 @@
 """
-ecg/holter/report_generator.py
+report_generator.py  (Holter)
 ================================
-Generates a clinical Holter report PDF from a completed recording session.
+Generates a Holter report PDF that matches the 12-lead ECG report style:
+  - Pink ECG-grid paper background
+  - DECK⚡MOUNT logo / brand
+  - Patient / vitals header (same layout as analysis_window.py)
+  - 12 stacked lead strips with calibration pulse
+  - HRV / summary / arrhythmia table below strips
+  - Conclusion box + footer
 
-Reads:  metrics.jsonl (produced by HolterAnalysisWorker)
-        recording.ecgh (for representative ECG strip)
-Writes: holter_report.pdf
-
-Reuses existing infrastructure:
-  - ecg_report_generator.py utilities (patient info formatting, PDF setup)
-  - matplotlib for charts (already a dependency)
+Falls back to a plain-text report when matplotlib / reportlab are unavailable.
 """
 
 import os
 import sys
 import json
-import time
 import traceback
 import numpy as np
 from datetime import datetime
-from typing import List, Dict, Optional
+from typing import Optional
 
-# Add project root
-_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(_THIS_DIR)))
-if _PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, _PROJECT_ROOT)
 
+# ── resource helper ──────────────────────────────────────────────────────────
+
+def _res(relative_path: str) -> str:
+    """Return absolute path; handles both dev mode and PyInstaller."""
+    base = getattr(sys, '_MEIPASS',
+                   os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+    return os.path.join(base, relative_path)
+
+
+# ── public entry point ───────────────────────────────────────────────────────
 
 def generate_holter_report(session_dir: str,
                             patient_info: dict,
                             summary: dict,
                             settings_manager=None) -> str:
     """
-    Main entry point. Generates holter_report.pdf in session_dir.
-    Returns path to generated PDF.
+    Generate holter_report.pdf in session_dir.
+    Returns path to generated file (PDF or TXT fallback).
     """
-    try:
-        from reportlab.lib.pagesizes import A4, landscape
-        from reportlab.lib import colors
-        from reportlab.lib.units import mm, cm
-        from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer,
-                                         Table, TableStyle, Image, PageBreak,
-                                         HRFlowable)
-        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-        from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
-        _has_reportlab = True
-    except ImportError:
-        _has_reportlab = False
-
     output_path = os.path.join(session_dir, 'holter_report.pdf')
-
-    if not _has_reportlab:
-        # Fallback: text report
-        _generate_text_report(session_dir, patient_info, summary, output_path.replace('.pdf', '.txt'))
-        return output_path.replace('.pdf', '.txt')
-
     try:
-        return _generate_pdf_report(session_dir, patient_info, summary,
-                                     output_path, settings_manager)
+        return _generate_pdf_report(session_dir, patient_info, summary, output_path)
     except Exception as e:
-        print(f"[HolterReport] PDF generation error: {e}")
+        print(f"[HolterReport] PDF error: {e}")
         traceback.print_exc()
-        return _generate_text_report(session_dir, patient_info, summary,
-                                      output_path.replace('.pdf', '.txt'))
+        txt_path = output_path.replace('.pdf', '.txt')
+        return _generate_text_report(session_dir, patient_info, summary, txt_path)
 
 
-# ── PDF Report ─────────────────────────────────────────────────────────────────
+# ── PDF generator ─────────────────────────────────────────────────────────────
 
-def _generate_pdf_report(session_dir, patient_info, summary, output_path, settings_manager):
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib import colors
-    from reportlab.lib.units import mm
-    from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer,
-                                     Table, TableStyle, Image, PageBreak,
-                                     HRFlowable)
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.lib.enums import TA_CENTER, TA_LEFT
+def _generate_pdf_report(session_dir: str,
+                          patient_info: dict,
+                          summary: dict,
+                          output_path: str) -> str:
+    """
+    Render a full A4 PDF that matches the ECG 12-lead report style exactly.
+    Uses matplotlib (same engine as analysis_window.py).
+    """
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    from matplotlib.figure import Figure
+    from matplotlib.backends.backend_pdf import PdfPages
+    from matplotlib.patches import Rectangle as MRect
 
-    PAGE_W, PAGE_H = A4
-    ORANGE = colors.HexColor('#E65100')
-    DARK   = colors.HexColor('#1A1A2E')
-    LIGHT  = colors.HexColor('#FFF8F0')
-    GRAY   = colors.HexColor('#F5F5F5')
-    GREEN  = colors.HexColor('#2E7D32')
-    RED    = colors.HexColor('#B71C1C')
-    BLUE   = colors.HexColor('#1565C0')
+    # ── page constants (mm) ──────────────────────────────────────────────────
+    PAGE_W  = 210.0;  PAGE_H  = 297.0
+    ML = 10.0;  MR = 10.0;  MT = 10.0;  MB = 10.0
+    HEADER_H = 30.0      # mm reserved for patient header
+    FOOTER_H = 60.0      # mm for summary tables + conclusion + footer brand
+    STRIP_TOP  = MT + HEADER_H
+    STRIP_H    = PAGE_H - STRIP_TOP - FOOTER_H - MB
+    CELL_H     = STRIP_H / 12.0
 
-    doc = SimpleDocTemplate(
-        output_path,
-        pagesize=A4,
-        rightMargin=15*mm, leftMargin=15*mm,
-        topMargin=15*mm, bottomMargin=15*mm,
-        title="Holter ECG Report",
-    )
+    # ECG scale constants (25 mm/s, 10 mm/mV — same as analysis_window)
+    FS          = 500.0              # assumed sampling rate
+    MM_PER_SAMPLE = 25.0 / FS       # horizontal mm per sample
+    ADC_PER_MM  = 128.0             # ADC units per mm (same as analysis_window)
+    CALIB_MM    = 10.0              # calibration pulse height mm
+    HALF_CELL   = CELL_H / 2.0 - 1.0
 
-    styles = getSampleStyleSheet()
-    title_style = ParagraphStyle('Title', parent=styles['Normal'],
-                                  fontSize=20, textColor=ORANGE, bold=True,
-                                  alignment=TA_CENTER, spaceAfter=4*mm)
-    h1_style = ParagraphStyle('H1', parent=styles['Normal'],
-                               fontSize=13, textColor=DARK, bold=True,
-                               spaceBefore=6*mm, spaceAfter=2*mm,
-                               borderPad=(0, 0, 2, 0))
-    h2_style = ParagraphStyle('H2', parent=styles['Normal'],
-                               fontSize=11, textColor=BLUE, bold=True,
-                               spaceBefore=4*mm, spaceAfter=1*mm)
-    body_style = ParagraphStyle('Body', parent=styles['Normal'],
-                                 fontSize=9, textColor=DARK, spaceAfter=1*mm)
-    small_style = ParagraphStyle('Small', parent=styles['Normal'],
-                                  fontSize=8, textColor=colors.gray)
+    # ── build figure ─────────────────────────────────────────────────────────
+    fig = Figure(figsize=(PAGE_W / 25.4, PAGE_H / 25.4), dpi=150, facecolor='white')
+    ax  = fig.add_axes([0, 0, 1, 1], facecolor='#fff5f5')
+    ax.set_xlim(0, PAGE_W)
+    ax.set_ylim(PAGE_H, 0)    # y increases downward (screen-like)
+    ax.set_aspect('equal')
 
-    story = []
+    # ── pink ECG grid ────────────────────────────────────────────────────────
+    ax.set_xticks(np.arange(0, PAGE_W + 1, 5))
+    ax.set_xticks(np.arange(0, PAGE_W + 1, 1), minor=True)
+    ax.set_yticks(np.arange(0, PAGE_H + 1, 5))
+    ax.set_yticks(np.arange(0, PAGE_H + 1, 1), minor=True)
+    ax.grid(True, which='major', color='#e09696', linewidth=0.55, zorder=1)
+    ax.grid(True, which='minor', color='#f5d8d8', linewidth=0.22, zorder=1)
+    for sp in ax.spines.values():
+        sp.set_visible(False)
+    ax.set_xticklabels([]);  ax.set_yticklabels([])
+    ax.tick_params(left=False, bottom=False, which='both')
 
-    # ── Cover / Header ─────────────────────────────────────────────────────────
-    story.append(Paragraph("HOLTER ECG REPORT", title_style))
-    story.append(HRFlowable(width="100%", thickness=2, color=ORANGE, spaceAfter=4*mm))
+    # ── patient header (left col) ─────────────────────────────────────────────
+    yb  = MT;  lh = 5.0
+    x1  = ML
+    pat = patient_info or {}
+    pname  = pat.get('name') or pat.get('patient_name') or '—'
+    age    = pat.get('age', '—')
+    gender = pat.get('gender') or pat.get('sex') or '—'
+    org    = pat.get('Org.') or pat.get('org') or '—'
+    phone  = pat.get('phone') or pat.get('doctor_mobile') or '—'
 
-    # Patient info table
-    dur_h = int(summary.get('duration_sec', 0) // 3600)
-    dur_m = int((summary.get('duration_sec', 0) % 3600) // 60)
-    pname = patient_info.get('name', patient_info.get('patient_name', 'Unknown'))
-    pinfo_data = [
-        ['Patient Name', pname,              'Recording Duration', f"{dur_h}h {dur_m}m"],
-        ['Age / Gender', f"{patient_info.get('age','—')} / {patient_info.get('gender','—')}",
-         'Report Date', datetime.now().strftime('%Y-%m-%d %H:%M')],
-        ['Doctor',       patient_info.get('doctor', '—'),
-         'Organisation', patient_info.get('Org.', patient_info.get('org', '—'))],
-        ['Email',        patient_info.get('email', '—'),
-         'Phone',        patient_info.get('phone', patient_info.get('doctor_mobile', '—'))],
+    ax.text(x1, yb,       f"Name: {pname}",     fontsize=7, va='top')
+    ax.text(x1, yb+lh,    f"Age: {age}",         fontsize=7, va='top')
+    ax.text(x1, yb+lh*2,  f"Gender: {gender}",   fontsize=7, va='top')
+    ax.text(x1, yb+lh*3,  f"Org: {org}",         fontsize=7, va='top')
+    ax.text(x1, yb+lh*4,  f"Phone: {phone}",     fontsize=7, va='top')
+
+    # ── vitals (middle col) ──────────────────────────────────────────────────
+    x2 = x1 + 55
+    avg_hr  = summary.get('avg_hr', 0)
+    min_hr  = summary.get('min_hr', 0)
+    max_hr  = summary.get('max_hr', 0)
+    sdnn    = summary.get('sdnn', 0)
+    rmssd   = summary.get('rmssd', 0)
+    pnn50   = summary.get('pnn50', 0)
+    dur_sec = summary.get('duration_sec', 0)
+    dur_h   = int(dur_sec // 3600)
+    dur_m   = int((dur_sec % 3600) // 60)
+
+    vitals = [
+        f"Avg HR : {avg_hr:.0f} bpm",
+        f"Min HR : {min_hr:.0f} bpm",
+        f"Max HR : {max_hr:.0f} bpm",
+        f"Duration: {dur_h}h {dur_m}m",
+        f"SDNN: {sdnn:.1f} ms  rMSSD: {rmssd:.1f} ms",
     ]
+    for i, v in enumerate(vitals):
+        ax.text(x2, yb + i * lh, v, fontsize=7, va='top', fontweight='bold')
 
-    pinfo_table = Table(pinfo_data, colWidths=[35*mm, 55*mm, 45*mm, 45*mm])
-    pinfo_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (0, -1), GRAY),
-        ('BACKGROUND', (2, 0), (2, -1), GRAY),
-        ('TEXTCOLOR', (0, 0), (-1, -1), DARK),
-        ('FONTSIZE', (0, 0), (-1, -1), 9),
-        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
-        ('FONTNAME', (2, 0), (2, -1), 'Helvetica-Bold'),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
-        ('ROWBACKGROUNDS', (0, 0), (-1, -1), [colors.white, LIGHT]),
-        ('PADDING', (0, 0), (-1, -1), 4),
-    ]))
-    story.append(pinfo_table)
-    story.append(Spacer(1, 4*mm))
+    # ── DECK⚡MOUNT brand (top-right) ────────────────────────────────────────
+    ax.text(PAGE_W - MR, yb,       "DECK\u26a1MOUNT",
+            fontsize=10, fontweight='bold', color='#0000cc', ha='right', va='top')
+    ax.text(PAGE_W - MR, yb+lh*2, "HOLTER ECG ANALYSIS REPORT",
+            fontsize=6.5, ha='right', va='top', color='#333', fontweight='bold')
+    ax.text(PAGE_W - MR, yb+lh*3, "25.0mm/s  0.5–40Hz  AC:50Hz  10.0mm/mV",
+            fontsize=5.5, ha='right', va='top', color='#555')
+    ax.text(PAGE_W - MR, yb+lh*4,
+            f"Date & Time: {datetime.now().strftime('%d/%m/%Y  %H:%M')}",
+            fontsize=5.5, ha='right', va='top', color='#555')
 
-    # ── Section 1: Overall Summary ─────────────────────────────────────────────
-    story.append(Paragraph("1. RECORDING SUMMARY", h1_style))
-    story.append(HRFlowable(width="100%", thickness=1, color=ORANGE, spaceAfter=2*mm))
+    # ── 12-lead ECG strips ───────────────────────────────────────────────────
+    LEADS = ["I", "II", "III", "aVR", "aVL", "aVF",
+             "V1", "V2", "V3", "V4", "V5", "V6"]
 
-    total_beats = summary.get('total_beats', 0)
-    avg_hr      = summary.get('avg_hr', 0)
-    max_hr      = summary.get('max_hr', 0)
-    min_hr      = summary.get('min_hr', 0)
-    pauses      = summary.get('pauses', 0)
-    longest_rr  = summary.get('longest_rr_ms', 0)
+    # Try to get lead data from replay engine / session
+    lead_data = _load_lead_data(session_dir)
 
-    stats_data = [
-        ['Parameter', 'Value', 'Parameter', 'Value'],
-        ['Total Beats', f"{total_beats:,}",      'Avg Heart Rate',    f"{avg_hr:.0f} bpm"],
-        ['Max Heart Rate', f"{max_hr:.0f} bpm",  'Min Heart Rate',    f"{min_hr:.0f} bpm"],
-        ['Longest RR', f"{longest_rr:.0f} ms",   'Pauses (RR>2s)',    str(pauses)],
-        ['Avg Quality', f"{summary.get('avg_quality',1)*100:.0f}%",
-         'Chunks Analyzed', str(summary.get('chunks_analyzed', 0))],
+    for i, lead in enumerate(LEADS):
+        mid_y = STRIP_TOP + i * CELL_H + CELL_H / 2.0
+        lbl_y = mid_y - CELL_H * 0.4
+
+        # Calibration square pulse (1 mV → 10 mm)
+        cx, cy, cg = ML, mid_y, CALIB_MM
+        ax.plot([cx, cx+2, cx+2, cx+7, cx+7, cx+9],
+                [cy, cy,  cy-cg, cy-cg, cy,  cy],
+                color='black', linewidth=0.9, zorder=6)
+
+        # Lead label
+        ax.text(ML + 11, lbl_y, lead,
+                fontsize=6.5, fontweight='bold', color='black', va='top', zorder=7)
+
+        # Waveform (if available)
+        data_arr = lead_data.get(lead, np.array([]))
+        if len(data_arr) > 10:
+            seg      = np.asarray(data_arr, dtype=float)
+            baseline = float(np.median(seg))
+            seg_mm   = (seg - baseline) / ADC_PER_MM       # ADC → mm
+            wx0      = ML + 13.0
+            wx_mm    = wx0 + np.arange(len(seg)) * MM_PER_SAMPLE
+            mask     = wx_mm <= (PAGE_W - MR)
+            wx_mm    = wx_mm[mask]
+            wy_mm    = mid_y - seg_mm[:len(wx_mm)]         # upward = smaller y
+            ax.plot(wx_mm, wy_mm, color='black', linewidth=0.5, zorder=5)
+
+    # ── Summary / HRV / Arrhythmia tables (footer zone) ─────────────────────
+    ft_top = PAGE_H - MB - FOOTER_H + 4.0   # top of footer area
+    lh2 = 4.2
+
+    # --- HRV block ---
+    ax.text(ML, ft_top, "HRV SUMMARY",
+            fontsize=6.5, fontweight='bold', va='top', color='#0000cc')
+    hrv_lines = [
+        f"SDNN: {sdnn:.1f} ms",
+        f"rMSSD: {rmssd:.1f} ms",
+        f"pNN50: {pnn50:.2f}%",
+        f"Total Beats: {summary.get('total_beats', 0):,}",
+        f"Pauses: {summary.get('pauses', 0)}",
     ]
-    stats_table = Table(stats_data, colWidths=[45*mm, 35*mm, 45*mm, 35*mm])
-    stats_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), ORANGE),
-        ('TEXTCOLOR',  (0, 0), (-1, 0), colors.white),
-        ('FONTNAME',   (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTNAME',   (0, 1), (0, -1), 'Helvetica-Bold'),
-        ('FONTNAME',   (2, 1), (2, -1), 'Helvetica-Bold'),
-        ('FONTSIZE',   (0, 0), (-1, -1), 9),
-        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, LIGHT]),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
-        ('PADDING', (0, 0), (-1, -1), 5),
-    ]))
-    story.append(stats_table)
+    for j, line in enumerate(hrv_lines):
+        ax.text(ML, ft_top + 5 + j * lh2, line, fontsize=6, va='top')
 
-    story.append(Paragraph("Clinical Impression", h2_style))
-    arrhy_counts = summary.get('arrhythmia_counts', {})
-    top_events = ", ".join(f"{label} ({count})" for label, count in sorted(arrhy_counts.items(), key=lambda item: -item[1])[:4]) or "No significant arrhythmias detected"
-    avg_quality = summary.get('avg_quality', 0) * 100
-    impression_text = (
-        f"This Holter study for <b>{pname}</b> covers <b>{dur_h}h {dur_m}m</b> with an average heart rate of "
-        f"<b>{avg_hr:.0f} bpm</b> (minimum <b>{min_hr:.0f} bpm</b>, maximum <b>{max_hr:.0f} bpm</b>). "
-        f"Overall signal quality was <b>{avg_quality:.1f}%</b>. The automated event summary shows: <b>{top_events}</b>."
-    )
-    story.append(Paragraph(impression_text, body_style))
-
-    # ── Section 1b: Hourly HR Chart ────────────────────────────────────────────
-    hourly_hr = summary.get('hourly_hr', {})
-    chart_path = _generate_hourly_hr_chart(session_dir, hourly_hr)
-    if chart_path and os.path.exists(chart_path):
-        from reportlab.platypus import Image as RLImage
-        story.append(Spacer(1, 3*mm))
-        img = RLImage(chart_path, width=PAGE_W - 30*mm, height=60*mm)
-        story.append(img)
-        story.append(Spacer(1, 2*mm))
-
-    # ── Section 1c: Hourly Beat / VE / SVE Table ───────────────────────────────
-    story.append(Paragraph("Hourly Breakdown", h2_style))
-    hourly_table_data = _build_hourly_table(session_dir)
-    if len(hourly_table_data) > 1:
-        hourly_tbl = Table(hourly_table_data,
-                           colWidths=[18*mm, 18*mm, 16*mm, 16*mm, 16*mm,
-                                      14*mm, 14*mm, 14*mm, 14*mm, 12*mm,
-                                      14*mm, 14*mm, 14*mm, 14*mm, 12*mm, 12*mm])
-        hourly_tbl.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), BLUE),
-            ('TEXTCOLOR',  (0, 0), (-1, 0), colors.white),
-            ('FONTNAME',   (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE',   (0, 0), (-1, -1), 7),
-            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, LIGHT]),
-            ('GRID', (0, 0), (-1, -1), 0.3, colors.lightgrey),
-            ('PADDING', (0, 0), (-1, -1), 3),
-        ]))
-        story.append(hourly_tbl)
-
-    # ── Section 2: HRV Analysis ────────────────────────────────────────────────
-    story.append(Paragraph("2. HEART RATE VARIABILITY (HRV)", h1_style))
-    story.append(HRFlowable(width="100%", thickness=1, color=ORANGE, spaceAfter=2*mm))
-
-    sdnn  = summary.get('sdnn', 0)
-    rmssd = summary.get('rmssd', 0)
-    pnn50 = summary.get('pnn50', 0)
-
-    def hrv_status(sdnn):
-        if sdnn > 100: return 'Normal', GREEN
-        if sdnn > 50:  return 'Borderline', colors.orange
-        return 'Reduced', RED
-
-    hrv_label, hrv_color = hrv_status(sdnn)
-
-    hrv_data = [
-        ['Metric', 'Value', 'Reference', 'Status'],
-        ['SDNN',   f"{sdnn:.1f} ms",  '>100 ms',  hrv_label],
-        ['rMSSD',  f"{rmssd:.1f} ms", '>42 ms',   'Normal' if rmssd > 42 else 'Low'],
-        ['pNN50',  f"{pnn50:.2f}%",   '>20%',     'Normal' if pnn50 > 20 else 'Low'],
-    ]
-    hrv_table = Table(hrv_data, colWidths=[40*mm, 35*mm, 35*mm, 30*mm])
-    hrv_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), BLUE),
-        ('TEXTCOLOR',  (0, 0), (-1, 0), colors.white),
-        ('FONTNAME',   (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTNAME',   (0, 1), (0, -1), 'Helvetica-Bold'),
-        ('FONTSIZE',   (0, 0), (-1, -1), 9),
-        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, LIGHT]),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
-        ('TEXTCOLOR', (3, 1), (3, 1), hrv_color),
-        ('PADDING', (0, 0), (-1, -1), 5),
-    ]))
-    story.append(hrv_table)
-
-    # ── Section 3: Arrhythmia Summary ─────────────────────────────────────────
-    story.append(Paragraph("3. ARRHYTHMIA SUMMARY", h1_style))
-    story.append(HRFlowable(width="100%", thickness=1, color=ORANGE, spaceAfter=2*mm))
-
-    if arrhy_counts:
-        arrhy_data = [['Arrhythmia Type', 'Episodes', 'Burden']]
-        total_chunks = max(1, summary.get('chunks_analyzed', 1))
-        for label, count in sorted(arrhy_counts.items(), key=lambda x: -x[1]):
-            burden = f"{count / total_chunks * 100:.1f}%"
-            arrhy_data.append([label, str(count), burden])
-
-        arrhy_table = Table(arrhy_data, colWidths=[90*mm, 30*mm, 30*mm])
-        arrhy_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), RED),
-            ('TEXTCOLOR',  (0, 0), (-1, 0), colors.white),
-            ('FONTNAME',   (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE',   (0, 0), (-1, -1), 9),
-            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#FFEBEE')]),
-            ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
-            ('PADDING', (0, 0), (-1, -1), 5),
-        ]))
-        story.append(arrhy_table)
+    # --- Arrhythmia block ---
+    ax2_x = ML + 45
+    ax.text(ax2_x, ft_top, "ARRHYTHMIA SUMMARY",
+            fontsize=6.5, fontweight='bold', va='top', color='#0000cc')
+    arrhy = summary.get('arrhythmia_counts', {})
+    if arrhy:
+        for j, (label, count) in enumerate(
+                sorted(arrhy.items(), key=lambda x: -x[1])[:8]):
+            ax.text(ax2_x, ft_top + 5 + j * lh2,
+                    f"• {label}: {count} episodes", fontsize=6, va='top')
     else:
-        story.append(Paragraph("No significant arrhythmias detected during this recording.", body_style))
+        ax.text(ax2_x, ft_top + 5, "No significant arrhythmias detected.",
+                fontsize=6, va='top')
 
-    # ── Section 4: Hourly HR Chart ─────────────────────────────────────────────
-    story.append(Paragraph("4. HOURLY HEART RATE TREND", h1_style))
-    story.append(HRFlowable(width="100%", thickness=1, color=ORANGE, spaceAfter=2*mm))
+    # --- Doctor signature block ---
+    sig_x = PAGE_W - MR - 70
+    ax.text(sig_x, ft_top,      "Doctor Name: _______________________",
+            fontsize=6.5, va='top', color='black')
+    ax.text(sig_x, ft_top + 7,  "Doctor Sign:  _______________________",
+            fontsize=6.5, va='top', color='black')
 
-    hourly_chart_path = _generate_hourly_hr_chart(session_dir, summary.get('hourly_hr', {}))
-    if hourly_chart_path and os.path.exists(hourly_chart_path):
-        story.append(Image(hourly_chart_path, width=170*mm, height=55*mm))
-    else:
-        story.append(Paragraph("Hourly HR chart not available.", small_style))
+    # ── Conclusion box ────────────────────────────────────────────────────────
+    conc_y  = ft_top + 28.0
+    bx, by  = ML + 44, conc_y
+    bw, bh  = PAGE_W - bx - MR, 18.0
+    rect = MRect((bx, by), bw, bh,
+                 linewidth=0.8, edgecolor='black', facecolor='white', zorder=8)
+    ax.add_patch(rect)
+    ax.text(bx + bw / 2, by + 1.0, "CONCLUSION",
+            fontsize=6.5, fontweight='bold', ha='center', va='top', zorder=9)
 
-    # ── Section 5: Interval Statistics ────────────────────────────────────────
-    jsonl_path = os.path.join(session_dir, 'metrics.jsonl')
-    interval_stats = _compute_interval_stats(jsonl_path)
+    conclusions = _build_conclusions(summary)
+    cols2 = 3;  col_w2 = (bw - 4.0) / cols2;  rh2b = 3.5
+    for idx, line in enumerate(conclusions[:9]):
+        row2 = idx // cols2;  col2 = idx % cols2
+        tx = bx + 2.0 + col2 * col_w2
+        ty = by + 6.0 + row2 * rh2b
+        if ty + rh2b > by + bh:
+            break
+        ax.text(tx, ty, f"{idx+1}. {line}", fontsize=5.5, va='top', zorder=9)
 
-    story.append(Paragraph("5. ECG INTERVAL STATISTICS", h1_style))
-    story.append(HRFlowable(width="100%", thickness=1, color=ORANGE, spaceAfter=2*mm))
+    # ── Footer brand line ────────────────────────────────────────────────────
+    brand = "Deckmount Electronics Pvt Ltd | RhythmPro ECG | IEC 60601 | Made in India"
+    ax.text(PAGE_W / 2, PAGE_H - MB + 1, brand,
+            fontsize=6, ha='center', va='top', color='#333', zorder=9)
 
-    int_data = [['Interval', 'Mean', 'Std Dev', 'Min', 'Max', 'Normal Range']]
-    for label, key, ref in [
-        ('PR Interval',  'pr_ms',  '120–200 ms'),
-        ('QRS Duration', 'qrs_ms', '60–120 ms'),
-        ('QT Interval',  'qt_ms',  '350–450 ms'),
-        ('QTc Interval', 'qtc_ms', '<440 ms'),
-    ]:
-        vals = interval_stats.get(key, [])
-        if vals:
-            int_data.append([label,
-                             f"{np.mean(vals):.0f} ms",
-                             f"{np.std(vals):.0f} ms",
-                             f"{np.min(vals):.0f} ms",
-                             f"{np.max(vals):.0f} ms",
-                             ref])
-        else:
-            int_data.append([label, '—', '—', '—', '—', ref])
+    # ── Save PDF ────────────────────────────────────────────────────────────
+    with PdfPages(output_path) as pdf:
+        pdf.savefig(fig, bbox_inches='tight')
 
-    int_table = Table(int_data, colWidths=[35*mm, 22*mm, 22*mm, 22*mm, 22*mm, 32*mm])
-    int_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), GREEN),
-        ('TEXTCOLOR',  (0, 0), (-1, 0), colors.white),
-        ('FONTNAME',   (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTNAME',   (0, 1), (0, -1), 'Helvetica-Bold'),
-        ('FONTSIZE',   (0, 0), (-1, -1), 9),
-        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, LIGHT]),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
-        ('PADDING', (0, 0), (-1, -1), 5),
-    ]))
-    story.append(int_table)
-
-    # ── Section 6: Conclusion ──────────────────────────────────────────────────
-    story.append(Spacer(1, 4*mm))
-    story.append(Paragraph("6. PHYSICIAN INTERPRETATION", h1_style))
-    story.append(HRFlowable(width="100%", thickness=1, color=ORANGE, spaceAfter=2*mm))
-
-    auto_conclusion = _auto_conclusion(summary)
-    story.append(Paragraph(auto_conclusion, body_style))
-    story.append(Spacer(1, 10*mm))
-
-    # Signature box
-    sig_data = [
-        ['Physician Signature', 'Date', 'Stamp'],
-        ['', datetime.now().strftime('%Y-%m-%d'), ''],
-    ]
-    sig_table = Table(sig_data, colWidths=[70*mm, 50*mm, 60*mm])
-    sig_table.setStyle(TableStyle([
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 9),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
-        ('ROWBACKGROUNDS', (0, 0), (-1, 0), [GRAY]),
-        ('MINROWHEIGHT', (0, 1), (-1, 1), 20*mm),
-        ('PADDING', (0, 0), (-1, -1), 5),
-    ]))
-    story.append(sig_table)
-
-    doc.build(story)
     print(f"[HolterReport] PDF saved: {output_path}")
     return output_path
 
 
-# ── Helper functions ────────────────────────────────────────────────────────────
+# ── helpers ───────────────────────────────────────────────────────────────────
 
-def _generate_hourly_hr_chart(session_dir: str, hourly_hr: dict) -> str:
-    """Generate bar chart of hourly mean HR, save as PNG."""
-    try:
-        import matplotlib
-        matplotlib.use('Agg')
-        import matplotlib.pyplot as plt
+def _load_lead_data(session_dir: str) -> dict:
+    """
+    Try to load representative ECG data for all 12 leads from the session.
+    Returns dict:  lead_name -> np.ndarray (ADC units).
+    Falls back to empty arrays if unavailable.
+    """
+    leads = ["I", "II", "III", "aVR", "aVL", "aVF",
+             "V1", "V2", "V3", "V4", "V5", "V6"]
 
-        if not hourly_hr:
-            return ""
+    # 1) Try .ecgh replay engine (same file the analysis window uses)
+    ecgh_path = os.path.join(session_dir, 'recording.ecgh')
+    if os.path.exists(ecgh_path):
+        try:
+            # HolterReplayEngine lives at replay_engine.py next to us
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            from replay_engine import HolterReplayEngine
+            engine = HolterReplayEngine(ecgh_path)
+            window_sec = min(10.0, engine.duration_sec)
+            all_data = engine.get_all_leads_data(window_sec=window_sec)
+            # all_data is a list of 12 arrays; convert to ADC-like units
+            result = {}
+            for i, lead in enumerate(leads):
+                if i < len(all_data):
+                    arr = np.asarray(all_data[i], dtype=float)
+                    # Normalise to ADC scale so existing ADC_PER_MM scaling works
+                    p = float(np.percentile(np.abs(arr - np.median(arr)), 95)) or 1.0
+                    result[lead] = (arr / p) * 640.0   # 1 mV ≈ 640 ADC
+                else:
+                    result[lead] = np.array([])
+            return result
+        except Exception as e:
+            print(f"[HolterReport] Could not load ecgh: {e}")
 
-        hours = sorted(hourly_hr.keys())
-        values = [hourly_hr[h] for h in hours]
+    # 2) Try a saved ECG JSON (ecg_data_*.json) in the session dir
+    for fname in sorted(os.listdir(session_dir), reverse=True):
+        if fname.endswith('.json') and 'ecg' in fname.lower():
+            fpath = os.path.join(session_dir, fname)
+            try:
+                with open(fpath) as f:
+                    d = json.load(f)
+                if 'leads' in d:
+                    return {k: np.asarray(v) for k, v in d['leads'].items()}
+            except Exception:
+                pass
 
-        fig, ax = plt.subplots(figsize=(10, 3))
-        bars = ax.bar(hours, values, color='#1565C0', alpha=0.8, width=0.7)
-        ax.axhline(y=60, color='orange', linestyle='--', alpha=0.7, label='60 bpm')
-        ax.axhline(y=100, color='red', linestyle='--', alpha=0.7, label='100 bpm')
-        ax.set_xlabel('Hour of Recording', fontsize=9)
-        ax.set_ylabel('Mean HR (bpm)', fontsize=9)
-        ax.set_title('Hourly Heart Rate Trend', fontsize=10, fontweight='bold')
-        ax.legend(fontsize=8)
-        ax.grid(True, alpha=0.3, axis='y')
-        ax.set_xticks(hours)
-        ax.tick_params(labelsize=8)
-        plt.tight_layout()
-
-        chart_path = os.path.join(session_dir, 'hourly_hr_chart.png')
-        plt.savefig(chart_path, dpi=120, bbox_inches='tight')
-        plt.close(fig)
-        return chart_path
-    except Exception as e:
-        print(f"[HolterReport] Chart error: {e}")
-        return ""
-
-
-def _compute_interval_stats(jsonl_path: str) -> dict:
-    """Load all interval values from JSONL for statistics."""
-    stats = {'pr_ms': [], 'qrs_ms': [], 'qt_ms': [], 'qtc_ms': []}
-    if not os.path.exists(jsonl_path):
-        return stats
-    try:
-        with open(jsonl_path) as f:
-            for line in f:
-                m = json.loads(line.strip())
-                for key in stats:
-                    val = m.get(key, 0)
-                    if val > 0:
-                        stats[key].append(val)
-    except Exception:
-        pass
-    return stats
+    # 3) Return empty arrays — page still renders pink grid + header
+    return {lead: np.array([]) for lead in leads}
 
 
-def _build_hourly_table(session_dir: str) -> list:
-    """Build an hourly breakdown table (beats, HR, VE, SVE, pauses) from JSONL."""
-    jsonl_path = os.path.join(session_dir, 'metrics.jsonl')
-    header = ['Time', 'Beats', 'Min HR', 'Avg HR', 'Max HR',
-              'VE Iso', 'VE Coup', 'VE Run', 'VE Tot', 'VE%',
-              'SVE Iso', 'SVE Coup', 'SVE Run', 'SVE Tot', 'SVE%', 'Pauses']
-    rows = [header]
-    if not os.path.exists(jsonl_path):
-        return rows
-
-    hourly: dict = {}
-    try:
-        with open(jsonl_path) as f:
-            for line in f:
-                m = json.loads(line.strip())
-                h = int(m.get('t', 0) // 3600)
-                hourly.setdefault(h, []).append(m)
-    except Exception:
-        return rows
-
-    totals = [0] * (len(header) - 1)
-    for h in sorted(hourly.keys()):
-        chunks = hourly[h]
-        beats    = sum(c.get('beat_count', 0) for c in chunks)
-        hr_vals  = [c.get('hr_mean', 0) for c in chunks if c.get('hr_mean', 0) > 0]
-        min_hr   = int(min(c.get('hr_min', 999) for c in chunks)) if chunks else 0
-        avg_hr   = int(round(float(np.mean(hr_vals)))) if hr_vals else 0
-        max_hr   = int(max(c.get('hr_max', 0) for c in chunks)) if chunks else 0
-        pauses   = sum(c.get('pauses', 0) for c in chunks)
-        # VE/SVE: placeholder (requires beat-level classifier; set to 0 until wired)
-        row = [f"{h:02d}:00", str(beats), str(min_hr), str(avg_hr), str(max_hr),
-               '0', '0', '0', '0', '0',
-               '0', '0', '0', '0', '0', str(pauses)]
-        rows.append(row)
-        for i, v in enumerate([beats, min_hr, avg_hr, max_hr,
-                                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, pauses]):
-            totals[i] += v
-
-    # Total row
-    total_row = ['Total', str(totals[0]),
-                 str(min(int(r[2]) for r in rows[1:]) if len(rows) > 1 else 0),
-                 str(int(totals[2] / max(1, len(rows) - 1))),
-                 str(max(int(r[4]) for r in rows[1:]) if len(rows) > 1 else 0)]
-    total_row += ['0'] * 10 + [str(totals[14])]
-    rows.append(total_row)
-    return rows
-
-
-def _auto_conclusion(summary: dict) -> str:
-    """Generate an auto-summary conclusion text."""
+def _build_conclusions(summary: dict) -> list:
+    """Build short conclusion lines for the conclusion box."""
     lines = []
     avg_hr = summary.get('avg_hr', 0)
-    max_hr = summary.get('max_hr', 0)
-    min_hr = summary.get('min_hr', 0)
     sdnn   = summary.get('sdnn', 0)
-    arrhy  = summary.get('arrhythmia_counts', {})
     pauses = summary.get('pauses', 0)
+    arrhy  = summary.get('arrhythmia_counts', {})
+    dur_h  = int(summary.get('duration_sec', 0) // 3600)
+    dur_m  = int((summary.get('duration_sec', 0) % 3600) // 60)
 
-    dur_h = int(summary.get('duration_sec', 0) // 3600)
-    dur_m = int((summary.get('duration_sec', 0) % 3600) // 60)
-    lines.append(f"Recording duration: {dur_h}h {dur_m}m. "
-                 f"Average HR: {avg_hr:.0f} bpm (Max: {max_hr:.0f}, Min: {min_hr:.0f} bpm).")
+    lines.append(f"Duration: {dur_h}h {dur_m}m")
+
+    if avg_hr > 100:
+        lines.append(f"Sinus tachycardia (Avg HR {avg_hr:.0f} bpm)")
+    elif avg_hr < 60 and avg_hr > 0:
+        lines.append(f"Sinus bradycardia (Avg HR {avg_hr:.0f} bpm)")
+    elif avg_hr > 0:
+        lines.append(f"Normal sinus rhythm (Avg HR {avg_hr:.0f} bpm)")
 
     if sdnn > 100:
-        lines.append("Heart rate variability (SDNN) is within normal limits.")
+        lines.append("HRV (SDNN) within normal limits")
     elif sdnn > 50:
-        lines.append("Heart rate variability (SDNN) is borderline reduced.")
-    else:
-        lines.append("Heart rate variability (SDNN) is significantly reduced — clinical correlation advised.")
+        lines.append("HRV (SDNN) borderline reduced")
+    elif sdnn > 0:
+        lines.append("HRV (SDNN) significantly reduced — review")
 
-    if not arrhy:
-        lines.append("No significant arrhythmias detected during this recording.")
+    if arrhy:
+        top = list(sorted(arrhy.items(), key=lambda x: -x[1]))[:3]
+        for label, count in top:
+            lines.append(f"{label}: {count} episode(s)")
     else:
-        arrhy_list = ', '.join(f"{k} ({v} episode{'s' if v>1 else ''})" for k, v in arrhy.items())
-        lines.append(f"Arrhythmias detected: {arrhy_list}.")
+        lines.append("No significant arrhythmias detected")
 
     if pauses > 0:
-        lines.append(f"Pauses (RR interval >2.0s): {pauses} episode(s) detected.")
+        lines.append(f"Pauses (RR>2s): {pauses} episode(s)")
 
-    lines.append("\n[Physician to review and add clinical interpretation above.]")
-    return " ".join(lines)
+    lines.append("Automated analysis — physician review required")
+    return lines
 
 
 def _generate_text_report(session_dir, patient_info, summary, output_path) -> str:
-    """Fallback plain-text report when reportlab is unavailable."""
+    """Fallback plain-text report when matplotlib is unavailable."""
+    pat = patient_info or {}
     lines = [
         "=" * 60,
-        "HOLTER ECG REPORT",
+        "HOLTER ECG REPORT — DECK\u26a1MOUNT",
         "=" * 60,
-        f"Patient: {patient_info.get('name', 'Unknown')}",
-        f"Doctor: {patient_info.get('doctor', '—')}",
-        f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        f"Patient : {pat.get('name', 'Unknown')}",
+        f"Age/Sex : {pat.get('age', '—')} / {pat.get('gender', '—')}",
+        f"Date    : {datetime.now().strftime('%Y-%m-%d %H:%M')}",
         "",
-        "SUMMARY",
-        f"  Duration: {summary.get('duration_sec',0)/3600:.1f} hours",
-        f"  Total Beats: {summary.get('total_beats',0):,}",
-        f"  Avg HR: {summary.get('avg_hr',0):.0f} bpm",
-        f"  Max HR: {summary.get('max_hr',0):.0f} bpm",
-        f"  Min HR: {summary.get('min_hr',0):.0f} bpm",
+        "RECORDING SUMMARY",
+        f"  Duration : {summary.get('duration_sec', 0) / 3600:.1f} h",
+        f"  Avg HR   : {summary.get('avg_hr', 0):.0f} bpm",
+        f"  Min HR   : {summary.get('min_hr', 0):.0f} bpm",
+        f"  Max HR   : {summary.get('max_hr', 0):.0f} bpm",
+        f"  Beats    : {summary.get('total_beats', 0):,}",
         "",
         "HRV",
-        f"  SDNN:  {summary.get('sdnn',0):.1f} ms",
-        f"  rMSSD: {summary.get('rmssd',0):.1f} ms",
-        f"  pNN50: {summary.get('pnn50',0):.2f}%",
+        f"  SDNN  : {summary.get('sdnn', 0):.1f} ms",
+        f"  rMSSD : {summary.get('rmssd', 0):.1f} ms",
+        f"  pNN50 : {summary.get('pnn50', 0):.2f}%",
         "",
         "ARRHYTHMIAS",
     ]
     arrhy = summary.get('arrhythmia_counts', {})
     if arrhy:
         for label, count in arrhy.items():
-            lines.append(f"  {label}: {count} episode(s)")
+            lines.append(f"  {label}: {count}")
     else:
         lines.append("  None detected")
 
-    lines += ["", "=" * 60, "Physician Signature: _______________", "Date: _______________"]
-
+    lines += [
+        "",
+        "=" * 60,
+        "Doctor Signature: _______________",
+        "Date: _______________",
+        "",
+        "Deckmount Electronics Pvt Ltd | RhythmPro ECG | Made in India",
+    ]
     with open(output_path, 'w') as f:
         f.write('\n'.join(lines))
-
     return output_path
