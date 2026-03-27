@@ -15,7 +15,7 @@ from PyQt5.QtWidgets import (
     QTextEdit, QCheckBox, QGridLayout, QListWidget,
     QListWidgetItem, QAbstractItemView, QGroupBox, QStackedWidget,
 )
-import sys, os, json, datetime, shutil, smtplib, traceback
+import sys, os, json, datetime, shutil, smtplib, traceback, tempfile
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email.mime.text import MIMEText
@@ -445,6 +445,7 @@ class HistoryWindow(QDialog):
         self.username = username
         self.all_history_entries = []
         self._cloud_preview_map = {}
+        self._preview_temp_pdf = ""
         self.setStyleSheet(self.STYLE)
 
         # Responsive: use 90% of screen but never less than 800x500
@@ -712,11 +713,16 @@ class HistoryWindow(QDialog):
             resp = requests.get(url, timeout=12)
             if resp.status_code != 200:
                 self.rev_status_lbl.setText(
-                    f"API error: HTTP {resp.status_code} for doctorName={doc_name}"
+                    f"Cloud API Error: {resp.status_code} - {resp.reason}. Doctor: {doc_name}"
                 )
                 return
+            
             ct = resp.headers.get("Content-Type", "")
-            data = resp.json() if "application/json" in ct or resp.text.strip().startswith("[") else []
+            try:
+                data = resp.json() if "application/json" in ct or resp.text.strip().startswith("[") else []
+            except Exception as json_err:
+                self.rev_status_lbl.setText(f"Cloud Data Error: Failed to parse JSON response. {json_err}")
+                return
             if not isinstance(data, list):
                 data = []
 
@@ -862,6 +868,7 @@ class HistoryWindow(QDialog):
         hh.setSectionResizeMode(hh.Stretch)
         self.table.cellClicked.connect(self._on_cell_clicked)
         self.table.cellDoubleClicked.connect(self._on_row_double_clicked)
+        self.table.itemSelectionChanged.connect(self._on_selection_changed_preview)
         layout.addWidget(self.table, 1)
 
     def _build_action_buttons(self, layout):
@@ -927,7 +934,102 @@ class HistoryWindow(QDialog):
             if show:
                 self._add_row(entry)
 
+    def _add_stray_pdf(self, full_path, history_entries):
+        """Helper to add a stray PDF to the history list if not already present."""
+        if any(e.get("report_file") == full_path for e in history_entries):
+            return
+
+        fn = os.path.basename(full_path).lower()
+        # Only add files that look like ECG reports
+        if not any(x in fn for x in ["ecg", "hrv", "hyper", "holter", "analysis"]):
+            return
+
+        rt = "ECG"
+        if "holter" in fn: rt = "Holter"
+        elif "hyper" in fn: rt = "Hyperkalemia"
+        elif "hrv" in fn: rt = "HRV"
+        elif "analysis" in fn: rt = "Analysis"
+
+        try:
+            mtime = os.path.getmtime(full_path)
+            dt = datetime.datetime.fromtimestamp(mtime)
+            
+            history_entries.append({
+                "date": dt.strftime("%Y-%m-%d"),
+                "time": dt.strftime("%H:%M:%S"),
+                "report_type": rt,
+                "patient_name": os.path.basename(full_path).replace(".pdf", "")
+                                 .replace("ECG_Report_", "")
+                                 .replace("HRV_Report_", "")
+                                 .replace("ECG_Analysis_", "")
+                                 .replace("holter_report", "Holter_")
+                                 .replace("_", " "),
+                "report_file": full_path
+            })
+        except Exception:
+            pass
+
     # ── data loading ─────────────────────────────────────────────────────────
+    def _infer_report_type(self, report_file: str = "", report_type: str = "") -> str:
+        rt = (report_type or "").strip()
+        if rt:
+            return rt
+        fl = (report_file or "").lower()
+        if "hyper" in fl:
+            return "Hyperkalemia"
+        if "hrv" in fl:
+            return "HRV"
+        if "holter" in fl:
+            return "Holter"
+        if "analysis" in fl:
+            return "Analysis"
+        return "ECG"
+
+    def _add_report_file_entries(self, history_entries):
+        """Ensure all PDF reports under reports/ appear in history table."""
+        try:
+            if not os.path.exists(REPORTS_DIR):
+                return
+            known = {
+                os.path.abspath((e.get("report_file") or "")).lower()
+                for e in history_entries if e.get("report_file")
+            }
+            for root, _dirs, files in os.walk(REPORTS_DIR):
+                for fn in files:
+                    if not fn.lower().endswith('.pdf'):
+                        continue
+                    full_path = os.path.abspath(os.path.join(root, fn))
+                    if full_path.lower() in known:
+                        continue
+
+                    date_str, time_str = "", ""
+                    m = re.search(r"(20\d{2})(\d{2})(\d{2})[_-]?(\d{2})(\d{2})(\d{2})", fn)
+                    if m:
+                        date_str = f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+                        time_str = f"{m.group(4)}:{m.group(5)}:{m.group(6)}"
+                    else:
+                        ts = datetime.datetime.fromtimestamp(os.path.getmtime(full_path))
+                        date_str = ts.strftime("%Y-%m-%d")
+                        time_str = ts.strftime("%H:%M:%S")
+
+                    history_entries.append({
+                        "date": date_str,
+                        "time": time_str,
+                        "report_type": self._infer_report_type(full_path, ""),
+                        "Org.": "",
+                        "doctor": "",
+                        "patient_name": "",
+                        "age": "",
+                        "gender": "",
+                        "height": "",
+                        "weight": "",
+                        "report_file": full_path,
+                        "username": "",
+                    })
+                    known.add(full_path.lower())
+        except Exception:
+            pass
+
     def load_history(self):
         self.table.setRowCount(0)
         history_entries = []
@@ -947,26 +1049,60 @@ class HistoryWindow(QDialog):
                     idx = json.load(f)
                 if isinstance(idx, list):
                     for entry in idx:
-                        if "filename" in entry and "title" in entry:
-                            fn = entry.get("filename", "").lower()
-                            rt = "Hyperkalemia" if "hyper" in fn else ("HRV" if "hrv" in fn else "ECG")
-                            if rt in ("ECG", "HRV", "Hyperkalemia"):
-                                history_entries.append({
-                                    "date": entry.get("date", ""),
-                                    "time": entry.get("time", ""),
-                                    "report_type": rt,
-                                    "Org.": entry.get("org", ""),
-                                    "doctor": entry.get("doctor", ""),
-                                    "patient_name": entry.get("patient", ""),
-                                    "age": entry.get("age", ""),
-                                    "gender": entry.get("gender", ""),
-                                    "height": entry.get("height", ""),
-                                    "weight": entry.get("weight", ""),
-                                    "report_file": os.path.join(REPORTS_DIR, entry.get("filename", "")),
-                                    "username": entry.get("username", ""),
-                                })
+                        fn = entry.get("filename", "").lower()
+                        # Better detection logic for report types
+                        if "holter" in fn:
+                            rt = "Holter"
+                        elif "hyper" in fn:
+                            rt = "Hyperkalemia"
+                        elif "hrv" in fn:
+                            rt = "HRV"
+                        elif "analysis" in fn:
+                            rt = "Analysis"
+                        else:
+                            rt = "ECG"
+                        
+                        history_entries.append({
+                            "date": entry.get("date", ""),
+                            "time": entry.get("time", ""),
+                            "report_type": rt,
+                            "Org.": entry.get("org", entry.get("Org.", "")),
+                            "doctor": entry.get("doctor", ""),
+                            "patient_name": entry.get("patient", entry.get("patient_name", "")),
+                            "age": entry.get("age", ""),
+                            "gender": entry.get("gender", ""),
+                            "height": entry.get("height", ""),
+                            "weight": entry.get("weight", ""),
+                            "report_file": os.path.join(REPORTS_DIR, entry.get("filename", "")),
+                            "username": entry.get("username", ""),
+                        })
             except Exception:
                 pass
+
+        # Also scan reports directory for any stray PDFs that might not be in index
+        RECORDINGS_DIR = os.path.join(BASE_DIR, "recordings")
+        scan_dirs = [REPORTS_DIR, RECORDINGS_DIR]
+        try:
+            from PyQt5.QtCore import QStandardPaths
+            downloads = QStandardPaths.writableLocation(QStandardPaths.DownloadLocation)
+            if downloads and os.path.exists(downloads):
+                scan_dirs.append(downloads)
+        except Exception:
+            pass
+
+        for sdir in scan_dirs:
+            if not os.path.exists(sdir): continue
+            
+            # Recursive scan for Holter reports which are often in subdirectories
+            if sdir == RECORDINGS_DIR:
+                for root_dir, dirs, files in os.walk(sdir):
+                    for f in files:
+                        if f.lower().endswith(".pdf") and "holter" in f.lower():
+                            self._add_stray_pdf(os.path.join(root_dir, f), history_entries)
+            else:
+                for f in os.listdir(sdir):
+                    if f.lower().endswith(".pdf"):
+                        self._add_stray_pdf(os.path.join(sdir, f), history_entries)
 
         # Fallback
         if not history_entries:
@@ -995,7 +1131,10 @@ class HistoryWindow(QDialog):
                 except Exception:
                     pass
 
-        # Filter by username and report type
+        # Ensure reports folder PDFs are also visible in history list
+        self._add_report_file_entries(history_entries)
+
+        # Filter by username and normalize report type
         self.all_history_entries = []
         for entry in history_entries:
             if self.username and entry.get("username") and entry.get("username") != self.username:
@@ -1004,10 +1143,14 @@ class HistoryWindow(QDialog):
             rt = entry.get("report_type", "")
             if not rt:
                 fl = rf.lower()
-                rt = "Hyperkalemia" if "hyper" in fl else ("HRV" if "hrv" in fl else "ECG")
-            if rt in ("ECG", "HRV", "Hyperkalemia"):
-                entry["report_type"] = rt
-                self.all_history_entries.append(entry)
+                if "holter" in fl: rt = "Holter"
+                elif "hyper" in fl: rt = "Hyperkalemia"
+                elif "hrv" in fl: rt = "HRV"
+                elif "analysis" in fl: rt = "Analysis"
+                else: rt = "ECG"
+            
+            entry["report_type"] = rt
+            self.all_history_entries.append(entry)
 
         # Sort newest first
         def _key(e):
@@ -1059,16 +1202,57 @@ class HistoryWindow(QDialog):
         self.table.setRowHeight(row, 26)
 
     # ── interactions ─────────────────────────────────────────────────────────
+    def _on_selection_changed_preview(self):
+        """Auto-preview currently selected report row in side panel."""
+        row = self.table.currentRow()
+        if row >= 0:
+            self._load_preview_for_row(row, silent=True)
+
+    def _get_cloud_preview_url(self, row: int) -> str:
+        pi = self.table.item(row, 4)
+        di = self.table.item(row, 0)
+        if not pi or not di:
+            return ""
+        return self._cloud_preview_map.get((pi.text().strip(), di.text().strip()), "")
+
+    def _download_preview_pdf(self, url: str) -> str:
+        if not url:
+            return ""
+        try:
+            r = requests.get(url, timeout=12)
+            if r.status_code != 200:
+                return ""
+            fd, tmp_path = tempfile.mkstemp(prefix="ecg_preview_", suffix=".pdf")
+            os.close(fd)
+            with open(tmp_path, "wb") as f:
+                f.write(r.content)
+            self._preview_temp_pdf = tmp_path
+            return tmp_path
+        except Exception:
+            return ""
+
+    def _load_preview_for_row(self, row: int, silent: bool = False) -> bool:
+        rf = self._get_report_file(row)
+        if rf and os.path.exists(rf):
+            self.preview_panel.load_pdf(rf)
+            return True
+
+        cloud_url = self._get_cloud_preview_url(row)
+        cloud_pdf = self._download_preview_pdf(cloud_url) if cloud_url else ""
+        if cloud_pdf and os.path.exists(cloud_pdf):
+            self.preview_panel.load_pdf(cloud_pdf)
+            return True
+
+        self.preview_panel.clear()
+        if not silent:
+            QMessageBox.information(self, "Preview", "No preview available for this report yet.")
+        return False
+
     def _on_cell_clicked(self, row, col):
-        """Single-click: load PDF into preview panel; status col → context menu."""
+        """Single-click: load selected report in side preview panel."""
         if col == 10:
             self._show_status_menu(row)
-        else:
-            rf = self._get_report_file(row)
-            if rf and os.path.exists(rf):
-                self.preview_panel.load_pdf(rf)
-            else:
-                self.preview_panel.clear()
+        self._load_preview_for_row(row, silent=True)
 
     def _on_row_double_clicked(self, row, col):
         self._preview_selected()
@@ -1091,11 +1275,7 @@ class HistoryWindow(QDialog):
         if row < 0:
             QMessageBox.information(self, "Preview", "Select a report row first.")
             return
-        rf = self._get_report_file(row)
-        if rf and os.path.exists(rf):
-            self.preview_panel.load_pdf(rf)
-        else:
-            QMessageBox.information(self, "Preview", "No local PDF found for this entry.")
+        self._load_preview_for_row(row, silent=False)
 
     def _open_in_system(self):
         row = self.table.currentRow()

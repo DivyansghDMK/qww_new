@@ -334,7 +334,7 @@ class HolterStatusBar(QFrame):
         self._time_label.setStyleSheet(f"color:{COL_GREEN};font-size:18px;font-weight:bold;font-family:monospace;")
         layout.addWidget(self._time_label)
 
-        tgt = QLabel(f"/ {target_hours:02d}:00:00")
+        tgt = QLabel(f"/ {self.target_hours:02d}:00:00")
         tgt.setStyleSheet(f"color:{COL_GREEN_DRK};font-size:12px;")
         layout.addWidget(tgt)
 
@@ -362,7 +362,7 @@ class HolterStatusBar(QFrame):
         layout.addWidget(self._arrhy_label, 1)
 
         self._progress = QProgressBar()
-        self._progress.setRange(0, target_hours * 3600)
+        self._progress.setRange(0, self.target_hours * 3600)
         self._progress.setValue(0)
         self._progress.setFixedWidth(140)
         self._progress.setFixedHeight(12)
@@ -669,14 +669,12 @@ class HolterReplayPanel(QWidget):
         ecg_right_layout.setSpacing(4)
 
         # CH1 / CH2 / CH3 strips
-        self._strip_labels = []
-        for ch in ["CH1", "CH2", "CH3"]:
-            ch_lbl = QLabel(ch)
-            ch_lbl.setStyleSheet(f"color:{COL_GREEN};font-size:11px;font-weight:bold;border:none;")
-            ecg_right_layout.addWidget(ch_lbl)
-            strip = ECGStripCanvas(height=70)
+        self._ch_strips = []
+        for i in range(12):
+            strip = ECGStripCanvas(height=60, color="#00FF00", pen_width=0.7)
+            strip.set_gain(1.0)
+            self._ch_strips.append(strip)
             ecg_right_layout.addWidget(strip)
-            self._strip_labels.append(strip)
 
         # Mini overview strip at bottom
         self._mini_strip = ECGStripCanvas(height=40, color="#00AA00")
@@ -762,6 +760,7 @@ class HolterReplayPanel(QWidget):
         toolbar_layout = QHBoxLayout(toolbar)
         toolbar_layout.setContentsMargins(4, 4, 4, 4)
         toolbar_layout.setSpacing(4)
+        self._tool_btns = {}
         for tool in ["Patient information", "Full Disc.", "Goto Template", "Measuring Ruler",
                      "Parallel Ruler", "Magnifying Glass", "Gain Settings",
                      "Paper speed:25mm/s", "Add Event(space)", "Adjust strip position", "Strip Length:7s"]:
@@ -769,12 +768,42 @@ class HolterReplayPanel(QWidget):
             tbtn.setStyleSheet(f"QPushButton{{background:{COL_DARK};color:{COL_GREEN};border:1px solid {COL_GREEN_DRK};"
                                f"border-radius:3px;padding:3px 6px;font-size:10px;}}"
                                f"QPushButton:hover{{background:{COL_GREEN_DRK};color:{COL_WHITE};}}")
-            tbtn.clicked.connect(lambda _, t=tool: self._set_tool_mode(t))
+            tbtn.clicked.connect(lambda _, t=tool, b=tbtn: self._set_tool_mode(t, b))
             toolbar_layout.addWidget(tbtn)
+            self._tool_btns[tool] = tbtn
         toolbar_layout.addStretch()
         layout.addWidget(toolbar)
 
-    def _set_tool_mode(self, tool_name: str):
+    def _set_tool_mode(self, tool_name: str, btn: QPushButton = None):
+        # Handle state cycles for Gain, Speed, Length
+        if "Gain Settings" in tool_name:
+            # Cycle: 5 -> 10 -> 20 -> 40
+            gains = [0.5, 1.0, 2.0, 4.0]
+            curr_g = getattr(self, '_curr_gain_idx', 1)
+            next_g = (curr_g + 1) % len(gains)
+            self._curr_gain_idx = next_g
+            val = gains[next_g]
+            for s in self._strip_labels: s.set_gain(val)
+            if btn: btn.setText(f"Gain: {int(val*10)}mm/mV")
+            return
+        elif "Paper speed" in tool_name:
+            speeds = [12.5, 25, 50, 100]
+            curr_s = getattr(self, '_curr_speed_idx', 1)
+            next_s = (curr_s + 1) % len(speeds)
+            self._curr_speed_idx = next_s
+            val = speeds[next_s]
+            if btn: btn.setText(f"Paper speed:{val}mm/s")
+            # In a real app, this would change self.duration_shown or similar
+            return
+        elif "Strip Length" in tool_name:
+            lengths = [3, 7, 10, 15, 30]
+            curr_l = getattr(self, '_curr_length_idx', 1)
+            next_l = (curr_l + 1) % len(lengths)
+            self._curr_length_idx = next_l
+            val = lengths[next_l]
+            if btn: btn.setText(f"Strip Length:{val}s")
+            return
+
         mode = tool_name if tool_name in ["Measuring Ruler", "Parallel Ruler", "Magnifying Glass"] else "Normal"
         for strip in self._strip_labels:
             if hasattr(strip, 'set_mode'):
@@ -835,14 +864,13 @@ class HolterReplayPanel(QWidget):
             self._lorenz_canvas.set_data(rr_x, rr_y)
             
     def set_replay_frame(self, data):
-        """Update the 3 channel strips inside the Replay tab."""
-        # data is usually (12, N)
-        if data is None or data.shape[0] < 3:
+        """Update the 12 channel strips inside the Replay tab."""
+        if data is None or data.shape[0] < 12:
             return
             
         N = data.shape[1]
         x = np.linspace(0, N/500.0, N) if N > 0 else []
-        for i, strip in enumerate(self._strip_labels):
+        for i, strip in enumerate(self._ch_strips):
             if i < data.shape[0] and N > 0:
                 y = data[i].copy()
                 strip.set_data(x, y)
@@ -910,16 +938,27 @@ class LorenzCanvas(QWidget):
 
 class ECGStripCanvas(QWidget):
     """Simple ECG strip renderer with interactive measurement tools."""
-    def __init__(self, parent=None, height: int = 80, color: str = "#00FF00"):
+    def __init__(self, parent=None, height: int = 80, color: str = "#00FF00", pen_width: float = 0.7):
         super().__init__(parent)
         self._data = np.zeros(200)
         self._color = color
+        self._pen_width = pen_width
+        self._gain = 1.0
+        self._speed = 25
         self.setFixedHeight(height)
         self.setStyleSheet(f"background:{COL_BLACK};border:none;")
         self.setMouseTracking(True)
         self._mode = "Normal"
         self._start_pos = None
         self._curr_pos = None
+
+    def set_gain(self, gain: float):
+        self._gain = gain
+        self.update()
+
+    def set_paper_speed(self, speed: int):
+        self._speed = speed
+        self.update()
 
     def set_mode(self, mode: str):
         self._mode = mode
@@ -954,8 +993,7 @@ class ECGStripCanvas(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.fillRect(self.rect(), QColor(COL_BLACK))
-        # Grid
-        grid_pen = QPen(QColor("#001100"))
+        grid_pen = QPen(QColor(COL_GREEN_DRK))
         grid_pen.setWidth(1)
         painter.setPen(grid_pen)
         w, h = self.width(), self.height()
@@ -967,27 +1005,28 @@ class ECGStripCanvas(QWidget):
         if self._data.size < 2:
             return
         d = self._data
-        mn, mx = d.min(), d.max()
-        rng = max(mx - mn, 1e-6)
+        mn, mx = 0, 4096
+        rng = 4096
+        
         pen = QPen(QColor(self._color))
-        pen.setWidth(2)
+        pen.setWidthF(self._pen_width)
         painter.setPen(pen)
         x_scale = w / (len(d) - 1)
         for i in range(1, len(d)):
             x1 = int((i - 1) * x_scale)
-            y1 = int(h - 5 - (d[i-1] - mn) / rng * (h - 10))
+            y1 = int(h - (d[i-1] - mn) / rng * h)
             x2 = int(i * x_scale)
-            y2 = int(h - 5 - (d[i] - mn) / rng * (h - 10))
+            y2 = int(h - (d[i] - mn) / rng * h)
             painter.drawLine(x1, y1, x2, y2)
 
-        # Draw Tools
         if self._mode == "Measuring Ruler" and self._start_pos and self._curr_pos:
             rpen = QPen(QColor("#00FFFF"), 2, Qt.DashLine)
             painter.setPen(rpen)
             painter.drawLine(self._start_pos, self._curr_pos)
             dx = abs(self._curr_pos.x() - self._start_pos.x())
             ms = (dx / w) * (len(d) / 500.0) * 1000 if len(d)>0 else 0
-            painter.drawText(self._curr_pos.x(), self._curr_pos.y() - 5, f"{ms:.0f} ms")
+            bpm = 60000 / ms if ms > 0 else 0
+            painter.drawText(self._curr_pos.x(), self._curr_pos.y() - 5, f"{ms:.0f} ms ({bpm:.0f} BPM)")
         elif self._mode == "Parallel Ruler" and self._start_pos and self._curr_pos:
             ppen = QPen(QColor("#FFFF00"), 1)
             painter.setPen(ppen)
@@ -1147,37 +1186,51 @@ class HolterWaveGridPanel(QFrame):
             layout.addWidget(fb)
             return
 
-        grid = QGridLayout()
-        grid.setHorizontalSpacing(8)
-        grid.setVerticalSpacing(8)
-        pg.setConfigOptions(antialias=True, background=COL_BLACK, foreground=COL_GREEN)
+        # Use a QVBoxLayout for a single vertical column (12:1 format)
+        self.grid_layout = QVBoxLayout()
+        self.grid_layout.setSpacing(2) # Minimal spacing between leads
+
+        # Create a container widget and a scroll area
+        container = QWidget()
+        container.setLayout(self.grid_layout)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(container)
+        scroll.setStyleSheet("QScrollArea { border: none; background: black; }")
+
+        if HAS_PG:
+            pg.setConfigOptions(antialias=True, useOpenGL=False, background=COL_BLACK, foreground=COL_GREEN)
 
         for idx, lead in enumerate(self.LEADS):
             card = QFrame()
-            card.setStyleSheet(f"QFrame{{background:{COL_BLACK};border:1px solid {COL_GREEN_DRK};border-radius:6px;}}")
+            # Use a darker green for borders to make the wave pop
+            card.setStyleSheet(f"QFrame{{background:{COL_BLACK};border:1px solid #004400;border-radius:6px;}}")
             cl = QVBoxLayout(card)
-            cl.setContentsMargins(6, 6, 6, 6)
-            cl.setSpacing(2)
+            cl.setContentsMargins(4, 2, 4, 2)
+            cl.setSpacing(0)
             lbl = QLabel(lead)
-            lbl.setStyleSheet(f"color:{COL_GREEN};font-size:12px;font-weight:bold;border:none;padding-left:2px;")
+            lbl.setStyleSheet(f"color:#00AA00;font-size:11px;font-weight:bold;border:none;padding-left:4px;")
             cl.addWidget(lbl)
             plot = pg.PlotWidget()
             plot.setMenuEnabled(False)
             plot.setMouseEnabled(x=False, y=False)
             plot.hideButtons()
             plot.setBackground(COL_BLACK)
-            plot.showGrid(x=True, y=True, alpha=0.15)
+            # Use a more subtle grid
+            plot.showGrid(x=True, y=True, alpha=0.1)
             plot.getAxis("left").setStyle(showValues=False)
             plot.getAxis("bottom").setStyle(showValues=False)
-            plot.setYRange(-1.5, 1.5, padding=0)
-            plot.setMinimumHeight(70)
-            curve = plot.plot(pen=pg.mkPen(COL_GREEN, width=1.8))
+            plot.getAxis("left").setPen(pg.mkPen(color='#004400'))
+            plot.getAxis("bottom").setPen(pg.mkPen(color='#004400'))
+            plot.setYRange(0, 4096, padding=0)
+            plot.setMinimumHeight(80) # Taller strips for 12:1 view
+            # Set wave thickness to 0.7mm (approx 0.7 pixels for standard displays)
+            curve = plot.plot(pen=pg.mkPen(COL_GREEN, width=0.7))
             cl.addWidget(plot, 1)
             self._lead_widgets.append((curve, plot))
-            row, col = divmod(idx, 4)
-            grid.addWidget(card, row, col)
+            self.grid_layout.addWidget(card)
 
-        layout.addLayout(grid, 1)
+        layout.addWidget(scroll, 1)
 
     def set_replay_engine(self, e): self.replay_engine = e
     def set_live_source(self, s): self.live_source = s
@@ -1189,12 +1242,11 @@ class HolterWaveGridPanel(QFrame):
     def _normalize(self, sig):
         arr = np.asarray(sig, dtype=float).flatten()
         if arr.size == 0:
-            return np.zeros(400, dtype=float)
+            return np.full(400, 2048.0, dtype=float)
+        # Keep raw values, just ensure length and handle NaNs
         arr = arr[-max(300, int(500 * self.window_sec)):]
-        arr = np.nan_to_num(arr, nan=0.0)
-        arr = arr - np.median(arr)
-        peak = float(np.percentile(np.abs(arr), 95)) if arr.size else 1.0
-        return arr / max(peak, 1e-6)
+        arr = np.nan_to_num(arr, nan=2048.0)
+        return arr
 
     def refresh_waveforms(self):
         if not self._lead_widgets:
@@ -1212,12 +1264,17 @@ class HolterWaveGridPanel(QFrame):
             if not src: return
             lead_data = [self._normalize(src[i]) for i in range(min(len(self.LEADS), len(src)))]
             while len(lead_data) < len(self.LEADS):
-                lead_data.append(np.zeros(400, dtype=float))
+                lead_data.append(np.full(400, 2048.0, dtype=float))
 
         for idx, (curve, plot) in enumerate(self._lead_widgets):
-            sig = lead_data[idx] if idx < len(lead_data) else np.zeros(400)
-            curve.setData(np.arange(sig.size, dtype=float), sig)
-            plot.setXRange(0, max(1, sig.size - 1), padding=0)
+            sig = lead_data[idx] if idx < len(lead_data) else np.full(400, 2048.0)
+            # Create time axis based on 500 SPS
+            time_axis = np.arange(sig.size, dtype=float) / 500.0
+            curve.setData(time_axis, sig)
+            # Auto-scroll X axis to show the latest window_sec
+            if sig.size > 0:
+                max_t = time_axis[-1]
+                plot.setXRange(max(0, max_t - self.window_sec), max_t, padding=0)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2373,8 +2430,8 @@ class HolterMainWindow(QDialog):
                 
                 # Broadcast data to all panels that support it
                 for panel in [getattr(self, p, None) for p in [
-                    '_replay_panel', '_histogram_panel', '_af_panel', 
-                    '_st_panel', '_edit_event_panel', '_edit_strips_panel'
+                    '_replay_panel', '_hist_panel', '_af_panel', 
+                    '_st_panel', '_edit_event_panel', '_edit_strips_panel', '_events_panel'
                 ]]:
                     if panel and hasattr(panel, 'set_replay_frame'):
                         panel.set_replay_frame(data)
@@ -2440,12 +2497,31 @@ class HolterMainWindow(QDialog):
         if self._writer:
             summary = self._writer.stop()
             self._writer = None
-            if hasattr(self, '_status_bar'):
+            if hasattr(self, '_status_bar') and self._status_bar is not None:
                 self._status_bar.setVisible(False)
-                self._status_bar.cleanup()
+                if hasattr(self._status_bar, 'cleanup'):
+                    self._status_bar.cleanup()
+            
+            # Show dialog to collect patient info AFTER recording
+            dialog = HolterStartDialog(self, patient_info=self.patient_info or {}, output_dir=self.session_dir)
+            dialog.setWindowTitle("Save Holter Recording Details")
+            if dialog.exec_() == QDialog.Accepted:
+                patient_info, dur, out_dir = dialog.get_result()
+                summary['patient_info'] = patient_info
+                self.patient_info = patient_info
+                import json
+                try:
+                    with open(os.path.join(summary.get('session_dir', ''), "patient.json"), 'w') as f:
+                        json.dump(patient_info, f, indent=4)
+                except Exception as e:
+                    print(f"Failed to save patient.json: {e}")
+
             QMessageBox.information(self, "Recording Complete",
                                     f"Holter recording saved to:\n{summary.get('session_dir', '')}")
-            self.load_completed_session(summary.get('session_dir', ''))
+            self.load_completed_session(summary.get('session_dir', ''), summary.get('patient_info', {}))
+            
+            # Auto-generate report when recording is stopped
+            self._generate_report()
 
     def _generate_report(self):
         from PyQt5.QtWidgets import QProgressDialog
@@ -2461,6 +2537,17 @@ class HolterMainWindow(QDialog):
                 patient_info=self.patient_info,
                 summary=self._summary,
             )
+            
+            # Save to history
+            try:
+                from dashboard.history_window import append_history_entry
+                h_pat = self.patient_info.copy() if self.patient_info else {}
+                if 'patient_name' not in h_pat and 'name' in h_pat:
+                    h_pat['patient_name'] = h_pat['name']
+                append_history_entry(h_pat, path, report_type="Holter")
+            except Exception as h_err:
+                print(f"Failed to append Holter history: {h_err}")
+                
             progress.close()
             QMessageBox.information(self, "Report Generated", f"Holter report saved:\n{path}")
         except Exception as e:
@@ -2490,10 +2577,16 @@ class HolterMainWindow(QDialog):
             self.patient_info = patient_info
         self._writer = None
         self._load_session()
-        if hasattr(self, '_replay_panel') and self._replay_engine:
+        if hasattr(self, '_replay_panel') and getattr(self, '_replay_engine', None):
             self._replay_panel.set_replay_engine(self._replay_engine)
+            try:
+                self._replay_panel.seek_requested.disconnect(self._on_seek_requested)
+            except Exception:
+                pass
             self._replay_panel.seek_requested.connect(self._on_seek_requested)
         self._refresh_ui()
+        if hasattr(self, '_tabs'):
+            self._tabs.setCurrentIndex(0)
 
     def closeEvent(self, event):
         if self._replay_engine:

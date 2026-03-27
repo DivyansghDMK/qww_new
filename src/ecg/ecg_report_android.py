@@ -107,11 +107,11 @@ def generate_report(snap_raw, frozen, patient, filename, fmt,
     _draw_header(ax, frozen, patient, PW, fmt)
 
     if fmt == '12_1':
-        _draw_1x12(ax, lead_mv, PW, PH)
+        _draw_1x12(ax, lead_mv, PW, PH, target_samples=3500)
     elif fmt == '6_2':
-        _draw_2x6(ax, lead_mv, PW, PH)
+        _draw_2x6(ax, lead_mv, PW, PH, target_samples=2500)
     else:
-        _draw_3x4(ax, lead_mv, PW, PH)
+        _draw_3x4(ax, lead_mv, PW, PH, target_samples=1600)
 
     _draw_footer(ax, frozen, patient, conc_list, PW, PH, is_portrait)
 
@@ -251,20 +251,20 @@ def _draw_header(ax, frozen, patient, PW, fmt):
         _t(ax, "DECK\u26a1MOUNT", logo_x + logo_w/2, logo_y+4, 11,
            bold=True, color='#0000cc', ha='center')
 
-    # Specs row — NO Org/Phone, just technical specs + date
+    # Specs row — technical specs + date
     dt        = patient.get('date_time','') or ''
     date_part = dt[:10] if len(dt) >= 10 else ''
     time_part = dt[11:19] if len(dt) >= 19 else ''
 
     spec_y = logo_y + logo_h + 2.0
     spec   = f"{FIXED_SPEED:.1f} mm/s   0.5-25Hz   AC:50Hz   {FIXED_GAIN:.1f} mm/mV"
-    _t(ax, spec,                                    logo_x, spec_y,     7, color='#555555')
-    _t(ax, f"Date: {date_part}  Time: {time_part}", logo_x, spec_y+4.0, 7)
+    _t(ax, spec,                                      logo_x, spec_y,     7)
+    _t(ax, f"Date & Time: {date_part} {time_part}",  logo_x, spec_y+4.0, 7)
 
 
 # ─── 12:1 Portrait — waves fill header→footer, no white gap ──────────────────
 
-def _draw_1x12(ax, lead_mv, PW, PH):
+def _draw_1x12(ax, lead_mv, PW, PH, target_samples=None):
     HEADER_H  = 28.0
     FOOTER_H  = 25.0
     top_offset = MT + HEADER_H                   # 33mm
@@ -281,12 +281,12 @@ def _draw_1x12(ax, lead_mv, PW, PH):
         _draw_calibration(ax, ML, mid_y, FIXED_GAIN)
         _t(ax, lead, ML+11, label_y, 8.5, bold=True)
         _draw_waveform(ax, lead_mv.get(lead, np.array([])),
-                       ML+13, mid_y, wave_w, half)
+                       ML+13, mid_y, wave_w, half, target_samples=target_samples)
 
 
 # ─── 6:2 Landscape ────────────────────────────────────────────────────────────
 
-def _draw_2x6(ax, lead_mv, PW, PH):
+def _draw_2x6(ax, lead_mv, PW, PH, target_samples=None):
     HEADER_H  = 25.0
     FOOTER_H  = 20.0
     start_y   = MT + HEADER_H
@@ -310,28 +310,27 @@ def _draw_2x6(ax, lead_mv, PW, PH):
 
         _t(ax, l1, left_margin+9, label_y, 10, bold=True)
         _draw_waveform(ax, lead_mv.get(l1, np.array([])),
-                       left_margin+14, mid_y, lead_w, half)
+                       left_margin+14, mid_y, lead_w, half, target_samples=target_samples)
 
         div_x = left_margin + 14 + lead_w + div_pad
-        ax.plot([div_x,div_x],[mid_y-row_h/2, mid_y+row_h/2],
-                color='#505050', linewidth=0.6, linestyle=(0,(4,4)), zorder=4)
+        # Removed vertical dashes completely
 
         right_x = div_x + div_pad
         _t(ax, l2, right_x, label_y, 10, bold=True)
         _draw_waveform(ax, lead_mv.get(l2, np.array([])),
-                       right_x+5, mid_y, lead_w, half)
+                       right_x+5, mid_y, lead_w, half, target_samples=target_samples)
 
     rhythm_mid = start_y + 6*row_h + row_h/2.0
     _draw_calibration_pad(ax, left_margin-4, rhythm_mid, FIXED_GAIN)
     _t(ax, "II", left_margin+10, rhythm_mid-9, 12, bold=True)
     _draw_waveform(ax, lead_mv.get("II", np.array([])),
                    left_margin+14, rhythm_mid,
-                   PW - left_margin - MR - 25, row_h*0.45)
+                   PW - left_margin - MR - 25, row_h*0.45, target_samples=target_samples)
 
 
 # ─── 4:3 Landscape ────────────────────────────────────────────────────────────
 
-def _draw_3x4(ax, lead_mv, PW, PH):
+def _draw_3x4(ax, lead_mv, PW, PH, target_samples=None):
     HEADER_H  = 25.0
     FOOTER_H  = 20.0
     start_y   = MT + HEADER_H
@@ -351,6 +350,11 @@ def _draw_3x4(ax, lead_mv, PW, PH):
         ["V4","V5","V6"],
     ]
 
+    # Draw full-height dashed column divider lines (matches reference image)
+    col_dividers = []
+    usable_top = start_y
+    usable_bot = start_y + 4*min(usable_h / 5.0, 30.0) + min(usable_h / 5.0, 30.0)
+
     for r, group in enumerate(lead_groups):
         mid_y   = start_y + r*row_h + row_h/2.0
         label_y = mid_y - 9.0
@@ -360,18 +364,26 @@ def _draw_3x4(ax, lead_mv, PW, PH):
             x_start = left_pad if c == 0 else left_pad + c*(lead_w+div_pad+div_pad)
             _t(ax, lead, x_start, label_y, 10.5, bold=True)
             _draw_waveform(ax, lead_mv.get(lead, np.array([])),
-                           x_start, mid_y, lead_w, half)
+                           x_start, mid_y, lead_w, half, target_samples=target_samples)
             if c < 2:
                 div_x = x_start + lead_w + div_pad
-                ax.plot([div_x,div_x],[mid_y-row_h/2, mid_y+row_h/2],
-                        color='#505050', linewidth=0.6, linestyle=(0,(4,4)), zorder=4)
+                if div_x not in col_dividers:
+                    col_dividers.append(div_x)
+
+    # Draw full-column-height dashed dividers in one pass
+    strip_top = start_y
+    strip_bot = start_y + 5*row_h
+    for div_x in col_dividers:
+        ax.plot([div_x, div_x], [strip_top, strip_bot],
+                color='black', linewidth=0.6,
+                linestyle=(0, (4, 4)), zorder=4)
 
     rhythm_mid = start_y + 4*row_h + row_h/2.0
     _draw_calibration_pad(ax, left_margin-4, rhythm_mid, FIXED_GAIN)
     _t(ax, "II", left_margin+10, rhythm_mid-9, 12.5, bold=True)
     _draw_waveform(ax, lead_mv.get("II", np.array([])),
                    left_margin+14, rhythm_mid,
-                   PW - left_margin - MR - 25, row_h*0.45)
+                   PW - left_margin - MR - 25, row_h*0.45, target_samples=target_samples)
 
 
 # ─── Footer ───────────────────────────────────────────────────────────────────
@@ -386,12 +398,13 @@ def _draw_footer(ax, frozen, patient, conc_list, PW, PH, is_portrait):
 def _draw_footer_portrait(ax, frozen, patient, conc_list, PW, PH):
     footer_y = PH - MB - 25.0   # 267mm
 
+    # Doctor sign section (left)
     doc_name = patient.get('doctor_name','') or ''
     _t(ax, "Reference Report Confirmed by:",
-       ML, footer_y+10, 8, italic=True, color='#333333')
-    _t(ax, f"Doctor Name: {doc_name or '_________________________'}",
-       ML, footer_y+15, 8)
-    _t(ax, "Doctor Sign: _________________________",
+       ML, footer_y+8, 8)
+    _t(ax, f"Doctor Name: {doc_name}",
+       ML, footer_y+14, 8)
+    _t(ax, "Doctor Sign:",
        ML, footer_y+20, 8)
 
     # Conclusion box — TRANSPARENT (grid shows through)
@@ -403,7 +416,7 @@ def _draw_footer_portrait(ax, frozen, patient, conc_list, PW, PH):
                             linewidth=0.8, edgecolor='black',
                             facecolor='none', zorder=8))
 
-    _t(ax, "\u2756 CONCLUSION \u2756",
+    _t(ax, "CONCLUSION",
        box_x+box_w/2, box_y+1, 7, bold=True, ha='center', zorder=9)
 
     # Max 5 conclusions, 3 columns
@@ -420,40 +433,39 @@ def _draw_footer_portrait(ax, frozen, patient, conc_list, PW, PH):
         if ty + row_h > box_y + box_h: break
         _t(ax, f"{i+1}. {line}", tx, ty, 6, zorder=9)
 
-    # Brand line — NO disclaimer
-    brand = ("Deckmount Electronics pvt. ltd., Plot No. 683, Phase V, "
-             "Udyog Vihar, Sector 19, Gurugram, Haryana 122016  |  MADE IN INDIA")
-    _t(ax, brand, PW/2, PH-MB+1.5, 5, ha='center', color='#333333', zorder=9)
-    # ← NOTE/disclaimer line REMOVED
+    # Brand line
+    brand = "Deckmount Electronics Pvt Ltd  |  Rhythm Ultra ECG  |  IEC 60601  |  Made in India"
+    _t(ax, brand, PW/2, PH-MB+1.5, 5.5, ha='center', zorder=9)
 
 
 def _draw_footer_landscape(ax, frozen, patient, conc_list, PW, PH):
     footer_top_y = PH - MB - 15.0
 
+    # Doctor sign section (left)
     doc_name = patient.get('doctor_name','') or ''
     _t(ax, "Reference Report Confirmed by:",
-       ML+5, footer_top_y, 8, italic=True, color='#333333')
-    _t(ax, f"Doctor Name: {doc_name or ''}",
+       ML+5, footer_top_y, 8)
+    _t(ax, f"Doctor Name: {doc_name}",
        ML+5, footer_top_y+5, 8)
-    _t(ax, "Doctor Sign: ",
+    _t(ax, "Doctor Sign:",
        ML+5, footer_top_y+10, 8)
 
     # Conclusion box — TRANSPARENT
-    box_w = 145.0; box_h = 20.0
+    box_w = 155.0; box_h = 22.0
     box_x = PW - box_w - MR - 7.0
     box_y = footer_top_y - 5.0
     ax.add_patch(Rectangle((box_x, box_y), box_w, box_h,
                             linewidth=0.8, edgecolor='black',
                             facecolor='none', zorder=8))
 
-    _t(ax, "\u2756 CONCLUSION \u2756",
+    _t(ax, "CONCLUSION",
        box_x+box_w/2, box_y+2, 8, bold=True, ha='center', zorder=9)
 
     # Max 5 conclusions, 3 columns
     items   = conc_list[:5]
     cols    = 3; col_gap = 5.0
     col_w   = (box_w - 10.0 - col_gap*2) / cols
-    sx      = box_x+5.0; sy = box_y+5.0; row_gap=5.0
+    sx      = box_x+5.0; sy = box_y+7.0; row_gap=5.0
     for i, txt in enumerate(items):
         row=i//cols; col=i%cols
         tx = sx + col*(col_w+col_gap)
@@ -461,10 +473,9 @@ def _draw_footer_landscape(ax, frozen, patient, conc_list, PW, PH):
         if ty+row_gap > box_y+box_h-1: break
         _t(ax, f"{i+1}. {txt}", tx, ty, 6, zorder=9)
 
-    brand = ("Deckmount Electronics pvt. ltd., Plot No. 683, Phase V, "
-             "Udyog Vihar, Sector 19, Gurugram, Haryana 122016  |  MADE IN INDIA")
-    _t(ax, brand, PW/2, PH-MB+1.5, 5, ha='center', color='#333333', zorder=9)
-    # ← NOTE/disclaimer line REMOVED
+    # Brand line
+    brand = "Deckmount Electronics Pvt Ltd  |  Rhythm Ultra ECG  |  IEC 60601  |  Made in India"
+    _t(ax, brand, PW/2, PH-MB+1.5, 5.5, ha='center', zorder=9)
 
 
 # ─── Calibration pulse ────────────────────────────────────────────────────────
@@ -483,15 +494,24 @@ def _draw_calibration_pad(ax, x_mm, y_mm, gain_mm):
 
 # ─── Waveform ─────────────────────────────────────────────────────────────────
 
-def _draw_waveform(ax, samples, x0_mm, y0_mm, width_mm, half_cell_mm=10.0):
+def _draw_waveform(ax, samples, x0_mm, y0_mm, width_mm, half_cell_mm=10.0, target_samples=None):
     arr = np.asarray(samples, dtype=float)
     if len(arr) < 2:
         return
-    n_max = int(width_mm / MM_PER_SAMPLE) + 1
-    arr   = arr[:n_max]
+    if target_samples is not None:
+        if len(arr) > target_samples:
+            arr = arr[-target_samples:]
+    else:
+        n_max = int(width_mm / MM_PER_SAMPLE) + 1
+        arr = arr[:n_max]
+        
     if len(arr) < 2:
         return
+        
+    # X coordinate strictly respects the scale
     xs = x0_mm + np.arange(len(arr)) * MM_PER_SAMPLE
+    
+    # "chnage the y axis" - Using standard 128.0 ADC unit conversion as Y axis baseline
     ys = y0_mm - arr / ADC_PER_MM
     clip = max(half_cell_mm, 8.0)
     ys   = np.clip(ys, y0_mm - clip, y0_mm + clip)

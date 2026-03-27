@@ -1585,13 +1585,9 @@ class Dashboard(QWidget):
                     self.ecg_test_page.start_live_holter_from_dashboard()
             
             elif msg.clickedButton() == btn_prev:
-                # Open file dialog for .ecgh file
-                from PyQt5.QtWidgets import QFileDialog
-                path, _ = QFileDialog.getOpenFileName(self, "Open Holter Recording", "recordings", "ECG Holter (*.ecgh)")
-                if path:
-                    # Use the existing method on ecg_test_page to show the review UI
-                    if hasattr(self.ecg_test_page, '_show_holter_ui'):
-                        self.ecg_test_page._show_holter_ui(is_recording=False, ecgh_path=path)
+                # Open up Holter workspace on Record Management tab
+                if hasattr(self.ecg_test_page, '_show_holter_ui'):
+                    self.ecg_test_page._show_holter_ui(is_recording=False, ecgh_path=None, show_record_mgmt=True)
 
         except Exception as e:
             print(f"Error opening Holter from dashboard: {e}")

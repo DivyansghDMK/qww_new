@@ -797,5 +797,95 @@
     "exception_type": "SerialException",
     "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
     "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 489, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
+  },
+  {
+    "timestamp": "2026-03-26T17:44:55.570368",
+    "message": "Hyperkalemia report generation error: Flowable <Drawing at 0x1e5a899dd20 frame=landscape_frame>...(780 x 555) too large on page 2 in frame 'landscape_frame'(789.8897637795277 x 543.2755905511812*) of template 'landscape'",
+    "category": "HYPERKALemia_REPORT_ERROR",
+    "error_count": 1,
+    "session_duration": "0:00:47.325210",
+    "exception_type": "LayoutError",
+    "exception_message": "Flowable <Drawing at 0x1e5a899dd20 frame=landscape_frame>...(780 x 555) too large on page 2 in frame 'landscape_frame'(789.8897637795277 x 543.2755905511812*) of template 'landscape'",
+    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\hyperkalemia_test.py\", line 1468, in generate_report\n    generate_hyperkalemia_report(filepath, self.analysis_results, self.lead_ii_data,\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\hyperkalemia_ecg_report_generator.py\", line 2898, in generate_hyperkalemia_report\n    return generate_hyperkalemia_ecg_report(\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\hyperkalemia_ecg_report_generator.py\", line 3993, in generate_hyperkalemia_ecg_report\n    doc.build(story)\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\reportlab\\platypus\\doctemplate.py\", line 1082, in build\n    self.handle_flowable(flowables)\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\reportlab\\platypus\\doctemplate.py\", line 961, in handle_flowable\n    raise LayoutError(ident)\nreportlab.platypus.doctemplate.LayoutError: Flowable <Drawing at 0x1e5a899dd20 frame=landscape_frame>...(780 x 555) too large on page 2 in frame 'landscape_frame'(789.8897637795277 x 543.2755905511812*) of template 'landscape'\n"
+  },
+  {
+    "timestamp": "2026-03-26T17:44:58.426411",
+    "message": "Hyperkalemia report generation error: Flowable <Drawing at 0x1e5ab26a620 frame=landscape_frame>...(780 x 555) too large on page 2 in frame 'landscape_frame'(789.8897637795277 x 543.2755905511812*) of template 'landscape'",
+    "category": "HYPERKALemia_REPORT_ERROR",
+    "error_count": 2,
+    "session_duration": "0:00:50.181253",
+    "exception_type": "LayoutError",
+    "exception_message": "Flowable <Drawing at 0x1e5ab26a620 frame=landscape_frame>...(780 x 555) too large on page 2 in frame 'landscape_frame'(789.8897637795277 x 543.2755905511812*) of template 'landscape'",
+    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\hyperkalemia_test.py\", line 1468, in generate_report\n    generate_hyperkalemia_report(filepath, self.analysis_results, self.lead_ii_data,\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\hyperkalemia_ecg_report_generator.py\", line 2898, in generate_hyperkalemia_report\n    return generate_hyperkalemia_ecg_report(\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\hyperkalemia_ecg_report_generator.py\", line 3993, in generate_hyperkalemia_ecg_report\n    doc.build(story)\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\reportlab\\platypus\\doctemplate.py\", line 1082, in build\n    self.handle_flowable(flowables)\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\reportlab\\platypus\\doctemplate.py\", line 961, in handle_flowable\n    raise LayoutError(ident)\nreportlab.platypus.doctemplate.LayoutError: Flowable <Drawing at 0x1e5ab26a620 frame=landscape_frame>...(780 x 555) too large on page 2 in frame 'landscape_frame'(789.8897637795277 x 543.2755905511812*) of template 'landscape'\n"
+  },
+  {
+    "timestamp": "2026-03-26T17:50:39.671730",
+    "message": "HRV report generation error: Flowable <Drawing at 0x1e5b1b499f0 frame=landscape_frame>...(780 x 555) too large on page 2 in frame 'landscape_frame'(789.8897637795277 x 543.2755905511812*) of template 'landscape'",
+    "category": "HRV_REPORT_ERROR",
+    "error_count": 3,
+    "session_duration": "0:06:31.427895",
+    "exception_type": "LayoutError",
+    "exception_message": "Flowable <Drawing at 0x1e5b1b499f0 frame=landscape_frame>...(780 x 555) too large on page 2 in frame 'landscape_frame'(789.8897637795277 x 543.2755905511812*) of template 'landscape'",
+    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\hrv_test.py\", line 1090, in generate_report\n    result = generate_hrv_ecg_report(\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\hrv_ecg_report_generator.py\", line 4613, in generate_hrv_ecg_report\n    doc.build(story)\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\reportlab\\platypus\\doctemplate.py\", line 1082, in build\n    self.handle_flowable(flowables)\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\reportlab\\platypus\\doctemplate.py\", line 961, in handle_flowable\n    raise LayoutError(ident)\nreportlab.platypus.doctemplate.LayoutError: Flowable <Drawing at 0x1e5b1b499f0 frame=landscape_frame>...(780 x 555) too large on page 2 in frame 'landscape_frame'(789.8897637795277 x 543.2755905511812*) of template 'landscape'\n"
+  },
+  {
+    "timestamp": "2026-03-26T17:57:03.411107",
+    "message": "Hyperkalemia report generation error: Flowable <Drawing at 0x204ef554700 frame=landscape_frame>...(780 x 555) too large on page 2 in frame 'landscape_frame'(789.8897637795277 x 543.2755905511812*) of template 'landscape'",
+    "category": "HYPERKALemia_REPORT_ERROR",
+    "error_count": 1,
+    "session_duration": "0:00:44.969933",
+    "exception_type": "LayoutError",
+    "exception_message": "Flowable <Drawing at 0x204ef554700 frame=landscape_frame>...(780 x 555) too large on page 2 in frame 'landscape_frame'(789.8897637795277 x 543.2755905511812*) of template 'landscape'",
+    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\hyperkalemia_test.py\", line 1468, in generate_report\n    generate_hyperkalemia_report(filepath, self.analysis_results, self.lead_ii_data,\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\hyperkalemia_ecg_report_generator.py\", line 2898, in generate_hyperkalemia_report\n    return generate_hyperkalemia_ecg_report(\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\hyperkalemia_ecg_report_generator.py\", line 3993, in generate_hyperkalemia_ecg_report\n    doc.build(story)\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\reportlab\\platypus\\doctemplate.py\", line 1082, in build\n    self.handle_flowable(flowables)\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\reportlab\\platypus\\doctemplate.py\", line 961, in handle_flowable\n    raise LayoutError(ident)\nreportlab.platypus.doctemplate.LayoutError: Flowable <Drawing at 0x204ef554700 frame=landscape_frame>...(780 x 555) too large on page 2 in frame 'landscape_frame'(789.8897637795277 x 543.2755905511812*) of template 'landscape'\n"
+  },
+  {
+    "timestamp": "2026-03-27T10:36:08.815032",
+    "message": "Hyperkalemia report generation error: Flowable <Drawing at 0x25d4aff1d80 frame=landscape_frame>...(780 x 555) too large on page 2 in frame 'landscape_frame'(789.8897637795277 x 543.2755905511812*) of template 'landscape'",
+    "category": "HYPERKALemia_REPORT_ERROR",
+    "error_count": 1,
+    "session_duration": "0:01:13.676557",
+    "exception_type": "LayoutError",
+    "exception_message": "Flowable <Drawing at 0x25d4aff1d80 frame=landscape_frame>...(780 x 555) too large on page 2 in frame 'landscape_frame'(789.8897637795277 x 543.2755905511812*) of template 'landscape'",
+    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\hyperkalemia_test.py\", line 1468, in generate_report\n    generate_hyperkalemia_report(filepath, self.analysis_results, self.lead_ii_data,\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\hyperkalemia_ecg_report_generator.py\", line 2898, in generate_hyperkalemia_report\n    return generate_hyperkalemia_ecg_report(\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\hyperkalemia_ecg_report_generator.py\", line 3993, in generate_hyperkalemia_ecg_report\n    doc.build(story)\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\reportlab\\platypus\\doctemplate.py\", line 1082, in build\n    self.handle_flowable(flowables)\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\reportlab\\platypus\\doctemplate.py\", line 961, in handle_flowable\n    raise LayoutError(ident)\nreportlab.platypus.doctemplate.LayoutError: Flowable <Drawing at 0x25d4aff1d80 frame=landscape_frame>...(780 x 555) too large on page 2 in frame 'landscape_frame'(789.8897637795277 x 543.2755905511812*) of template 'landscape'\n"
+  },
+  {
+    "timestamp": "2026-03-27T10:54:24.844023",
+    "message": "HRV report generation error: Flowable <Drawing at 0x29c84fd0b20 frame=landscape_frame>...(780 x 555) too large on page 2 in frame 'landscape_frame'(789.8897637795277 x 543.2755905511812*) of template 'landscape'",
+    "category": "HRV_REPORT_ERROR",
+    "error_count": 1,
+    "session_duration": "0:07:10.254953",
+    "exception_type": "LayoutError",
+    "exception_message": "Flowable <Drawing at 0x29c84fd0b20 frame=landscape_frame>...(780 x 555) too large on page 2 in frame 'landscape_frame'(789.8897637795277 x 543.2755905511812*) of template 'landscape'",
+    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\hrv_test.py\", line 1090, in generate_report\n    result = generate_hrv_ecg_report(\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\hrv_ecg_report_generator.py\", line 4613, in generate_hrv_ecg_report\n    doc.build(story)\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\reportlab\\platypus\\doctemplate.py\", line 1082, in build\n    self.handle_flowable(flowables)\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\reportlab\\platypus\\doctemplate.py\", line 961, in handle_flowable\n    raise LayoutError(ident)\nreportlab.platypus.doctemplate.LayoutError: Flowable <Drawing at 0x29c84fd0b20 frame=landscape_frame>...(780 x 555) too large on page 2 in frame 'landscape_frame'(789.8897637795277 x 543.2755905511812*) of template 'landscape'\n"
+  },
+  {
+    "timestamp": "2026-03-27T12:36:33.502417",
+    "message": "HRV report generation error: generate_hrv_ecg_report() got an unexpected keyword argument 'ecg_test_page'",
+    "category": "HRV_REPORT_ERROR",
+    "error_count": 1,
+    "session_duration": "0:05:30.675116",
+    "exception_type": "TypeError",
+    "exception_message": "generate_hrv_ecg_report() got an unexpected keyword argument 'ecg_test_page'",
+    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\hrv_test.py\", line 1105, in generate_report\n    result = generate_hrv_ecg_report(\nTypeError: generate_hrv_ecg_report() got an unexpected keyword argument 'ecg_test_page'\n"
+  },
+  {
+    "timestamp": "2026-03-27T14:27:04.954171",
+    "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
+    "category": "SERIAL_ERROR",
+    "error_count": 1,
+    "session_duration": "0:23:10.459524",
+    "exception_type": "SerialException",
+    "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
+    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 489, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
+  },
+  {
+    "timestamp": "2026-03-27T15:08:27.917946",
+    "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
+    "category": "SERIAL_ERROR",
+    "error_count": 1,
+    "session_duration": "0:11:45.564420",
+    "exception_type": "SerialException",
+    "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
+    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 489, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
   }
 ]

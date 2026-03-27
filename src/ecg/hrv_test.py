@@ -1083,17 +1083,33 @@ class HRVTestWindow(QWidget):
                 "Heart_Rate": hr_value,
             }
 
+            # Calculate QTc Fridericia (the exact way 12-lead does)
+            try:
+                rr_interval_s = float(data.get("RR", 0) or 0) / 1000.0
+                if rr_interval_s <= 0 and hr_value > 0:
+                    rr_interval_s = 60.0 / hr_value
+                qtc_frid_ms = (qt_value / (np.cbrt(rr_interval_s))) if rr_interval_s > 0 else 0
+                data["QTc_Fridericia"] = qtc_frid_ms
+            except Exception:
+                data["QTc_Fridericia"] = 0
+
+
             scaled_captured_data = [{'time': d['time'], 'value': float(d['value'])} for d in self.captured_data]
             
             # Generate report using the COMPLETE format (same as main ECG report)
             # This includes: Patient Details, Observation, Conclusions, and 5 one-minute Lead II graphs
+
+            # Retrieve ecg_test_page from dashboard if available to enable P/QRS/T and RV5/SV1 axis computations
+            ecg_page = getattr(self.dashboard_instance, 'ecg_test_page', None) if hasattr(self, 'dashboard_instance') and self.dashboard_instance else None
+
             result = generate_hrv_ecg_report(
                 filename=filepath,
                 captured_data=scaled_captured_data,
                 data=data,
                 patient=patient,
                 settings_manager=self.settings_manager,
-                selected_lead = self.selected_lead
+                selected_lead=self.selected_lead,
+                ecg_test_page=ecg_page
             )
             
             if result:
@@ -1105,6 +1121,49 @@ class HRVTestWindow(QWidget):
                     append_history_entry(h_pat, filepath, report_type="HRV", username=self.username)
                 except Exception as hist_err:
                     print(f" Failed to append HRV history: {hist_err}")
+                # ── Success popup ────────────────────────────────────────────────
+                from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton
+                dlg = QDialog(self)
+                dlg.setWindowTitle("Report Generated")
+                dlg.setMinimumWidth(480)
+                dlg.setStyleSheet("""
+                    QDialog { background: #1e2a38; }
+                    QLabel  { color: #e0e0e0; font-size: 13px; }
+                    QLabel#title { color: #4CAF50; font-size: 15px; font-weight: bold; }
+                    QPushButton { background: #2a3f5f; color: #e0e0e0; border: 1px solid #3a5f8f;
+                                  border-radius: 5px; padding: 6px 18px; font-size: 12px; }
+                    QPushButton:hover { background: #3a5f8f; }
+                    QPushButton#open_btn { background: #1565C0; color: white; border: none; font-weight: bold; }
+                    QPushButton#open_btn:hover { background: #1976D2; }
+                """)
+                vbox = QVBoxLayout(dlg)
+                vbox.setSpacing(12)
+                vbox.setContentsMargins(20, 20, 20, 20)
+                title_lbl = QLabel("✅  HRV Report Generated Successfully")
+                title_lbl.setObjectName("title")
+                vbox.addWidget(title_lbl)
+                path_lbl = QLabel(f"<b>Saved at:</b><br>{filepath}")
+                path_lbl.setWordWrap(True)
+                vbox.addWidget(path_lbl)
+                hint_lbl = QLabel("You can view this report on the <b>History</b> page.")
+                vbox.addWidget(hint_lbl)
+                btn_row = QHBoxLayout()
+                open_btn = QPushButton("Open PDF")
+                open_btn.setObjectName("open_btn")
+                def _open_pdf():
+                    import subprocess, sys
+                    if sys.platform == 'win32':
+                        subprocess.Popen(['start', '', filepath], shell=True)
+                    else:
+                        subprocess.Popen(['xdg-open', filepath])
+                open_btn.clicked.connect(_open_pdf)
+                ok_btn = QPushButton("OK")
+                ok_btn.clicked.connect(dlg.accept)
+                btn_row.addStretch()
+                btn_row.addWidget(open_btn)
+                btn_row.addWidget(ok_btn)
+                vbox.addLayout(btn_row)
+                dlg.exec_()
             else:
                 print("⚠️ HRV report generation completed with warnings.")
             

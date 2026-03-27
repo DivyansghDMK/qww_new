@@ -52,17 +52,17 @@ except Exception:
     pg = None
     HAS_PG = False
 
-# ── Colour palette — strict Black & Green ────────────────────────────────────
-COL_GREEN     = "#00FF00"
-COL_GREEN_DRK = "#004400"
-COL_GREEN_MID = "#00AA00"
-COL_BLACK     = "#000000"
-COL_DARK      = "#0A0A0A"
-COL_GRAY      = "#1A1A1A"
-COL_BG        = "#000000"
-COL_TEXT      = "#00FF00"
+# ── Colour palette — matching app standard dark/orange theme ─────────────────
+COL_GREEN     = "#ff6600"   # primary accent (orange)
+COL_GREEN_DRK = "#7a3000"   # darker accent
+COL_GREEN_MID = "#e65c00"   # mid accent
+COL_BLACK     = "#0d0d0d"   # near-black background
+COL_DARK      = "#1a1a2e"   # panel background
+COL_GRAY      = "#16213e"   # card background
+COL_BG        = "#0d0d0d"   # main background
+COL_TEXT      = "#ff6600"   # primary text accent
 COL_WHITE     = "#FFFFFF"
-COL_YELLOW    = "#FFFF00"
+COL_YELLOW    = "#FFD700"
 COL_RED       = "#FF4444"
 
 
@@ -72,17 +72,17 @@ def _style_btn(bg=COL_GREEN_DRK, fg=COL_WHITE, hover=COL_GREEN):
             background: {bg};
             color: {fg};
             border: 1px solid {COL_GREEN};
-            border-radius: 4px;
+            border-radius: 6px;
             padding: 6px 14px;
             font-size: 12px;
             font-weight: bold;
         }}
         QPushButton:hover {{
             background: {hover};
-            color: {COL_BLACK};
+            color: {COL_WHITE};
         }}
         QPushButton:pressed {{ background: {COL_GREEN_DRK}; border: 2px solid {COL_WHITE}; }}
-        QPushButton:disabled {{ background: #111; color: #333; border: 1px solid #222; }}
+        QPushButton:disabled {{ background: #222; color: #555; border: 1px solid #333; }}
     """
 
 
@@ -90,14 +90,14 @@ def _style_active_btn():
     return f"""
         QPushButton {{
             background: {COL_GREEN};
-            color: {COL_BLACK};
+            color: {COL_WHITE};
             border: 1px solid {COL_GREEN};
-            border-radius: 4px;
+            border-radius: 6px;
             padding: 6px 14px;
             font-size: 12px;
             font-weight: bold;
         }}
-        QPushButton:hover {{ background: #00DD00; }}
+        QPushButton:hover {{ background: {COL_GREEN_MID}; }}
     """
 
 
@@ -136,7 +136,7 @@ def _sec_to_hms(s: float) -> str:
 class HolterStartDialog(QDialog):
     def __init__(self, parent=None, patient_info: dict = None, output_dir: str = "recordings"):
         super().__init__(parent)
-        self.setWindowTitle("Start Holter Recording")
+        self.setWindowTitle("Comprehensive ECG Analysis — Setup")
         self.setMinimumWidth(640)
         self.setStyleSheet(f"background: {COL_DARK}; color: {COL_WHITE};")
         self.output_dir = output_dir
@@ -150,14 +150,14 @@ class HolterStartDialog(QDialog):
         layout.setSpacing(12)
         layout.setContentsMargins(24, 24, 24, 24)
 
-        title = QLabel("🫀  Holter Monitor — Professional Setup")
-        title.setStyleSheet(f"background:{COL_BLACK};color:{COL_GREEN};border:2px solid {COL_GREEN};"
+        title = QLabel("🫀  Comprehensive ECG Analysis — Professional Setup")
+        title.setStyleSheet(f"background:{COL_GRAY};color:{COL_GREEN};border:2px solid {COL_GREEN};"
                             f"font-size:20px;font-weight:bold;padding:16px;border-radius:8px;")
         layout.addWidget(title)
 
-        subtitle = QLabel("Enter patient details, choose study duration, and launch the 12-lead Holter workspace.")
+        subtitle = QLabel("Enter patient details, choose study duration, and launch the 12-lead ECG workspace.")
         subtitle.setWordWrap(True)
-        subtitle.setStyleSheet(f"color:{COL_GREEN};font-size:13px;padding:4px;")
+        subtitle.setStyleSheet(f"color:#cccccc;font-size:13px;padding:4px;")
         layout.addWidget(subtitle)
 
         # Patient info group
@@ -247,10 +247,23 @@ class HolterStartDialog(QDialog):
 
         btn_row = QHBoxLayout()
         cancel_btn = QPushButton("Cancel")
-        cancel_btn.setStyleSheet(_style_btn(COL_BLACK, COL_GREEN, COL_GREEN_DRK))
+        cancel_btn.setStyleSheet(_style_btn(COL_GRAY, COL_WHITE, COL_GREEN_DRK))
         cancel_btn.clicked.connect(self.reject)
-        start_btn = QPushButton("▶  Open Holter Workspace")
-        start_btn.setStyleSheet(_style_btn(COL_GREEN, COL_BLACK, COL_GREEN_MID))
+        start_btn = QPushButton("▶  Open ECG Workspace")
+        start_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+                    stop:0 #ff6600, stop:1 #e65c00);
+                color: white;
+                border: none;
+                border-radius: 8px;
+                padding: 14px 24px;
+                font-size: 14px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{ background: #ff7a26; }}
+            QPushButton:pressed {{ background: #cc5200; }}
+        """)
         start_btn.setMinimumHeight(48)
         start_btn.clicked.connect(self._on_start)
         btn_row.addWidget(cancel_btn)

@@ -1235,6 +1235,12 @@ class HyperkalemiaTestWindow(QWidget):
                 risk_level = "Mild"
                 risk_color = "#17a2b8" # Cyan
             
+            # Calculate QTc Fridericia using HR and QT (like 12-lead)
+            qtcf = 0.0
+            if hr > 0 and qt > 0:
+                rr_s = 60.0 / hr
+                qtcf = (qt / np.cbrt(rr_s)) if rr_s > 0 else 0.0
+
             # Store results for report generator
             self.analysis_results = {
                 "heart_rate": hr,
@@ -1242,6 +1248,7 @@ class HyperkalemiaTestWindow(QWidget):
                 "qrs_duration_ms": qrs,
                 "qt_interval_ms": qt,
                 "qtc_ms": qtc,
+                "QTc_Fridericia": qtcf,
                 "st_segment_ms": 0,
                 "indicators": indicators,
                 "risk_level": risk_level,
@@ -1478,6 +1485,50 @@ class HyperkalemiaTestWindow(QWidget):
                 append_history_entry(h_pat, filepath, report_type="Hyperkalemia", username=self.username)
             except Exception as hist_err:
                 print(f" Failed to append Hyperkalemia history: {hist_err}")
+            # ── Success popup ────────────────────────────────────────────────────
+            from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton
+            dlg = QDialog(self)
+            dlg.setWindowTitle("Report Generated")
+            dlg.setMinimumWidth(480)
+            dlg.setStyleSheet("""
+                QDialog { background: #1e2a38; }
+                QLabel  { color: #e0e0e0; font-size: 13px; }
+                QLabel#title { color: #4CAF50; font-size: 15px; font-weight: bold; }
+                QPushButton { background: #2a3f5f; color: #e0e0e0; border: 1px solid #3a5f8f;
+                              border-radius: 5px; padding: 6px 18px; font-size: 12px; }
+                QPushButton:hover { background: #3a5f8f; }
+                QPushButton#open_btn { background: #1565C0; color: white; border: none; font-weight: bold; }
+                QPushButton#open_btn:hover { background: #1976D2; }
+            """)
+            vbox = QVBoxLayout(dlg)
+            vbox.setSpacing(12)
+            vbox.setContentsMargins(20, 20, 20, 20)
+            title_lbl = QLabel("✅  Hyperkalemia Report Generated Successfully")
+            title_lbl.setObjectName("title")
+            vbox.addWidget(title_lbl)
+            path_lbl = QLabel(f"<b>Saved at:</b><br>{filepath}")
+            path_lbl.setWordWrap(True)
+            vbox.addWidget(path_lbl)
+            hint_lbl = QLabel("You can view this report on the <b>History</b> page.")
+            vbox.addWidget(hint_lbl)
+            btn_row = QHBoxLayout()
+            open_btn = QPushButton("Open PDF")
+            open_btn.setObjectName("open_btn")
+            _fp = filepath
+            def _open_pdf():
+                import subprocess, sys
+                if sys.platform == 'win32':
+                    subprocess.Popen(['start', '', _fp], shell=True)
+                else:
+                    subprocess.Popen(['xdg-open', _fp])
+            open_btn.clicked.connect(_open_pdf)
+            ok_btn = QPushButton("OK")
+            ok_btn.clicked.connect(dlg.accept)
+            btn_row.addStretch()
+            btn_row.addWidget(open_btn)
+            btn_row.addWidget(ok_btn)
+            vbox.addLayout(btn_row)
+            dlg.exec_()
             
         except Exception as e:
             print(f"❌ Failed to generate Hyperkalemia report: {str(e)}")

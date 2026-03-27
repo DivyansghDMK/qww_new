@@ -2213,6 +2213,37 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
             print(f"⚠️ Axis calculation failed: {e}")
             import traceback
             traceback.print_exc()
+            
+    # Save the computed axis back to data for the header rendering logic
+    data['p_axis'] = p_axis_deg
+    data['qrs_axis'] = qrs_axis_deg
+    data['t_axis'] = t_axis_deg
+    
+    # --- Compute RV5 and SV1 from 12-lead data like Hyperkalemia does ---
+    try:
+        from ecg.ecg_report_generator import ADC_PER_BOX_CONFIG
+    except ImportError:
+        ADC_PER_BOX_CONFIG = {'V5': 6400.0, 'V1': 6400.0}
+        
+    try:
+        if ecg_test_page is not None and hasattr(ecg_test_page, 'data') and len(ecg_test_page.data) > 10:
+            v1_arr = ecg_test_page.data[6]
+            v5_arr = ecg_test_page.data[10]
+            
+            adc_per_mv_v5 = ADC_PER_BOX_CONFIG.get('V5', 6400.0) / max(1e-6, wave_gain_mm_mv)
+            adc_per_mv_v1 = ADC_PER_BOX_CONFIG.get('V1', 6400.0) / max(1e-6, wave_gain_mm_mv)
+            
+            if len(v5_arr) > 0:
+                v5_centered = np.asarray(v5_arr) - np.mean(v5_arr)
+                rv5_mv = float(np.percentile(v5_centered, 98)) / adc_per_mv_v5
+                data['rv5'] = max(0.0, round(rv5_mv, 3))
+                
+            if len(v1_arr) > 0:
+                v1_centered = np.asarray(v1_arr) - np.mean(v1_arr)
+                sv1_raw = float(np.percentile(v1_centered, 2))
+                data['sv1'] = round(sv1_raw / adc_per_mv_v1, 3)
+    except Exception as e:
+        print(f"⚠️ RV5/SV1 calc failed: {e}")
         
     # Dummy values (remove real axis calculations for labels)
     p_axis_display = "--"
@@ -2692,7 +2723,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
 # ==================== HRV ECG REPORT GENERATION ====================
 # COMPLETE ECG REPORT FORMAT - Same as generate_ecg_report() but with 5 one-minute Lead II graphs
 
-def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, data=None, patient=None, settings_manager=None, selected_lead="II"):
+def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, data=None, patient=None, settings_manager=None, selected_lead="II", ecg_test_page=None):
     """
     Generate HRV ECG report PDF with EXACT SAME format as main 12-lead ECG report
     Only difference: Page 2 shows 5 one-minute Lead II graphs in LANDSCAPE mode instead of 12 leads
@@ -3109,18 +3140,17 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
         
         if os.path.exists(logo_path):
             canvas.saveState()
-            if canvas.getPageNumber() in [1, 2]:  # Changed from [2, 3] to [1, 2] (Page 2 is now Page 1)
-                # Page 1 & 2 are LANDSCAPE - logo at top right
+            if canvas.getPageNumber() in [1, 2]:  # Landscape pages
+                logo_w, logo_h = 120, 40
+                page_width, page_height = canvas._pagesize
+                # Align with 12:1 format positioning
+                x = page_width - logo_w - 35
+                y = page_height - logo_h
+            else:
                 logo_w, logo_h = 120, 40
                 page_width, page_height = canvas._pagesize
                 x = page_width - logo_w - 35
-                y = page_height - logo_h + 10  # Shifted 10 points up from original position
-            else:
-                # Page 1 is PORTRAIT - position at top right (very close to top)
-                logo_w, logo_h = 120, 40
-                page_height = 842  # A4 portrait height
-                x = 595 - logo_w - 30  # 595 = A4 width, 30 = right margin
-                y = page_height - 35  # 35 points from top 
+                y = page_height - logo_h
             try:
                 canvas.drawImage(logo_path, x, y, width=logo_w, height=logo_h, preserveAspectRatio=True, mask='auto')
             except Exception:
@@ -3134,13 +3164,9 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
         footer_text = "Deckmount Electronics, Plot No. 683, Phase V, Udyog Vihar, Sector 19, Gurugram, Haryana 122016"
         text_width = canvas.stringWidth(footer_text, "Helvetica", 8)
         
-        if canvas.getPageNumber() in [1, 2]:  # Changed from [2, 3] to [1, 2] (Page 2 is now Page 1)
-            # Page 1 & 2 are LANDSCAPE
-            page_width, page_height = canvas._pagesize
-            x = (page_width - text_width) / 2
-        else:
-            # Page 1 is PORTRAIT
-            x = (595 - text_width) / 2
+        # All pages in this report are LANDSCAPE by default
+        page_width, page_height = canvas._pagesize
+        x = (page_width - text_width) / 2
         
         y = 10
         canvas.drawString(x, y, footer_text)
@@ -3153,8 +3179,8 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     
     # Define Landscape template only (for all pages) with onPage callback
     landscape_width, landscape_height = landscape(A4)
-    landscape_frame = Frame(20, 20,  # reduced margins for landscape to fit taller drawing
-                           landscape_width - 40, landscape_height - 40,
+    landscape_frame = Frame(10, 10,  # reduced margins so drawing fits inside frame
+                           landscape_width - 20, landscape_height - 20,
                            id='landscape_frame')
     landscape_template = PageTemplate(id='landscape', frames=[landscape_frame], 
                                      pagesize=landscape(A4), onPage=_draw_logo_and_footer_callback)
@@ -3192,6 +3218,14 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     full_name = f"{first_name} {last_name}".strip()
     date_time_str = date_time
     
+    # PR, QRS, QT, QTc, RR, RV5+SV1 etc. from original_metrics_from_json
+    hr_val = original_metrics_from_json.get("HR", 0)
+    rr_val = original_metrics_from_json.get("RR_ms", 0)
+    pr_val = original_metrics_from_json.get("PR", 0)
+    qrs_val = original_metrics_from_json.get("QRS", 0)
+    qt_val = original_metrics_from_json.get("QT", 0)
+    qtc_val = original_metrics_from_json.get("QTc", 0)
+    
     # ==================== CALCULATE CONCLUSIONS (NEEDED FOR ECG GRAPHS PAGE) ====================
     # Conclusions are still needed for the conclusion box on the ECG graphs page (now Page 1)
     # Get conclusions from JSON (SAME LOGIC AS MAIN REPORT)
@@ -3219,8 +3253,8 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     # Landscape A4 frame dimensions (landscape_width - 40, landscape_height - 40)
     # A4 landscape: 842 x 595, minus reduced margins (20 each side) = 802 x 555
     # This allows taller drawing to fit patient info at Y=528
-    total_width = 780  # Fits in landscape frame (802 - margin)
-    total_height = 540  # Increased to fit patient info at Y=528 comfortably (555 - margin)
+    total_width = 780   # Fits in landscape frame (802 - margin)
+    total_height = 530   # Must be < landscape_height - 20 = 575 - 20 = 555 pts (safe margin)
     master_drawing = Drawing(total_width, total_height)
     
     # Define positions for 5 one-minute segments (LANDSCAPE MODE - POSITIONED FOR 540 HEIGHT)
@@ -3320,9 +3354,8 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
         notch_height_mm = 1.0 * wave_gain_mm_mv  # 1mV × gain
         notch_height = notch_height_mm * mm_unit  # Convert to points
         
-        # Position: Shifted 1.5 boxes from left edge
-        # X position: 1mm from left edge - 1.5 boxes shift
-        notch_x = minor_box_width - (1.5 * box_width)  # 1mm - 1.5 boxes (7.5mm)
+        # Position: 2mm from left edge (always positive, never clips)
+        notch_x = 2.0 * mm_unit  # 2mm = 5.67 pts (guaranteed inside drawing)
         
         # Y position: Center of the strip baseline - SHIFTED DOWN 25 points
         center_y = y_pos + (ecg_height / 2.0)  # Center of the graph in points
@@ -3363,13 +3396,13 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
         from reportlab.graphics.shapes import String as TextString
         minute_labels = ["(First minute)", "(Second minute)", "(Third minute)", "(Fourth minute)", "(Fifth minute)"]
         if 0 <= segment_idx < len(minute_labels):
-            label_text = f"Lead {selected_lead}{minute_labels[segment_idx]}"
-            label_y = notch_y_base + notch_height + 20
+            label_text = f"Lead {selected_lead} {minute_labels[segment_idx]}"
+            label_y = notch_y_base + notch_height + 4  # just above notch top
             label = TextString(
-                notch_x,
+                notch_x + notch_width + 4,  # start just after notch right edge
                 label_y,
                 label_text,
-                fontSize=9,
+                fontSize=8,
                 fontName="Helvetica-Bold",
                 fillColor=colors.black,
             )
@@ -3439,10 +3472,8 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
                                strokeLineCap=1,
                                strokeLineJoin=1)
                 
-                # Start path
+                # Start path and draw all ECG points
                 ecg_path.moveTo(t[0], ecg_normalized[0])
-                
-                # Add ALL points
                 for i in range(1, len(t)):
                     ecg_path.lineTo(t[i], ecg_normalized[i])
                 
@@ -3458,125 +3489,85 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
             import traceback
             traceback.print_exc()
     
-    # ==================== ADD PATIENT INFO TO PAGE 2 (LANDSCAPE MODE - POSITIONED PROPERLY) ====================
-    
-    lead_label_value = selected_lead if selected_lead else "--"
-    # LEFT SIDE: Patient Info (SHIFTED LEFT + UP)
-    patient_name_label = String(-15, 545, f"Name: {full_name}",  # Shifted UP: 535 → 545
-                                fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(patient_name_label)
-    
-    patient_age_label = String(-15, 525, f"Age: {age}",  # Shifted UP: 515 → 525
-                               fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(patient_age_label)
-    
-    patient_gender_label = String(-15, 505, f"Gender: {gender}",  # Shifted UP: 495 → 505
-                                  fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(patient_gender_label)
-    patient_lead_label_landscape = String(-15, 485, f"Lead: {lead_label_value}",
-                                          fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
-    master_drawing.add(patient_lead_label_landscape)
-    
-    # RIGHT SIDE: Date/Time (shifted UP by 20 points - aligned with patient info)
-    if date_time_str:
-        parts = date_time_str.split()
-        date_part = parts[0] if parts else ""
-        time_part = parts[1] if len(parts) > 1 else ""
-    else:
-        date_part, time_part = "____", "____"
-    
-    date_label = String(655, 540, f"Date: {date_part}",  # Additional shift: RIGHT by 15 (670→685) and UP by 5 (535→540)
-                       fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(date_label)
-    
-    time_label = String(655, 525, f"Time: {time_part}",  # Additional shift: RIGHT by 15 (670→685) and UP by 5 (500→525)
-                       fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(time_label)
-    
-    # ==================== VITAL PARAMETERS (LANDSCAPE MODE - 2 COLUMNS SIDE BY SIDE) ====================
+    # ==================== UNIFIED CLEAN HEADER (SINGLE SOURCE OF TRUTH) ====================
+    # Calculate HRV session stats — these are the only values shown in the header.
     has_rr_array = 'rr_all_for_hrv' in locals() and isinstance(rr_all_for_hrv, list) and len(rr_all_for_hrv) > 2
-    has_avg_rr = 'avg_rr_per_minute' in locals() and isinstance(avg_rr_per_minute, list) and len(avg_rr_per_minute) > 0
+    has_avg_rr   = 'avg_rr_per_minute' in locals() and isinstance(avg_rr_per_minute, list) and len(avg_rr_per_minute) > 0
 
     if not has_rr_array and not has_avg_rr:
-        HR = 0
-        RR = 0
-        PR = 0
-        QRS = 0
-        QT = 0
-        QTc = 0
-        ST = 0
+        HR = 0; RR = 0; PR = 0; QRS_H = 0; QT = 0; QTc = 0; ST = 0
         rr_avg_for_report = 0
-        print("⚠️ Page 1 (ECG waves): No valid HRV data detected, all vitals forced to 0")
+        print("⚠️ ECG header: No HRV data, all vitals = 0")
     else:
-        PR = data.get('PR', 0)
-        QRS = data.get('QRS', 0)
-        QT = data.get('QT', 0)
-        QTc = data.get('QTc', 0)
-        ST = data.get('ST', 0)
+        PR    = data.get('PR',  0)
+        QRS_H = data.get('QRS', 0)
+        QT    = data.get('QT',  0)
+        QTc   = data.get('QTc', 0)
+        ST    = data.get('ST',  0)
         if has_avg_rr:
-            rr_count = len(avg_rr_per_minute)
-            rr_avg_float = (sum(avg_rr_per_minute) / rr_count)
-            rr_decimal = rr_avg_float - int(rr_avg_float)
-            RR = int(rr_avg_float) + 1 if rr_decimal >= 0.50 else int(rr_avg_float)
-            hr_values = [60000 / r for r in avg_rr_per_minute if r and r > 0]
-            HR = int(round(sum(hr_values) / len(hr_values))) if len(hr_values) > 0 else data.get('HR_avg', 0)
+            rr_count     = len(avg_rr_per_minute)
+            rr_avg_float = sum(avg_rr_per_minute) / rr_count
+            rr_decimal   = rr_avg_float - int(rr_avg_float)
+            RR  = int(rr_avg_float) + 1 if rr_decimal >= 0.50 else int(rr_avg_float)
+            hr_vals = [60000 / r for r in avg_rr_per_minute if r and r > 0]
+            HR  = int(round(sum(hr_vals) / len(hr_vals))) if hr_vals else data.get('HR_avg', 0)
         else:
-            HR = data.get('HR_avg', 0)
-            RR = int(60000 / HR) if HR and HR > 0 else 0
+            HR  = data.get('HR_avg', 0)
+            RR  = int(60000 / HR) if HR and HR > 0 else 0
         rr_avg_for_report = RR
-        print(f"⚠️ Page 1 (ECG waves): Using HRV averages - HR={HR} bpm, RR={RR} ms")
-    
-    # LEFT COLUMN (130, y) - HR, PR, QRS, RR (SHIFTED UP BY 20 POINTS)
-    _add_label_column(
-        master_drawing,
-        205,
-        [
-            (555, f"HR    : {HR} bpm"),
-            (540, f"PR    : {PR} ms"),
-            (525, f"QRS : {QRS} ms"),
-            (510, f"RR    : {RR} ms"),
-            (495, f"QT     : {QT} ms"),
-            (480, f"QTc   : {QTc} ms"),
-        ],
-    )
-    
-    st_label = String(350, 495, f"ST     : {ST} ms", fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(st_label)
-    
-    # ==================== ADDITIONAL LABELS (RIGHT COLUMN) ====================
-    # P/QRS/T Axis
-    p_axis = data.get('p_axis', '--').replace('°', '')
-    qrs_axis = data.get('qrs_axis', '--').replace('°', '')
-    t_axis = data.get('t_axis', '--').replace('°', '')
-    p_qrs_label = String(350, 555, f"P/QRS/T  : {p_axis}/{qrs_axis}/{t_axis}°", fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(p_qrs_label)
-    
-    # RV5/SV1
-    rv5 = data.get('rv5', 0.0)
-    sv1 = data.get('sv1', 0.0)
-    rv5_sv_label = String(350, 540, f"RV5/SV1  : {rv5:.3f}/{sv1:.3f} mV", fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(rv5_sv_label)
-    
-    # RV5+SV1
-    rv5_sv1_sum = rv5 + abs(sv1)
-    rv5_sv1_sum_label = String(350, 525, f"RV5+SV1 : {rv5_sv1_sum:.3f} mV", fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(rv5_sv1_sum_label)
-    
-    # QTCF
-    qtcf = data.get('QTc_Fridericia', 0)
-    if qtcf and qtcf > 0:
-        qtcf_text = f"QTCF       : {qtcf:.0f} ms"
-    else:
-        qtcf_text = "QTCF       : -- ms"
-    qtcf_label = String(350, 510, qtcf_text, fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(qtcf_label)
+        print(f"✅ ECG header: HR={HR} bpm, RR={RR} ms, PR={PR} ms, QRS={QRS_H} ms, QT={QT} ms, QTc={QTc} ms")
 
-    
-    master_drawing.add(String(
-        350, 480,
-        f"{wave_speed_mm_s} mm/s   {filter_band}   AC : {ac_frequency}   {wave_gain_mm_mv} mm/mV",
-        fontSize=10, fontName="Helvetica", fillColor=colors.black
-    ))
+    # Right-column morphology values
+    rv5          = data.get('rv5', 0.0)
+    sv1          = data.get('sv1', 0.0)
+    rv5_sv1_sum  = rv5 + abs(sv1)
+    qtcf         = data.get('QTc_Fridericia', 0)
+    p_axis       = str(data.get('p_axis',   '--')).replace('°', '')
+    qrs_axis_str = str(data.get('qrs_axis', '--')).replace('°', '')
+    t_axis_str   = str(data.get('t_axis',   '--')).replace('°', '')
+    qtcf_text    = f"{int(qtcf)} ms" if qtcf and qtcf > 0 else "-- ms"
+
+    # Date / time
+    if date_time_str:
+        _dparts   = date_time_str.split()
+        date_part = _dparts[0] if _dparts else ""
+        time_part = _dparts[1] if len(_dparts) > 1 else ""
+    else:
+        date_part, time_part = "____", "____"
+
+    filter_line = f"{wave_speed_mm_s} mm/s   {filter_band}   AC : {ac_frequency}   {wave_gain_mm_mv} mm/mV"
+
+    # ── ROW 1 — Patient identity (top-left) ──────────────────────────────────
+    _fs9 = 9
+    master_drawing.add(String(0, 525, f"Name: {full_name}",
+                               fontSize=_fs9, fontName="Helvetica-Bold", fillColor=colors.black))
+    master_drawing.add(String(0, 513, f"Age: {age}   Gender: {gender}   Type: Standard",
+                               fontSize=_fs9, fontName="Helvetica", fillColor=colors.black))
+
+    # ── LEFT metrics block (x=210) — uses ONLY HRV-computed values ───────────
+    _LX = 210; _fs = 10
+    master_drawing.add(String(_LX, 525, f"HR   : {HR} bpm",   fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
+    master_drawing.add(String(_LX, 511, f"PR   : {PR} ms",    fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
+    master_drawing.add(String(_LX, 497, f"QRS : {QRS_H} ms",  fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
+    master_drawing.add(String(_LX, 483, f"RR   : {RR} ms",    fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
+    master_drawing.add(String(_LX, 469, f"QT   : {QT} ms",    fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
+    master_drawing.add(String(_LX, 455, f"QTc : {QTc} ms",    fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
+
+    # ── RIGHT metrics block (x=420) ───────────────────────────────────────────
+    _RX = 420
+    master_drawing.add(String(_RX, 525, f"P/QRS/T : {p_axis}/{qrs_axis_str}/{t_axis_str}\u00b0", fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
+    master_drawing.add(String(_RX, 511, f"RV5/SV1 : {rv5:.3f}/{sv1:.3f} mV",                    fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
+    master_drawing.add(String(_RX, 497, f"RV5+SV1 : {rv5_sv1_sum:.3f} mV",                      fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
+    master_drawing.add(String(_RX, 483, f"QTCF     : {qtcf_text}",                               fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
+    master_drawing.add(String(_RX, 469, filter_line,                                             fontSize=8,   fontName="Helvetica", fillColor=colors.black))
+
+    # ── Date/Time (far right, small text) ────────────────────────────────────
+    master_drawing.add(String(655, 525, f"Date: {date_part}", fontSize=8, fontName="Helvetica", fillColor=colors.grey))
+    master_drawing.add(String(655, 514, f"Time: {time_part}", fontSize=8, fontName="Helvetica", fillColor=colors.grey))
+
+    # ── Lead label (just above the first strip) ───────────────────────────────
+    # Removed the global Lead label because it overlaps with the "Lead II (First minute)" label per strip.
+    pass
     
     # ==================== DOCTOR INFO (LANDSCAPE MODE - POSITIONED INSIDE DRAWING) ====================
     
@@ -4108,7 +4099,7 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
                         num_segments = len(rr_intervals_calc) // segment_length
                         f.write(f"   Segments used: {num_segments}\n")
                         f.write(f"   Segment length: {segment_length} intervals per segment\n")
-                        f.write(f"   SDANN = std(segment_averages) = {sdann:.2f} ms ✓\n")
+                        f.write(f"   SDANN = std(segment_averages) = {sdann:.2f} ms [OK]\n")
                 else:
                     f.write("RR intervals: Not available (insufficient data)\n")
             else:
@@ -4252,10 +4243,10 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     # Charts placed on top/in center of shadow containers - FURTHER INCREASED SIZE
     # Increased column widths for bigger charts to fill container properly
     time_domain_table = Table([
-        [Image(temp_rr_chart_path, width=235, height=150),
-         Image(temp_hr_chart_path, width=235, height=150),
-         Image(temp_radar_chart_path, width=235, height=150)]
-    ], colWidths=[255, 255, 255])
+        [Image(temp_rr_chart_path, width=245, height=200),
+         Image(temp_hr_chart_path, width=245, height=200),
+         Image(temp_radar_chart_path, width=245, height=200)]
+    ], colWidths=[260, 260, 260])
     
     time_domain_table.setStyle(TableStyle([
         # Shadow container effect: Light background with border (cards/containers)
@@ -4480,10 +4471,11 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     ]))
     
     # Create Frequency Domain chart container
+    # Provide a generous height for the full page!
     if temp_psd_chart_path and os.path.exists(temp_psd_chart_path):
-        freq_chart_img = Image(temp_psd_chart_path, width=750, height=130)
+        freq_chart_img = Image(temp_psd_chart_path, width=750, height=270)
     else:
-        freq_chart_img = Spacer(1, 130)
+        freq_chart_img = Spacer(1, 270)
     
     # Create container table with metrics and chart
     freq_domain_container = Table([
@@ -4497,17 +4489,19 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
         ("LEFTPADDING", (0,0), (-1,-1), 12),
         ("RIGHTPADDING", (0,0), (-1,-1), 12),
         ("TOPPADDING", (0,0), (-1,-1), 6),
-        ("BOTTOMPADDING", (0,0), (-1,-1), 12),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 8),
         ("ALIGN", (0,0), (-1,-1), "CENTER"),
         ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
     ]))
     
-    # Add heading OUTSIDE container (before container)
+    # Force Frequency Domain Analysis onto a brand new page (Page 3)
+    story.append(PageBreak())
+    
     freq_domain_heading = Paragraph("<b>Frequency Domain Analysis</b>", freq_domain_style)
     story.append(freq_domain_heading)
     story.append(Spacer(1, 6))
     story.append(freq_domain_container)
-    story.append(Spacer(1, 10))
+    story.append(Spacer(1, 8))
     
     # Note: Chart files saved in reports/hrv_charts/ directory for reference
     # They can be cleaned up later if needed, but kept for now for debugging

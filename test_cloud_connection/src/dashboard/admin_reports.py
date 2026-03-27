@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (
     QTabWidget, QTextEdit, QWidget, QApplication
 )
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import QHeaderView
+from .history_dialog import HistoryDialog
 
 
 def _check_admin_credentials(username: str, password: str) -> bool:
@@ -135,7 +135,8 @@ class AdminReportsDialog(QDialog):
         self.refresh_btn = QPushButton("🔄 Refresh")
         self.download_btn = QPushButton("⬇️ Download")
         self.copy_url_btn = QPushButton("🔗 Copy Link")
-        for b in (self.refresh_btn, self.download_btn, self.copy_url_btn):
+        self.history_btn = QPushButton("📜 History")
+        for b in (self.refresh_btn, self.download_btn, self.copy_url_btn, self.history_btn):
             b.setStyleSheet("""
                 QPushButton {
                     background: #ff6600;
@@ -162,6 +163,7 @@ class AdminReportsDialog(QDialog):
         header.addWidget(self.refresh_btn)
         header.addWidget(self.download_btn)
         header.addWidget(self.copy_url_btn)
+        header.addWidget(self.history_btn)
         layout.addLayout(header)
 
         # Summary cards - Modern design with icons and colors
@@ -239,12 +241,18 @@ class AdminReportsDialog(QDialog):
         self.refresh_btn.clicked.connect(self.load_items)
         self.download_btn.clicked.connect(self.download_selected)
         self.copy_url_btn.clicked.connect(self.copy_link)
+        self.history_btn.clicked.connect(self.show_history)
         self.search_edit.textChanged.connect(self.apply_filter)
         self.table.cellDoubleClicked.connect(lambda r,c: self.download_selected())
 
         self.load_items()
         
         return tab
+
+    def show_history(self):
+        """Show the categorized history dialog"""
+        hist = HistoryDialog(self)
+        hist.exec_()
     
     def create_users_tab(self):
         """Create the Users tab widget"""
@@ -590,9 +598,13 @@ class AdminReportsDialog(QDialog):
         self.latest_card._value_label.setText(latest_dt)
 
     def apply_filter(self):
-        """Filter reports table - OPTIMIZED"""
+        """Filter and SORT reports table - Latest at Top"""
         q = (self.search_edit.text() or '').strip().lower()
         items = getattr(self, '_all_items', [])
+        
+        # Always sort items by last_modified descending
+        items.sort(key=lambda x: x.get('last_modified', ''), reverse=True)
+        
         if q:
             items = [it for it in items if q in os.path.basename(it['key']).lower()]
         self._filtered_items = items

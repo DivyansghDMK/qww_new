@@ -3307,13 +3307,9 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
         footer_text = "Deckmount Electronics, Plot No. 683, Phase V, Udyog Vihar, Sector 19, Gurugram, Haryana 122016"
         text_width = canvas.stringWidth(footer_text, "Helvetica", 8)
         
-        if canvas.getPageNumber() in [1]:
-            # Page 1 is LANDSCAPE
-            page_width, page_height = canvas._pagesize
-            x = (page_width - text_width) / 2
-        else:
-            # Page 1 is PORTRAIT
-            x = (595 - text_width) / 2
+        # Use the actual page width for centering
+        page_width, page_height = canvas._pagesize
+        x = (page_width - text_width) / 2
         
         y = 10
         canvas.drawString(x, y, footer_text)
@@ -3334,8 +3330,8 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     # Define Landscape template (for Page 2) with onPage callback
     landscape_width, landscape_height = landscape(A4)
     # Reduce margins to increase frame size (from 30 to 20 on each side)
-    landscape_frame = Frame(20, 20,  # reduced margins for landscape to fit taller drawing
-                           landscape_width - 40, landscape_height - 40,
+    landscape_frame = Frame(10, 10,  # minimal margins to maximise available frame size
+                           landscape_width - 20, landscape_height - 20,
                            id='landscape_frame')
     landscape_template = PageTemplate(id='landscape', frames=[landscape_frame], 
                                      pagesize=landscape(A4), onPage=_draw_logo_and_footer_callback)
@@ -3429,10 +3425,11 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     
     print(" Creating master drawing with V1-V6 leads (2 columns) + Lead II (bottom) in LANDSCAPE...")
     
-    # Landscape A4 frame dimensions (landscape_width - 40, landscape_height - 40)
-    # A4 landscape: 842 x 595, minus reduced margins (20 each side) = 802 x 555
-    total_width = 780  # Fits in landscape frame (802 - margin)
-    total_height = 540  # Height for patient info and graphs
+    # Landscape A4 frame dimensions (landscape_width - 20, landscape_height - 20)
+    # A4 landscape: 842 x 595, minus margins (10 each side) = 822 x 575 frame
+    # Keep drawing slightly smaller than frame to avoid LayoutError
+    total_width = 800  # Fits in landscape frame
+    total_height = 560  # Must be <= frame height (~575) with some tolerance
     master_drawing = Drawing(total_width, total_height)
     
     # Load saved ECG data to get V1-V6 leads (and Lead II to match main ECG report)
@@ -3669,19 +3666,19 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     left_col_x = 0    # Further left
     right_col_x = 360  # Further left
     
-    # Y positions for V1-V6 (starting from top, below patient info) - SHIFTED DOWN by 20 points
-    v_leads_y_start = 380  # Shifted down by 20 points (400 -> 380)
+    # Y positions for V1-V6 (starting from top, below patient info)
+    v_leads_y_start = 390  # Top of V1/V4 row, leaving room for header labels
     v_leads_y_positions = [
         v_leads_y_start,  # V1/V4
         v_leads_y_start - (lead_height + lead_spacing),  # V2/V5
         v_leads_y_start - 2 * (lead_height + lead_spacing),  # V3/V6
     ]
     
-    # Lead II position (bottom, full width) - SHIFTED DOWN by 20 points
-    lead_ii_y = 130  # Shifted down by 20 points (150 -> 130)
+    # Lead II position (bottom, full width)
+    lead_ii_y = 140
     lead_ii_height = 80
     lead_ii_x = 0
-    lead_ii_width = total_width - 10  # Wider span after shifting left
+    lead_ii_width = total_width - 10  # Wider span
     
     # Get V1-V6 data from saved ECG data
     v_leads_data = {}
@@ -3790,19 +3787,19 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     # ==================== ADD PATIENT INFO TO PAGE 2 (LANDSCAPE MODE - POSITIONED PROPERLY) ====================
     
     # LEFT SIDE: Patient Info (SHIFTED LEFT + UP)
-    patient_name_label = String(-15, 545, f"Name: {full_name}",  # Shifted UP: 535 → 545
+    patient_name_label = String(5, 540, f"Name: {full_name}",
                                 fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(patient_name_label)
     
-    patient_age_label = String(-15, 525, f"Age: {age}",  # Shifted UP: 515 → 525
+    patient_age_label = String(5, 525, f"Age: {age}",
                                fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(patient_age_label)
     
-    patient_gender_label = String(-15, 505, f"Gender: {gender}",  # Shifted UP: 495 → 505
+    patient_gender_label = String(5, 510, f"Gender: {gender}",
                                   fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(patient_gender_label)
     
-    # RIGHT SIDE: Date/Time (shifted UP by 20 points - aligned with patient info)
+    # RIGHT SIDE: Date/Time
     if date_time_str:
         parts = date_time_str.split()
         date_part = parts[0] if parts else ""
@@ -3810,20 +3807,20 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     else:
         date_part, time_part = "____", "____"
     
-    date_label = String(670, 515, f"Date: {date_part}",  # Shifted RIGHT by 30: 640→670
+    date_label = String(680, 540, f"Date: {date_part}",
                        fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(date_label)
     
-    time_label = String(670,  500, f"Time: {time_part}",  # Shifted RIGHT by 30: 640→670
+    time_label = String(680, 525, f"Time: {time_part}",
                        fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(time_label)
 
-    # Org. and Phone No. labels below Date/Time (15 points below Time)
-    org_label = String(670, 485, f"Org: {patient_org}",  # Shifted RIGHT by 30: 640→670
+    # Org. and Phone No. labels below Date/Time
+    org_label = String(680, 510, f"Org: {patient_org}",
                     fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
     master_drawing.add(org_label)
     
-    phone_label = String(670, 470, f"Phone No: {patient_doctor_mobile}",  # Shifted RIGHT by 30: 640→670
+    phone_label = String(680, 495, f"Phone No: {patient_doctor_mobile}",
                       fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
     master_drawing.add(phone_label)
     
@@ -3855,48 +3852,128 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
         ST = 0
         RR = 0
         print(" Page 2 (ECG waves): No metrics available in hyper_metric.json, using zeros")
+
+    # ==================== CALCULATE RV5/SV1, QTcF, P/QRS/T AXES FROM ECG DATA ====================
+    import math as _math
+
+    # --- RV5 and SV1 from saved lead data ---
+    rv5_mv = 0.0
+    sv1_mv = 0.0
+    try:
+        adc_per_mv_v5 = ADC_PER_BOX_CONFIG.get('V5', 6400.0) / max(1e-6, wave_gain_mm_mv)
+        adc_per_mv_v1 = ADC_PER_BOX_CONFIG.get('V1', 6400.0) / max(1e-6, wave_gain_mm_mv)
+        # V5 RV5 = max R-wave amplitude (positive peak above baseline)
+        if 'V5' in v_leads_data and len(v_leads_data['V5']) > 0:
+            v5_arr = v_leads_data['V5'].astype(float)
+            v5_centered = v5_arr - np.mean(v5_arr)
+            rv5_mv = float(np.percentile(v5_centered, 98)) / adc_per_mv_v5
+            rv5_mv = max(0.0, round(rv5_mv, 3))
+        # V1 SV1 = depth of S-wave (negative deflection below baseline)
+        if 'V1' in v_leads_data and len(v_leads_data['V1']) > 0:
+            v1_arr = v_leads_data['V1'].astype(float)
+            v1_centered = v1_arr - np.mean(v1_arr)
+            sv1_raw = float(np.percentile(v1_centered, 2))  # most negative = S depth
+            sv1_mv = round(sv1_raw / adc_per_mv_v1, 3)  # keep sign (negative = S-wave)
+        print(f" Calculated RV5={rv5_mv:.3f} mV, SV1={sv1_mv:.3f} mV")
+    except Exception as _err:
+        print(f" RV5/SV1 calc error: {_err}")
+
+    rv5_sv1_sum = round(rv5_mv + sv1_mv, 3)
+
+    # --- QTcF (Fridericia) = QT / RR^(1/3) ---
+    qtcf_ms = 0
+    try:
+        if QT > 0 and RR > 0:
+            rr_s = RR / 1000.0
+            qtcf_ms = int(round((QT / 1000.0) / (rr_s ** (1.0 / 3.0)) * 1000.0))
+        print(f" Calculated QTcF={qtcf_ms} ms (QT={QT}, RR={RR})")
+    except Exception as _err:
+        print(f" QTcF calc error: {_err}")
+
+    # --- P/QRS/T Axes from Lead I and aVF net deflections ---
+    p_axis_str = "--"
+    qrs_axis_str = "--"
+    t_axis_str = "--"
+    try:
+        adc_box = ADC_PER_BOX_CONFIG.get('II', 6400.0) / max(1e-6, wave_gain_mm_mv)
+
+        lead_i_arr = None
+        lead_avf_arr = None
+        if saved_ecg_data and 'leads' in saved_ecg_data:
+            sld = saved_ecg_data['leads']
+            if 'I' in sld and sld['I']:
+                lead_i_arr = np.array(sld['I'], dtype=float)
+            if 'aVF' in sld and sld['aVF']:
+                lead_avf_arr = np.array(sld['aVF'], dtype=float)
+            if lead_avf_arr is None and 'II' in sld and sld['II']:
+                lead_avf_arr = np.array(sld['II'], dtype=float)
+
+        if lead_i_arr is not None and lead_avf_arr is not None:
+            def _qrs_net(arr):
+                arr = arr - np.mean(arr)
+                thr = np.percentile(np.abs(arr), 60)
+                qrs_region = np.where(np.abs(arr) > thr, arr, 0.0)
+                return float(np.mean(qrs_region)) / adc_box
+
+            def _p_net(arr):
+                arr = arr - np.mean(arr)
+                thr = np.percentile(np.abs(arr), 40)
+                p_region = np.where(np.abs(arr) <= thr, arr, 0.0)
+                return float(np.mean(p_region)) / adc_box
+
+            qrs_net_i   = _qrs_net(lead_i_arr)
+            qrs_net_avf = _qrs_net(lead_avf_arr)
+            qrs_axis_deg = int(round(_math.degrees(_math.atan2(qrs_net_avf, qrs_net_i))))
+            if qrs_axis_deg > 180: qrs_axis_deg -= 360
+            if qrs_axis_deg < -180: qrs_axis_deg += 360
+            qrs_axis_str = f"{qrs_axis_deg}"
+
+            p_net_i   = _p_net(lead_i_arr)
+            p_net_avf = _p_net(lead_avf_arr)
+            p_axis_deg = int(round(_math.degrees(_math.atan2(p_net_avf, p_net_i))))
+            if p_axis_deg > 180: p_axis_deg -= 360
+            if p_axis_deg < -180: p_axis_deg += 360
+            p_axis_str = f"{p_axis_deg}"
+            t_axis_str = p_axis_str # Placeholder, ideally T-wave specific
+            print(f" Axes: P={p_axis_str}°, QRS={qrs_axis_str}°, T={t_axis_str}°")
+        else:
+            print(" Axes: Lead I or aVF not found in saved ECG data")
+    except Exception as _err:
+        print(f" Axis calc error: {_err}")
     
-    # LEFT COLUMN (130, y) - HR, PR, QRS, RR (SHIFTED UP BY 20 POINTS)
-    hr_label = String(210, 548, f"HR    : {HR} bpm", fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    # LEFT COLUMN - HR, PR, QRS, RR, QT, QTc
+    hr_label = String(210, 540, f"HR    : {HR} bpm", fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(hr_label)
     
-    pr_label = String(210, 528, f"PR    : {PR} ms", fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    pr_label = String(210, 525, f"PR    : {PR} ms", fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(pr_label)
     
-    qrs_label = String(210, 508, f"QRS : {QRS} ms", fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    qrs_label = String(210, 510, f"QRS : {QRS} ms", fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(qrs_label)
     
-    rr_label = String(210, 490, f"RR    : {RR} ms", fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    rr_label = String(210, 495, f"RR    : {RR} ms", fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(rr_label)
     
-    # QT (LEFT COLUMN - below RR)
-    qt_label = String(210, 470, f"QT    : {QT} ms", fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    qt_label = String(210, 480, f"QT    : {QT} ms", fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(qt_label)
     
-    # QTc (LEFT COLUMN - below QT)
-    qtc_label = String(210, 450, f"QTc   : {QTc} ms", fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    qtc_label = String(210, 465, f"QTc   : {QTc} ms", fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(qtc_label)
     
-    # RIGHT COLUMN (350, y) - Add dummy labels to match table layout
-    # P/QRS/T Axis (SAME LINE AS HR)
-    p_qrs_label = String(350, 548, "P/QRS/T  : --/--/--°", fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    # RIGHT COLUMN - P/QRS/T, RV5/SV1, RV5+SV1, QTcF, ST
+    p_qrs_label = String(420, 540, f"P/QRS/T  : {p_axis_str}/{qrs_axis_str}/{t_axis_str}", fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(p_qrs_label)
     
-    # RV5/SV1 (SAME LINE AS PR)
-    rv5_sv_label = String(350, 528, "RV5/SV1  : -- mV/-- mV", fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    rv5_sv_label = String(420, 525, f"RV5/SV1  : {rv5_mv:.3f} mV/{sv1_mv:.3f} mV", fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(rv5_sv_label)
     
-    # RV5+SV1 (SAME LINE AS QRS)
-    rv5_sv1_sum_label = String(350, 508, "RV5+SV1 : -- mV", fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    rv5_sv1_sum_label = String(420, 510, f"RV5+SV1 : {rv5_sv1_sum:.3f} mV", fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(rv5_sv1_sum_label)
     
-    # QTcF (SAME LINE AS RR)
-    qtcf_label = String(350, 490, "QTCF       : --", fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    qtcf_label = String(420, 495, f"QTCF       : {qtcf_ms} ms" if qtcf_ms > 0 else "QTCF       : --", fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(qtcf_label)
     
-    # ST (SAME LINE AS QT - shifted up by 15)
-    st_label = String(350, 470, f"ST            : {ST} ms", fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(st_label)
+    # ST removed per user request
     
     # Filter Band and Speed/Gain (merged in one line)
     emg_setting = str(settings_manager.get_setting("filter_emg", "off")).strip()
@@ -3912,8 +3989,7 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     else:
         filter_band = "Filter: Off"
     master_drawing.add(String(
-        350,
-        450,  # Same position as Filter Band was
+        420, 465,
         f"{wave_speed_mm_s} mm/s   {filter_band}   AC : {ac_frequency}   {wave_gain_mm_mv} mm/mV",
         fontSize=10,
         fontName="Helvetica",

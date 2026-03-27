@@ -58,37 +58,150 @@ class ECGAnalysisWindow(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("ECG Analysis")
-        self.setGeometry(80, 60, 1700, 980)
+        self.setWindowTitle("Waveform Analysis")
+        self.setGeometry(60, 40, 1760, 990)
+        self.setMinimumSize(1200, 700)
 
         self.setStyleSheet("""
-            QDialog { background: #ffffff; color: #111111; }
-            QFrame { background: #ffffff; border: 1px solid #e2e2e2; border-radius: 8px; }
-            QLabel { color: #111111; font-size: 11px; }
+            QDialog {
+                background: #0d0d1a;
+                color: #ffffff;
+            }
+            QFrame#topbar {
+                background: #12122a;
+                border: none;
+                border-bottom: 2px solid #ff6600;
+                border-radius: 0px;
+            }
+            QFrame#plotpanel {
+                background: #0d0d1a;
+                border: none;
+                border-radius: 0px;
+            }
+            QFrame#bottompanel {
+                background: #12122a;
+                border: 1px solid #2a2a4a;
+                border-radius: 10px;
+            }
+            QFrame#leadbox {
+                background: #111130;
+                border: 1px solid #2a2a5a;
+                border-radius: 6px;
+            }
+            QLabel {
+                color: #e0e0ff;
+                font-size: 11px;
+                background: transparent;
+                border: none;
+            }
+            QLabel#leadlabel {
+                color: #ff6600;
+                font-size: 12px;
+                font-weight: bold;
+                background: transparent;
+                border: none;
+            }
             QPushButton {
-                background: #111111; color: #ffffff; border: 1px solid #111111;
-                border-radius: 6px; padding: 6px 12px; font-size: 11px; font-weight: 600;
+                background: #1e1e3e;
+                color: #e0e0ff;
+                border: 1px solid #3a3a6a;
+                border-radius: 6px;
+                padding: 6px 14px;
+                font-size: 11px;
+                font-weight: 600;
             }
-            QPushButton:hover { background: #000000; }
-            QPushButton:pressed { background: #2a2a2a; }
-            QPushButton#secondary {
-                background: #ffffff; color: #111111; border: 1px solid #111111;
+            QPushButton:hover {
+                background: #2a2a5a;
+                border-color: #ff6600;
+                color: white;
             }
-            QPushButton#secondary:hover { background: #f3f3f3; }
-            QComboBox, QLineEdit, QTextEdit {
-                background: #ffffff; color: #111111; border: 1px solid #cfcfcf;
-                border-radius: 6px; padding: 5px 8px; font-size: 11px;
+            QPushButton#primary {
+                background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+                    stop:0 #ff6600, stop:1 #e65c00);
+                color: white;
+                border: none;
+                border-radius: 6px;
+                font-weight: bold;
+            }
+            QPushButton#primary:hover { background: #ff7a26; }
+            QPushButton#apibtn {
+                background: #1a3a5a;
+                color: #7ab8f5;
+                border: 1px solid #2a6aaa;
+                border-radius: 6px;
+            }
+            QPushButton#apibtn:hover { background: #244a6a; }
+            QComboBox {
+                background: #1e1e3e;
+                color: #e0e0ff;
+                border: 1px solid #3a3a6a;
+                border-radius: 6px;
+                padding: 5px 8px;
+                font-size: 11px;
+            }
+            QComboBox::drop-down { border: none; }
+            QComboBox QAbstractItemView {
+                background: #1e1e3e;
+                color: #e0e0ff;
+                selection-background-color: #ff6600;
+            }
+            QLineEdit {
+                background: #1e1e3e;
+                color: #e0e0ff;
+                border: 1px solid #3a3a6a;
+                border-radius: 6px;
+                padding: 5px 8px;
+                font-size: 11px;
+            }
+            QTextEdit {
+                background: #1e1e3e;
+                color: #e0e0ff;
+                border: 1px solid #3a3a6a;
+                border-radius: 6px;
+                padding: 5px;
+                font-size: 11px;
             }
             QTableWidget {
-                background: #ffffff; color: #111111; border: 1px solid #d9d9d9;
-                gridline-color: #ededed; selection-background-color: #111111; selection-color: #ffffff;
+                background: #111130;
+                color: #e0e0ff;
+                border: 1px solid #2a2a5a;
+                gridline-color: #1e1e4a;
+                selection-background-color: #ff6600;
+                selection-color: white;
+                border-radius: 4px;
             }
             QHeaderView::section {
-                background: #111111; color: #ffffff; border: none;
-                padding: 6px; font-size: 11px; font-weight: bold;
+                background: #1e1e3e;
+                color: #ff6600;
+                border: none;
+                padding: 6px;
+                font-size: 11px;
+                font-weight: bold;
             }
-            QSlider::groove:horizontal { height: 6px; background: #dddddd; border-radius: 3px; }
-            QSlider::handle:horizontal { width: 14px; background: #111111; margin: -5px 0; border-radius: 7px; }
+            QSlider::groove:horizontal {
+                height: 4px;
+                background: #2a2a5a;
+                border-radius: 2px;
+            }
+            QSlider::sub-page:horizontal {
+                background: #ff6600;
+                border-radius: 2px;
+            }
+            QSlider::handle:horizontal {
+                width: 14px;
+                height: 14px;
+                background: #ff6600;
+                margin: -5px 0;
+                border-radius: 7px;
+            }
+            QScrollBar:vertical {
+                background: #1e1e3e;
+                width: 8px;
+            }
+            QScrollBar::handle:vertical {
+                background: #3a3a7a;
+                border-radius: 4px;
+            }
         """)
 
         self.reports = []
@@ -125,132 +238,207 @@ class ECGAnalysisWindow(QDialog):
 
     def _build_top_bar(self):
         frame = QFrame()
+        frame.setObjectName("topbar")
         lay = QHBoxLayout(frame)
-        lay.setContentsMargins(10, 8, 10, 8)
+        lay.setContentsMargins(14, 10, 14, 10)
+        lay.setSpacing(12)
 
-        # Add logo to the top bar
+        # Logo
         logo_label = QLabel()
         pixmap = QPixmap(str(self.analysis_pdf_logo_path))
-        logo_label.setPixmap(pixmap.scaled(120, 40, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        if not pixmap.isNull():
+            logo_label.setPixmap(pixmap.scaled(110, 36, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        else:
+            logo_label.setText("DECKMOUNT")
+            logo_label.setStyleSheet("color:#ff6600;font-size:16px;font-weight:bold;border:none;background:transparent;")
         lay.addWidget(logo_label)
 
-        lay.addStretch() # Add stretch after logo to push patient info to the right
+        sep = QFrame()
+        sep.setFrameShape(QFrame.VLine)
+        sep.setStyleSheet("background:#ff6600;border:none;max-width:2px;margin:4px 4px;")
+        lay.addWidget(sep)
 
-
+        pat_col = QVBoxLayout()
+        pat_col.setSpacing(2)
         self.patient_lbl = QLabel("Patient: --")
-        self.patient_lbl.setFont(QFont("Arial", 11, QFont.Bold))
+        self.patient_lbl.setFont(QFont("Arial", 12, QFont.Bold))
+        self.patient_lbl.setStyleSheet("color:white;font-weight:bold;border:none;background:transparent;")
         self.patient_meta_lbl = QLabel("ID: -- | Age: -- | Gender: --")
+        self.patient_meta_lbl.setStyleSheet("color:#aaaacc;font-size:10px;border:none;background:transparent;")
+        pat_col.addWidget(self.patient_lbl)
+        pat_col.addWidget(self.patient_meta_lbl)
+        lay.addLayout(pat_col)
+        lay.addStretch()
 
-        left = QVBoxLayout()
-        left.addWidget(self.patient_lbl)
-        left.addWidget(self.patient_meta_lbl)
-
-        right = QHBoxLayout()
-        right.addWidget(QLabel("Report:"))
+        lay.addWidget(QLabel("Report:"))
         self.report_combo = QComboBox()
         self.report_combo.currentIndexChanged.connect(self.load_selected_report)
-        self.report_combo.setMinimumWidth(360)
+        self.report_combo.setMinimumWidth(300)
+        lay.addWidget(self.report_combo)
 
-        self.refresh_btn = QPushButton("Refresh")
-        self.refresh_btn.setObjectName("secondary")
+        self.refresh_btn = QPushButton("↻ Refresh")
         self.refresh_btn.clicked.connect(self.load_reports)
+        lay.addWidget(self.refresh_btn)
 
-        self.export_btn = QPushButton("Export JSON")
-        self.export_btn.setObjectName("secondary")
+        self.export_btn = QPushButton("⬇ Export JSON")
         self.export_btn.clicked.connect(self.export_report)
+        lay.addWidget(self.export_btn)
 
         self.pdf_btn = QPushButton("Generate PDF")
-        self.pdf_btn.setStyleSheet("background: #e74c3c; color: white; font-weight: bold;")
+        self.pdf_btn.setObjectName("primary")
         self.pdf_btn.clicked.connect(self.generate_pdf_report)
+        lay.addWidget(self.pdf_btn)
+
+        lay.addSpacing(8)
+        sep2 = QFrame()
+        sep2.setFrameShape(QFrame.VLine)
+        sep2.setStyleSheet("background:#3a3a6a;border:none;max-width:1px;margin:4px 4px;")
+        lay.addWidget(sep2)
 
         self.api_id_lbl = QLabel("API ID:")
         self.api_id_input = QLineEdit()
         self.api_id_input.setPlaceholderText("ID")
-        self.api_id_input.setFixedWidth(60)
-        
+        self.api_id_input.setFixedWidth(65)
         self.api_fetch_btn = QPushButton("Fetch")
-        self.api_fetch_btn.setStyleSheet("background: #3498db; color: white;")
+        self.api_fetch_btn.setObjectName("apibtn")
         self.api_fetch_btn.clicked.connect(self.fetch_api_report)
-
-        right.addWidget(QLabel("Report:"))
-        right.addWidget(self.report_combo)
-        right.addWidget(self.refresh_btn)
-        right.addWidget(self.export_btn)
-        right.addWidget(self.pdf_btn)
-        right.addSpacing(15)
-        right.addWidget(self.api_id_lbl)
-        right.addWidget(self.api_id_input)
-        right.addWidget(self.api_fetch_btn)
-
-        lay.addLayout(left)
-        lay.addStretch()
-        lay.addLayout(right)
+        lay.addWidget(self.api_id_lbl)
+        lay.addWidget(self.api_id_input)
+        lay.addWidget(self.api_fetch_btn)
         return frame
 
     def _build_plot_panel(self):
         frame = QFrame()
+        frame.setObjectName("plotpanel")
         v = QVBoxLayout(frame)
-        v.setContentsMargins(8, 8, 8, 8)
-        v.setSpacing(8)
+        v.setContentsMargins(10, 8, 10, 4)
+        v.setSpacing(6)
 
-        controls = QHBoxLayout()
-        self.prev_btn = QPushButton("Prev Frame")
+        # Controls bar
+        ctrl_frame = QFrame()
+        ctrl_frame.setStyleSheet("background:#12122a;border-radius:8px;border:1px solid #2a2a4a;")
+        controls = QHBoxLayout(ctrl_frame)
+        controls.setContentsMargins(10, 6, 10, 6)
+        controls.setSpacing(8)
+
+        self.prev_btn = QPushButton("◀ Prev")
         self.prev_btn.clicked.connect(self.prev_frame)
-        self.play_btn = QPushButton("Play")
+        self.play_btn = QPushButton("▶ Play")
         self.play_btn.clicked.connect(self.toggle_play)
-        self.next_btn = QPushButton("Next Frame")
+        self.next_btn = QPushButton("Next ▶")
         self.next_btn.clicked.connect(self.next_frame)
-
         controls.addWidget(self.prev_btn)
         controls.addWidget(self.play_btn)
         controls.addWidget(self.next_btn)
+        controls.addSpacing(10)
 
-        controls.addSpacing(12)
-        controls.addWidget(QLabel("Window:"))
+        lbl_w = QLabel("Window:")
+        lbl_w.setStyleSheet("color:#aaaacc;border:none;background:transparent;")
+        controls.addWidget(lbl_w)
         self.window_combo = QComboBox()
         self.window_combo.addItems(["1.0 s", "2.0 s", "3.0 s", "5.0 s", "10.0 s"])
         self.window_combo.setCurrentText("10.0 s")
         self.window_combo.currentTextChanged.connect(self._on_window_changed)
-
+        self.window_combo.setFixedWidth(80)
         controls.addWidget(self.window_combo)
-        controls.addWidget(QLabel("Step:"))
+
+        lbl_s = QLabel("Step:")
+        lbl_s.setStyleSheet("color:#aaaacc;border:none;background:transparent;")
+        controls.addWidget(lbl_s)
         self.step_combo = QComboBox()
         self.step_combo.addItems(["0.2 s", "0.5 s", "1.0 s"])
         self.step_combo.setCurrentText("0.5 s")
         self.step_combo.currentTextChanged.connect(self._on_step_changed)
+        self.step_combo.setFixedWidth(75)
         controls.addWidget(self.step_combo)
 
-        controls.addSpacing(12)
-        self.frame_label = QLabel("Frame: 0.00s - 2.00s")
+        controls.addSpacing(14)
+        self.frame_label = QLabel("Frame: 0.00s – 2.00s")
+        self.frame_label.setStyleSheet("color:#ff9955;font-weight:bold;border:none;background:transparent;")
         controls.addWidget(self.frame_label)
         controls.addStretch()
+        v.addWidget(ctrl_frame)
 
-        v.addLayout(controls)
-
+        # Timeline slider
         self.timeline = QSlider(Qt.Horizontal)
         self.timeline.setMinimum(0)
         self.timeline.setMaximum(0)
         self.timeline.valueChanged.connect(self._on_timeline_changed)
+        self.timeline.setFixedHeight(18)
         v.addWidget(self.timeline)
 
-        self.figure = Figure(figsize=(14, 9), dpi=80, facecolor='white')
-        self.canvas = FigureCanvas(self.figure)
-        self.axes = [self.figure.add_subplot(4, 3, i + 1) for i in range(12)]
-        self.figure.tight_layout(pad=1.3)
-        v.addWidget(self.canvas, stretch=1)
+        # Lead grid (3 rows x 4 cols)
+        from PyQt5.QtWidgets import QGridLayout, QWidget as _QW
+        grid_widget = _QW()
+        grid_widget.setStyleSheet("background:#0d0d1a;")
+        self._lead_grid = QGridLayout(grid_widget)
+        self._lead_grid.setContentsMargins(0, 0, 0, 0)
+        self._lead_grid.setSpacing(5)
 
+        self._lead_canvases = {}
+        self._lead_axes = {}
+        self._lead_figs = {}
+
+        lead_order = [
+            ['I',   'aVR', 'V1', 'V4'],
+            ['II',  'aVL', 'V2', 'V5'],
+            ['III', 'aVF', 'V3', 'V6'],
+        ]
+
+        for row, row_leads in enumerate(lead_order):
+            self._lead_grid.setRowStretch(row, 1)
+            for col, lead in enumerate(row_leads):
+                self._lead_grid.setColumnStretch(col, 1)
+                cell = QFrame()
+                cell.setObjectName("leadbox")
+                cell_lay = QVBoxLayout(cell)
+                cell_lay.setContentsMargins(0, 0, 0, 0)
+                cell_lay.setSpacing(0)
+
+                lbl = QLabel(lead)
+                lbl.setObjectName("leadlabel")
+                lbl.setAlignment(Qt.AlignLeft)
+                lbl.setContentsMargins(6, 2, 0, 0)
+                lbl.setFixedHeight(18)
+                cell_lay.addWidget(lbl)
+
+                fig = Figure(facecolor='#111130')
+                fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+                canvas = FigureCanvas(fig)
+                canvas.setStyleSheet("background:#111130;border:none;")
+                ax = fig.add_axes([0, 0, 1, 1], facecolor='#111130')
+                ax.set_axis_off()
+
+                cell_lay.addWidget(canvas, stretch=1)
+                self._lead_grid.addWidget(cell, row, col)
+
+                self._lead_figs[lead] = fig
+                self._lead_canvases[lead] = canvas
+                self._lead_axes[lead] = ax
+
+        # Legacy compatibility
+        self.figure = list(self._lead_figs.values())[0]
+        self.canvas = list(self._lead_canvases.values())[0]
+        self.axes = [self._lead_axes[l] for l in self.LEADS]
+
+        v.addWidget(grid_widget, stretch=1)
         return frame
 
     def _build_bottom_panel(self):
         frame = QFrame()
+        frame.setObjectName("bottompanel")
         h = QHBoxLayout(frame)
-        h.setContentsMargins(8, 8, 8, 8)
-        h.setSpacing(8)
+        h.setContentsMargins(12, 8, 12, 8)
+        h.setSpacing(12)
 
-        # Manual arrhythmia marking only
         mark_box = QFrame()
+        mark_box.setStyleSheet("background:transparent;border:none;")
         av = QVBoxLayout(mark_box)
-        av.addWidget(QLabel("Manual Arrhythmia Marking"))
+        av.setSpacing(5)
+
+        title_lbl = QLabel("Manual Arrhythmia Marking")
+        title_lbl.setStyleSheet("color:#ff9955;font-size:12px;font-weight:bold;border:none;background:transparent;")
+        av.addWidget(title_lbl)
 
         row1 = QHBoxLayout()
         row1.addWidget(QLabel("Type:"))
@@ -258,11 +446,11 @@ class ECGAnalysisWindow(QDialog):
         self.arrhythmia_type_combo.addItems([
             "Atrial Fibrillation", "PVC", "PAC", "SVT", "VT", "Bradycardia", "Tachycardia", "Other"
         ])
-        row1.addWidget(self.arrhythmia_type_combo)
+        row1.addWidget(self.arrhythmia_type_combo, 2)
         row1.addWidget(QLabel("Lead:"))
         self.mark_lead_combo = QComboBox()
         self.mark_lead_combo.addItems(["All Leads"] + self.LEADS)
-        row1.addWidget(self.mark_lead_combo)
+        row1.addWidget(self.mark_lead_combo, 1)
         av.addLayout(row1)
 
         self.manual_type_input = QLineEdit()
@@ -281,7 +469,6 @@ class ECGAnalysisWindow(QDialog):
         self.auto_detect_btn = QPushButton("Automatic Detection")
         self.auto_detect_btn.clicked.connect(self.run_automatic_detection)
         self.delete_mark_btn = QPushButton("Delete Selected")
-        self.delete_mark_btn.setObjectName("secondary")
         self.delete_mark_btn.clicked.connect(self.delete_selected_annotation)
         row2.addWidget(self.mark_start_btn)
         row2.addWidget(self.mark_end_btn)
@@ -290,16 +477,17 @@ class ECGAnalysisWindow(QDialog):
         av.addLayout(row2)
 
         self.mark_status_lbl = QLabel("No active mark")
+        self.mark_status_lbl.setStyleSheet("color:#7a9f7a;border:none;background:transparent;")
         av.addWidget(self.mark_status_lbl)
 
         self.annotation_table = QTableWidget(0, 5)
         self.annotation_table.setHorizontalHeaderLabels(["Start (s)", "End (s)", "Type", "Lead", "Notes"])
         self.annotation_table.horizontalHeader().setStretchLastSection(True)
+        self.annotation_table.setMaximumHeight(120)
         av.addWidget(self.annotation_table)
 
         h.addWidget(mark_box)
 
-        # Keep dummy references so other code doesn't break
         self.metrics_table = QTableWidget(0, 2)
         self.findings_text = QTextEdit()
 
@@ -539,10 +727,10 @@ class ECGAnalysisWindow(QDialog):
     def toggle_play(self):
         if self.play_timer.isActive():
             self.play_timer.stop()
-            self.play_btn.setText("Play")
+            self.play_btn.setText("▶ Play")
         else:
             self.play_timer.start(250)
-            self.play_btn.setText("Pause")
+            self.play_btn.setText("⏸ Pause")
 
     def _render_current_frame(self):
         ws = self._window_samples()
@@ -552,51 +740,52 @@ class ECGAnalysisWindow(QDialog):
         t = np.arange(st, en) / self.sampling_rate if en > st else np.array([])
         start_sec = st / self.sampling_rate if self.sampling_rate > 0 else 0.0
         end_sec = en / self.sampling_rate if self.sampling_rate > 0 else 0.0
-        self.frame_label.setText(f"Frame: {start_sec:.2f}s - {end_sec:.2f}s")
+        self.frame_label.setText(f"Frame: {start_sec:.2f}s \u2013 {end_sec:.2f}s")
 
-        for i, lead in enumerate(self.LEADS):
-            ax = self.axes[i]
+        ECG_COLOR = '#ff8844'
+        ANNOT_COLOR = '#ff4444'
+
+        for lead in self.LEADS:
+            ax = self._lead_axes.get(lead)
+            fig = self._lead_figs.get(lead)
+            canvas = self._lead_canvases.get(lead)
+            if ax is None:
+                continue
+
             ax.clear()
-            ax.set_facecolor('#ffffff')
-            ax.grid(True, alpha=0.25, color='#dcdcdc', linestyle='-', linewidth=0.5)
-            for spine in ax.spines.values():
-                spine.set_color('#cccccc')
-                
-            # Inline Text to save vertical space instead of `set_title`
-            ax.text(0.01, 0.65, f"{lead}", transform=ax.transAxes, fontsize=11, fontweight='bold', color='#111111')
-            
-            # Remove X and Y axis labelling to make it clean and professional
-            ax.set_xticklabels([])
-            ax.set_yticklabels([])
-            ax.tick_params(left=False, bottom=False)
+            ax.set_axis_off()
+            ax.set_facecolor('#111130')
+            # Fixed ADC Y-range 0-4096 for all leads
+            ax.set_ylim(0, 4096)
+            ax.set_xlim(start_sec, end_sec if end_sec > start_sec else start_sec + 1)
+            # Subtle background grid
+            ax.grid(True, color='#1e1e50', linewidth=0.4, linestyle='-', alpha=0.7)
 
             data = self.lead_data.get(lead, np.array([]))
             if len(data) > 0 and en > st:
                 seg = data[st:en]
-                ax.plot(t, seg, color='#111111', linewidth=0.9)
-                ax.set_xlim(start_sec, end_sec)
-                
-                # Dynamic ADC Y-Lim scaling explicitly requested by User
+                ax.plot(t, seg, color=ECG_COLOR, linewidth=0.85, antialiased=True)
                 ax.set_ylim(0, 4096)
+                ax.set_xlim(start_sec, end_sec)
             else:
-                ax.text(0.5, 0.5, 'No data', ha='center', va='center', transform=ax.transAxes, color='#777777')
+                ax.text(0.5, 0.5, 'No data', ha='center', va='center',
+                        transform=ax.transAxes, color='#555588', fontsize=9)
 
-            # Show manual annotation overlays that intersect this frame
+            # Annotation span overlays
             for ann in self.manual_annotations:
-                lead_ok = ann.get('lead', 'All Leads') in ('All Leads', lead)
-                if not lead_ok:
+                if ann.get('lead', 'All Leads') not in ('All Leads', lead):
                     continue
                 a0 = ann.get('start_sec', 0.0)
                 a1 = ann.get('end_sec', 0.0)
                 if a1 < start_sec or a0 > end_sec:
                     continue
-                left = max(a0, start_sec)
-                right = min(a1, end_sec)
-                if right > left:
-                    ax.axvspan(left, right, color='#999999', alpha=0.25)
+                lft = max(a0, start_sec)
+                rgt = min(a1, end_sec)
+                if rgt > lft:
+                    ax.axvspan(lft, rgt, color=ANNOT_COLOR, alpha=0.18)
 
-        self.figure.tight_layout(pad=1.2)
-        self.canvas.draw_idle()
+            fig.tight_layout(pad=0)
+            canvas.draw_idle()
 
     # --------------------------- manual annotations ---------------------------
     def mark_start(self):
@@ -954,6 +1143,45 @@ class ECGAnalysisWindow(QDialog):
         if not path:
             return
 
+        # ── Format selection dialog ──────────────────────────────────
+        from PyQt5.QtWidgets import (
+            QDialog as _QD, QVBoxLayout as _VL, QButtonGroup,
+            QRadioButton, QDialogButtonBox, QLabel as _QL
+        )
+        fmt_dlg = _QD(self)
+        fmt_dlg.setWindowTitle("Select Report Format")
+        fmt_dlg.setMinimumWidth(380)
+        fmt_dlg.setStyleSheet("""
+            QDialog { background:#1a1a2e; color:white; }
+            QLabel { color:#e0e0ff; font-size:13px; background:transparent; border:none; }
+            QRadioButton { color:#e0e0ff; font-size:12px; background:transparent; padding:6px 4px; }
+            QRadioButton:checked { color:#ff6600; font-weight:bold; }
+            QPushButton { background:#ff6600; color:white; border:none; border-radius:6px;
+                          padding:8px 22px; font-weight:bold; font-size:12px; }
+            QPushButton:hover { background:#ff7a26; }
+        """)
+        fmt_lay = _VL(fmt_dlg)
+        fmt_lay.setSpacing(10)
+        fmt_lay.setContentsMargins(24, 20, 24, 20)
+        fmt_lay.addWidget(_QL("Choose ECG report layout:"))
+        rb1 = QRadioButton("4:3  —  4 rows × 3 columns  (standard 12-lead view)")
+        rb2 = QRadioButton("12:1 —  12 rows × 1 column  (full rhythm strip roll)")
+        rb3 = QRadioButton("6:2  —  6 rows × 2 columns  (compact comparative)")
+        rb1.setChecked(True)
+        grp = QButtonGroup(fmt_dlg)
+        for rb in (rb1, rb2, rb3):
+            grp.addButton(rb)
+            fmt_lay.addWidget(rb)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(fmt_dlg.accept)
+        bb.rejected.connect(fmt_dlg.reject)
+        fmt_lay.addWidget(bb)
+        if fmt_dlg.exec_() != _QD.Accepted:
+            return
+        if rb1.isChecked():   pdf_format = "4x3"
+        elif rb2.isChecked(): pdf_format = "12x1"
+        else:                 pdf_format = "6x2"
+
         try:
             from matplotlib.backends.backend_pdf import PdfPages
             from matplotlib.patches import Rectangle as MRect
@@ -1089,41 +1317,92 @@ class ECGAnalysisWindow(QDialog):
             ax.text(PAGE_W - MR, yb+lh*3.0, f"Date: {dt_str}",
                     fontsize=5.5, ha='right', va='top', color='#555', zorder=10)
 
-            # ── 12 Lead strips ───────────────────────────────────────────────
-            ws = self._window_samples()
+            # ── 12 Lead strips (format-aware window size limits) ───────────────
             st = self.frame_start_sample
-            en = min(self._total_samples(), st + ws)
+            
+            # Determine grid layout from user's choice
+            if pdf_format == "4x3":
+                pdf_samples = 1600
+                n_rows, n_cols = 4, 3
+                lead_grid = [
+                    ['I',   'aVR', 'V1'],
+                    ['II',  'aVL', 'V2'],
+                    ['III', 'aVF', 'V3'],
+                    ['V4',  'V5',  'V6'],
+                ]
+            elif pdf_format == "6x2":
+                pdf_samples = 2500
+                n_rows, n_cols = 6, 2
+                lead_grid = [
+                    ['I',   'II'],
+                    ['III', 'aVR'],
+                    ['aVL', 'aVF'],
+                    ['V1',  'V2'],
+                    ['V3',  'V4'],
+                    ['V5',  'V6'],
+                ]
+            else:  # 12x1 default
+                pdf_samples = 3500
+                n_rows, n_cols = 12, 1
+                lead_grid = [[l] for l in self.LEADS]
+                
+            en = min(self._total_samples(), st + pdf_samples)
 
-            for i, lead in enumerate(self.LEADS):
-                mid_y  = STRIP_TOP + i * CELL_H + CELL_H / 2.0
-                lbl_y  = mid_y - CELL_H * 0.4
+            STRIP_W = PAGE_W - ML - MR
+            cell_w = STRIP_W / n_cols
+            cell_h_fmt = STRIP_H / n_rows
+            half_h = cell_h_fmt / 2.0 - 1.0
 
-                # Calibration square pulse (1 mV → 10 mm tall)
-                # 2mm width for start, 5mm width for pulse, 2mm width for end
-                cx, cy, cg = ML, mid_y, CALIB_MM
-                ax.plot([cx, cx+1.5, cx+1.5, cx+6.5, cx+6.5, cx+8],
-                        [cy, cy,  cy-cg, cy-cg, cy,  cy],
-                        color='black', linewidth=1.0, zorder=6)
+            # ADC Y-axis: 0-4096 range; 1 mm per ADC step shown as mm markers
+            # Show 5 Y levels: 0, 1024, 2048, 3072, 4096
+            # Each maps to ±half_h mm from mid_y centred on baseline (2048)
+            Y_LEVELS = [0, 1024, 2048, 3072, 4096]
+            Y_BASELINE_ADC = 2048.0   # centre
+            Y_SCALE_MM = half_h / Y_BASELINE_ADC  # mm per ADC unit
 
-                # Lead label - bold and slightly larger as in the second image
-                ax.text(ML + 10, lbl_y - 0.5, lead,
-                        fontsize=7, fontweight='bold', color='black', va='top', zorder=7)
+            for row_idx, row_leads in enumerate(lead_grid):
+                for col_idx, lead in enumerate(row_leads):
+                    cell_x0 = ML + col_idx * cell_w
+                    mid_y   = STRIP_TOP + row_idx * cell_h_fmt + cell_h_fmt / 2.0
+                    lbl_y   = mid_y - cell_h_fmt * 0.4
+                    y_top   = STRIP_TOP + row_idx * cell_h_fmt
+                    y_bot   = y_top + cell_h_fmt
 
-                # Waveform — strict 12:1 strip window from current frame
-                data_arr = self.lead_data.get(lead, np.array([]))
-                total_samples = len(data_arr)
-                if total_samples > 0:
-                    segment = data_arr[st:en].astype(float)
-                    if segment.size > 1:
-                        baseline = float(np.median(segment))
-                        seg_mm = (segment - baseline) / ADC_PER_MM   # ADC → mm
-                        seg_mm = np.clip(seg_mm, -HALF_CELL, HALF_CELL)
+                    # Calibration pulse
+                    cx, cy, cg = cell_x0, mid_y, CALIB_MM
+                    ax.plot([cx, cx+1.5, cx+1.5, cx+6.5, cx+6.5, cx+8],
+                            [cy, cy,  cy-cg, cy-cg, cy,  cy],
+                            color='black', linewidth=1.0, zorder=6)
 
-                        wx0 = ML + 9.5 # Waveform starts closer to calibration
-                        wx1 = PAGE_W - MR
-                        wx_mm = np.linspace(wx0, wx1, segment.size)
-                        wy_mm = mid_y - seg_mm  # upward deflection = smaller y
-                        ax.plot(wx_mm, wy_mm, color='black', linewidth=0.6, zorder=5)
+                    # Lead label
+                    ax.text(cell_x0 + 10, lbl_y - 0.5, lead,
+                            fontsize=7, fontweight='bold', color='black', va='top', zorder=7)
+
+                    # Y-axis scale markings removed for clean aesthetic
+                    pass
+
+                    # Waveform — fixed 0-4096 ADC scale, 7 s of data
+                    data_arr = self.lead_data.get(lead, np.array([]))
+                    if len(data_arr) > 0:
+                        segment = data_arr[st:en].astype(float)
+                        if segment.size > 1:
+                            # Use fixed 0-4096 ADC range, centred on 2048
+                            seg_mm = (segment - Y_BASELINE_ADC) * Y_SCALE_MM
+                            seg_mm = np.clip(seg_mm, -half_h, half_h)
+                            wx0 = cell_x0 + 9.5
+                            wx1 = cell_x0 + cell_w - 1.0
+                            wx_mm = np.linspace(wx0, wx1, segment.size)
+                            wy_mm = mid_y - seg_mm
+                            ax.plot(wx_mm, wy_mm, color='black', linewidth=0.6, zorder=5)
+
+                            # Time labels removed for clean aesthetic
+                            pass
+
+                    # Vertical column separator (except last col)
+                    if col_idx < n_cols - 1:
+                        sep_x = cell_x0 + cell_w
+                        ax.plot([sep_x, sep_x], [STRIP_TOP, STRIP_TOP + STRIP_H],
+                                color='black', linewidth=0.6, linestyle='dashed', dashes=(4, 4), zorder=2)
 
             # ── Footer signature block ────────────────────────────────────────
             ft = PAGE_H - MB - FOOTER_H
@@ -1143,8 +1422,8 @@ class ECGAnalysisWindow(QDialog):
                           facecolor='none', zorder=8)
             ax.add_patch(rect)
             
-            # ❖ CONCLUSION ❖ Title matching second image
-            ax.text(bx + bw/2, by + 1.2, "❖ CONCLUSION ❖",
+            # CONCLUSION Title
+            ax.text(bx + bw/2, by + 1.2, "CONCLUSION",
                     fontsize=7, fontweight='bold', ha='center', va='top',
                     color='black', zorder=9)
             

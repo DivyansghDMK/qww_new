@@ -533,7 +533,7 @@ class Dashboard(QWidget):
         self.hrv_test_btn.setVisible(True)
         greet_row.addWidget(self.hrv_test_btn)
         
-        self.date_btn = QPushButton("ECG Lead Test 12")
+        self.date_btn = QPushButton("12-Lead ECG")
         self.date_btn.setEnabled(False)
         self.date_btn.setStyleSheet(grey_style)
         self.date_btn.clicked.connect(self.go_to_lead_test)
@@ -547,16 +547,16 @@ class Dashboard(QWidget):
         self.chatbot_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         greet_row.addWidget(self.chatbot_btn)
         
-        # --- Add Analysis Window Button ---
-        self.analysis_btn = QPushButton("Analysis Window")
-        self.analysis_btn.setStyleSheet("background: #28a745; color: white; border-radius: 16px; padding: 8px 24px;")
+        # --- Add Waveform Analysis Button ---
+        self.analysis_btn = QPushButton("Waveform Analysis")
+        self.analysis_btn.setStyleSheet("background: #e65c00; color: white; border-radius: 16px; padding: 8px 24px; font-weight: bold;")
         self.analysis_btn.clicked.connect(self.open_analysis_window)
         self.analysis_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         greet_row.addWidget(self.analysis_btn)
 
-        # --- Add Holter Monitor Button ---
-        self.holter_btn = QPushButton("Holter Monitor")
-        self.holter_btn.setStyleSheet("background: #00FF00; color: black; border-radius: 16px; padding: 8px 24px; font-weight: bold;")
+        # --- Add Comprehensive ECG Analysis Button ---
+        self.holter_btn = QPushButton("Comprehensive ECG analysis")
+        self.holter_btn.setStyleSheet("background: #ff7a26; color: white; border-radius: 16px; padding: 8px 24px; font-weight: bold;")
         self.holter_btn.clicked.connect(self.open_holter_from_dashboard)
         self.holter_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         greet_row.addWidget(self.holter_btn)
@@ -1058,13 +1058,13 @@ class Dashboard(QWidget):
         
         schedule_layout.addWidget(self.schedule_calendar)
         grid.addWidget(schedule_card, 2, 0)
-        # --- Conclusion Card ---
+        # --- ECG Interpretation Card ---
         issue_card = QFrame()
         issue_card.setStyleSheet("background: white; border-radius: 16px;")
         issue_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         issue_layout = QVBoxLayout(issue_card)
         
-        issue_label = QLabel("Conclusion")
+        issue_label = QLabel("ECG Interpretation")
         issue_label.setFont(QFont("Arial", 14, QFont.Bold))
         issue_label.setStyleSheet("color: #ff6600;")
         issue_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
@@ -1561,19 +1561,24 @@ class Dashboard(QWidget):
                 QMessageBox.warning(self, "Holter Monitor", "ECG Test Page not initialized.")
                 return
 
-            # Ask user for choice: Live Holter or Previous Recording
+            # Ask user for choice: Live ECG or Previous Recording
             msg = QMessageBox(self)
-            msg.setWindowTitle("Holter Monitor")
+            msg.setWindowTitle("Comprehensive ECG Analysis")
             msg.setText("Choose an action:")
             msg.setIcon(QMessageBox.Question)
+            msg.setStyleSheet("""
+                QMessageBox { background-color: #1a1a2e; color: white; }
+                QLabel { color: white; font-size: 13px; }
+            """)
             
-            btn_live = msg.addButton("Live Holter Analysis", QMessageBox.ActionRole)
+            btn_live = msg.addButton("Live ECG Analysis", QMessageBox.ActionRole)
             btn_prev = msg.addButton("View Previous Recording", QMessageBox.ActionRole)
             btn_cancel = msg.addButton("Cancel", QMessageBox.RejectRole)
             
-            # Style the buttons
-            btn_live.setStyleSheet("background: #00FF00; color: black; padding: 10px 20px; font-weight: bold; border-radius: 4px;")
-            btn_prev.setStyleSheet("background: #004400; color: white; padding: 10px 20px; font-weight: bold; border-radius: 4px; border: 1px solid #00FF00;")
+            # Style the buttons — orange theme
+            btn_live.setStyleSheet("background: #ff6600; color: white; padding: 10px 20px; font-weight: bold; border-radius: 6px; border: none;")
+            btn_prev.setStyleSheet("background: #7a3000; color: white; padding: 10px 20px; font-weight: bold; border-radius: 6px; border: 1px solid #ff6600;")
+            btn_cancel.setStyleSheet("background: #2a2a3e; color: #aaaaaa; padding: 10px 20px; border-radius: 6px; border: 1px solid #555;")
             
             msg.exec_()
             
@@ -3949,7 +3954,7 @@ class Dashboard(QWidget):
             self.current_language = language
         translator = self.tr
         if hasattr(self, 'date_btn') and self.date_btn:
-            self.date_btn.setText(translator("ECG Lead Test 12"))
+            self.date_btn.setText(translator("12-Lead ECG"))
         if hasattr(self, 'chatbot_btn') and self.chatbot_btn:
             self.chatbot_btn.setText(translator("AI Chatbot"))
         if hasattr(self, 'heart_label') and self.heart_label:
