@@ -60,7 +60,7 @@ LOGO_FALLBACKS = [
 # ─── Public entry point ───────────────────────────────────────────────────────
 
 def generate_report(snap_raw, frozen, patient, filename, fmt,
-                    conc_list=None, fs=500.0):
+                    conc_list=None, fs=500.0, extra_figs=None):
     """
     snap_raw  : list[12] of numpy arrays — raw ADC per lead
     frozen    : dict with HR, PR, QRS, QT, QTc, QTcF, rv5, sv1,
@@ -119,6 +119,9 @@ def generate_report(snap_raw, frozen, patient, filename, fmt,
     os.makedirs(os.path.dirname(os.path.abspath(filename)), exist_ok=True)
     with PdfPages(filename) as pdf:
         pdf.savefig(fig, bbox_inches=None)
+        if extra_figs:
+            for extra_fig in extra_figs:
+                pdf.savefig(extra_fig, bbox_inches='tight')
     import gc; gc.collect()
 
 

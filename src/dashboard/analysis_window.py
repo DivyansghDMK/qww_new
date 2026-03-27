@@ -1178,291 +1178,82 @@ class ECGAnalysisWindow(QDialog):
         fmt_lay.addWidget(bb)
         if fmt_dlg.exec_() != _QD.Accepted:
             return
-        if rb1.isChecked():   pdf_format = "4x3"
-        elif rb2.isChecked(): pdf_format = "12x1"
-        else:                 pdf_format = "6x2"
+        if rb1.isChecked():   pdf_format = "4_3"
+        elif rb2.isChecked(): pdf_format = "12_1"
+        else:                 pdf_format = "6_2"
 
         try:
-            from matplotlib.backends.backend_pdf import PdfPages
-            from matplotlib.patches import Rectangle as MRect
-
             self.pdf_btn.setText("Generating...")
             from PyQt5.QtWidgets import QApplication
             QApplication.processEvents()
 
-            # ── Constants (all mm, matching ReportScreen.kt) ─────────────────
-            PAGE_W = 210.0;  PAGE_H = 297.0   # A4 portrait
-            ML = 10.0;  MR = 10.0;  MT = 10.0;  MB = 10.0
-            HEADER_H = 30.0    # mm reserved for header
-            FOOTER_H = 25.0    # mm reserved for footer
-            STRIP_TOP  = MT + HEADER_H
-            STRIP_H    = PAGE_H - STRIP_TOP - FOOTER_H - MB
-            CELL_H     = STRIP_H / 12.0
+            # ── 1. Build snap_raw (List of 12 numpy arrays) ──
+            leads_order = ['I', 'II', 'III', 'aVR', 'aVL', 'aVF', 'V1', 'V2', 'V3', 'V4', 'V5', 'V6']
+            snap_raw = []
+            for l in leads_order:
+                snap_raw.append(self.lead_data.get(l, np.array([])))
 
-            MM_PER_SAMPLE = 25.0 / float(self.sampling_rate)   # 25 mm/s ÷ fs
-            # Android app uses: "640 ADC units per 5mm grid box" 
-            # 640 ADC / 5 mm = 128 ADC units per mm.
-            # This perfectly scales the raw ADC API data to visual clinical standard.
-            ADC_PER_MM = 128.0
-            CALIB_MM   = 10.0     # 1 mV calibration pulse height (10 mm)
-            HALF_CELL  = CELL_H / 2.0 - 1.0   # clip headroom within each strip (mm)
-
-
-
-            # ── Figure (A4 in inches, 150 dpi) ───────────────────────────────
-            fig = Figure(figsize=(PAGE_W / 25.4, PAGE_H / 25.4), dpi=150, facecolor='white')
-
-            # Single axes covering the whole page; coordinates = mm
-            ax = fig.add_axes([0, 0, 1, 1], facecolor='#fff5f5')
-            ax.set_xlim(0, PAGE_W)
-            ax.set_ylim(PAGE_H, 0)          # y-axis: top=0, bottom=PAGE_H (like screen)
-            ax.set_aspect('equal')
-
-            # ── ECG grid  (1 mm minor, 5 mm major) ───────────────────────────
-            ax.set_xticks(np.arange(0, PAGE_W + 1, 5))
-            ax.set_xticks(np.arange(0, PAGE_W + 1, 1), minor=True)
-            ax.set_yticks(np.arange(0, PAGE_H + 1, 5))
-            ax.set_yticks(np.arange(0, PAGE_H + 1, 1), minor=True)
-            ax.grid(True, which='major', color='#e09696', linewidth=0.55, zorder=1)
-            ax.grid(True, which='minor', color='#f5d8d8', linewidth=0.22, zorder=1)
-            for sp in ax.spines.values():
-                sp.set_visible(False)
-            ax.set_xticklabels([]);  ax.set_yticklabels([])
-            ax.tick_params(left=False, bottom=False, which='both')
-
-            # ── Header ───────────────────────────────────────────────────────
-            yb = MT;  lh = 4.2
-            x1 = ML
-            # Col 1: patient + type
-            ax.text(x1, yb,      f"Name: {pat.get('name') or '-'}",    fontsize=7, va='top')
-            ax.text(x1, yb+lh,   f"Age: {pat.get('age') or '-'}",      fontsize=7, va='top')
-            ax.text(x1, yb+lh*2, f"Gender: {pat.get('gender') or '-'}",fontsize=7, va='top')
-            ax.text(x1, yb+lh*3.5, "Type: Standard", fontsize=7, va='top')
-
-            # Col 2: HR RR PR QRS QT
-            x2 = x1 + 45
-            col2_items = [
-                ('HR',  hr,  'bpm'),
-                ('RR',  rr,  'ms'),
-                ('PR',  pr,  'ms'),
-                ('QRS', qrs, 'ms'),
-                ('QT',  qt,  'ms'),
-            ]
-            row_y = yb
-            for lbl, val, unit in col2_items:
-                if val is not None:
-                    ax.text(x2, row_y, f"{lbl} : {val} {unit}",
-                            fontsize=7, va='top', fontweight='bold')
-                    row_y += lh
-
-            # Col 3: QTc QTcF RV5/SV1 RV5+SV1 P/QRS/T
-            x3 = x2 + 35
-            col3_items = [
-                ('QTc', qtc, 'ms'),
-                ('QTcF', qtcf, 'ms'),
-                ('RV5/SV1', rv5sv1, 'mV'),
-                ('RV5+SV1', rv5plus, 'mV'),
-                ('P/QRS/T', axes, '°'),
-            ]
-            col3_row = yb
-            for lbl, val, unit in col3_items:
-                if val is not None:
-                    # Specific formatting for RV5/SV1 and RV5+SV1 as seen in the image
-                    if lbl == 'RV5/SV1':
-                        val_str = str(val).replace(' mV', '')
-                        if '/' not in val_str and not val_str.startswith('+') and not val_str.startswith('-'):
-                            val_str = f"+{val_str}" # placeholder for consistency
-                        ax.text(x3, col3_row, f"{lbl}: {val_str} {unit}", fontsize=7, va='top', fontweight='bold')
-                    elif lbl == 'RV5+SV1':
-                        val_str = str(val).replace(' mV', '')
-                        ax.text(x3, col3_row, f"{lbl}: {val_str} {unit}", fontsize=7, va='top', fontweight='bold')
-                    else:
-                        ax.text(x3, col3_row, f"{lbl} : {val} {unit}", fontsize=7, va='top', fontweight='bold')
-                    col3_row += lh
-
-            # Brand (right): prefers provided Electronics logo image
-            logo_left = PAGE_W - MR - 55.0
-            logo_top = yb - 1.0
-            logo_bottom = yb + lh * 2.2
-
-            logo_drawn = False
+            # ── 2. Build frozen (Metrics dictionary) ──
+            frozen = {
+                'HR':       int(float(hr) if hr else 0),
+                'RR':       int(float(rr) if rr else 0),
+                'PR':       int(float(pr) if pr else 0),
+                'QRS':      int(float(qrs) if qrs else 0),
+                'QT':       int(float(qt) if qt else 0),
+                'QTc':      int(float(qtc) if qtc else 0),
+                'QTcF':     int(float(qtcf) if qtcf else 0),
+                'rv5':      0.0,
+                'sv1':      0.0,
+                'p_axis':   '--',
+                'QRS_axis': '--',
+                't_axis':   '--',
+                'lead_seq': 'Standard',
+                'logo_path': str(self.analysis_pdf_logo_path) if hasattr(self, 'analysis_pdf_logo_path') else '',
+            }
+            # Attempt to parse rv5, sv1, and axes if they exist in raw metrics
             try:
-                if self.analysis_pdf_logo_path.exists():
-                    import matplotlib.image as mpimg
-                    logo_img = mpimg.imread(str(self.analysis_pdf_logo_path))
-                    ax.imshow(
-                        logo_img,
-                        extent=[logo_left, PAGE_W - MR, logo_bottom, logo_top],
-                        aspect='auto',
-                        zorder=10,
-                    )
-                    logo_drawn = True
-            except Exception:
-                logo_drawn = False
-
-            if not logo_drawn:
-                ax.text(PAGE_W - MR, yb, "DECKMOUNT",
-                        fontsize=12, fontweight='bold', color='#000000',
-                        ha='right', va='top', zorder=11,
-                        family='sans-serif')
-
-            ax.text(PAGE_W - MR, yb+lh*2.2, "25.0 mm/s  0.5-25Hz  AC:50Hz  10.0 mm/mV",
-                    fontsize=5.5, ha='right', va='top', color='#555', zorder=10)
+                if rv5sv1:
+                    frozen['rv5'] = float(str(rv5sv1).split('/')[0].strip(' mV').strip('+'))
+                    if len(str(rv5sv1).split('/')) > 1:
+                        frozen['sv1'] = float(str(rv5sv1).split('/')[1].strip(' mV').strip('+'))
+            except Exception: pass
             
-            # Use current date/time if report_date is missing or for real-time feel
-            dt_str = pat.get('report_date') or datetime.now().strftime("%Y-%m-%d Time: %H:%M:%S")
-            if 'Time:' not in dt_str and len(dt_str) < 15: # if it's just a date
-                dt_str += " Time: " + datetime.now().strftime("%H:%M:%S")
+            try:
+                if axes and len(str(axes).split('/')) == 3:
+                    frozen['p_axis'] = str(axes).split('/')[0].strip()
+                    frozen['QRS_axis'] = str(axes).split('/')[1].strip()
+                    frozen['t_axis'] = str(axes).split('/')[2].strip()
+            except Exception: pass
+
+            # ── 3. Build patient (Details dictionary) ──
+            pat_mapped = {
+                'first_name': pat.get('name', 'Unknown'),
+                'last_name': '',
+                'age': pat.get('age', ''),
+                'gender': pat.get('gender', ''),
+                'date_time': pat.get('report_date') or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
+
+            # ── 4. Generate optional Annotation Page ──
+            extra_figs = []
+            if self.manual_annotations:
+                fig2 = self._generate_annotation_page()
+                if fig2:
+                    extra_figs.append(fig2)
+
+            # ── 5. Generate Report using Standard Android Generator ──
+            from ecg.ecg_report_android import generate_report as _gen
             
-            ax.text(PAGE_W - MR, yb+lh*3.0, f"Date: {dt_str}",
-                    fontsize=5.5, ha='right', va='top', color='#555', zorder=10)
-
-            # ── 12 Lead strips (format-aware window size limits) ───────────────
-            st = self.frame_start_sample
-            
-            # Determine grid layout from user's choice
-            if pdf_format == "4x3":
-                pdf_samples = 1600
-                n_rows, n_cols = 4, 3
-                lead_grid = [
-                    ['I',   'aVR', 'V1'],
-                    ['II',  'aVL', 'V2'],
-                    ['III', 'aVF', 'V3'],
-                    ['V4',  'V5',  'V6'],
-                ]
-            elif pdf_format == "6x2":
-                pdf_samples = 2500
-                n_rows, n_cols = 6, 2
-                lead_grid = [
-                    ['I',   'II'],
-                    ['III', 'aVR'],
-                    ['aVL', 'aVF'],
-                    ['V1',  'V2'],
-                    ['V3',  'V4'],
-                    ['V5',  'V6'],
-                ]
-            else:  # 12x1 default
-                pdf_samples = 3500
-                n_rows, n_cols = 12, 1
-                lead_grid = [[l] for l in self.LEADS]
-                
-            en = min(self._total_samples(), st + pdf_samples)
-
-            STRIP_W = PAGE_W - ML - MR
-            cell_w = STRIP_W / n_cols
-            cell_h_fmt = STRIP_H / n_rows
-            half_h = cell_h_fmt / 2.0 - 1.0
-
-            # ADC Y-axis: 0-4096 range; 1 mm per ADC step shown as mm markers
-            # Show 5 Y levels: 0, 1024, 2048, 3072, 4096
-            # Each maps to ±half_h mm from mid_y centred on baseline (2048)
-            Y_LEVELS = [0, 1024, 2048, 3072, 4096]
-            Y_BASELINE_ADC = 2048.0   # centre
-            Y_SCALE_MM = half_h / Y_BASELINE_ADC  # mm per ADC unit
-
-            for row_idx, row_leads in enumerate(lead_grid):
-                for col_idx, lead in enumerate(row_leads):
-                    cell_x0 = ML + col_idx * cell_w
-                    mid_y   = STRIP_TOP + row_idx * cell_h_fmt + cell_h_fmt / 2.0
-                    lbl_y   = mid_y - cell_h_fmt * 0.4
-                    y_top   = STRIP_TOP + row_idx * cell_h_fmt
-                    y_bot   = y_top + cell_h_fmt
-
-                    # Calibration pulse
-                    cx, cy, cg = cell_x0, mid_y, CALIB_MM
-                    ax.plot([cx, cx+1.5, cx+1.5, cx+6.5, cx+6.5, cx+8],
-                            [cy, cy,  cy-cg, cy-cg, cy,  cy],
-                            color='black', linewidth=1.0, zorder=6)
-
-                    # Lead label
-                    ax.text(cell_x0 + 10, lbl_y - 0.5, lead,
-                            fontsize=7, fontweight='bold', color='black', va='top', zorder=7)
-
-                    # Y-axis scale markings removed for clean aesthetic
-                    pass
-
-                    # Waveform — fixed 0-4096 ADC scale, 7 s of data
-                    data_arr = self.lead_data.get(lead, np.array([]))
-                    if len(data_arr) > 0:
-                        segment = data_arr[st:en].astype(float)
-                        if segment.size > 1:
-                            # Use fixed 0-4096 ADC range, centred on 2048
-                            seg_mm = (segment - Y_BASELINE_ADC) * Y_SCALE_MM
-                            seg_mm = np.clip(seg_mm, -half_h, half_h)
-                            wx0 = cell_x0 + 9.5
-                            wx1 = cell_x0 + cell_w - 1.0
-                            wx_mm = np.linspace(wx0, wx1, segment.size)
-                            wy_mm = mid_y - seg_mm
-                            ax.plot(wx_mm, wy_mm, color='black', linewidth=0.6, zorder=5)
-
-                            # Time labels removed for clean aesthetic
-                            pass
-
-                    # Vertical column separator (except last col)
-                    if col_idx < n_cols - 1:
-                        sep_x = cell_x0 + cell_w
-                        ax.plot([sep_x, sep_x], [STRIP_TOP, STRIP_TOP + STRIP_H],
-                                color='black', linewidth=0.6, linestyle='dashed', dashes=(4, 4), zorder=2)
-
-            # ── Footer signature block ────────────────────────────────────────
-            ft = PAGE_H - MB - FOOTER_H
-            ax.text(ML, ft + 9,  "Reference Report Confirmed by:",
-                    fontsize=7, va='top', color='black', fontweight='bold')
-            ax.text(ML, ft + 14, "Doctor Name: ________________________",
-                    fontsize=7, va='top', color='black')
-            ax.text(ML, ft + 19, "Doctor Sign:  ________________________",
-                    fontsize=7, va='top', color='black')
-
-            # Conclusion box — transparent fill, matching second image
-            bx, by = 90.0, ft + 2.0
-            bw, bh = PAGE_W - bx - MR, 22.0
-            from matplotlib.patches import Rectangle as MRect2
-            rect = MRect2((bx, by), bw, bh,
-                          linewidth=0.8, edgecolor='#333333',
-                          facecolor='none', zorder=8)
-            ax.add_patch(rect)
-            
-            # CONCLUSION Title
-            ax.text(bx + bw/2, by + 1.2, "CONCLUSION",
-                    fontsize=7, fontweight='bold', ha='center', va='top',
-                    color='black', zorder=9)
-            
-            # Thin separator line under title
-            ax.plot([bx + 1, bx + bw - 1], [by + 5.0, by + 5.0],
-                    color='#333333', linewidth=0.6, zorder=9)
-
-            # Draw vertical grid lines for the conclusion table if needed
-            # but let's just use columns first
-            cols = 3;  col_w = (bw - 4.0) / cols;  rh2 = 3.5
-            
-            # If no conclusions, add standard NSR findings for NSR reports
-            if not conclusions:
-                conclusions = ["Rhythm Analysis", "Normal heart rate", "Normal PR interval", 
-                               "Normal QRS duration", "Normal QTc interval"]
-
-            for idx2, line in enumerate(conclusions[:9]):
-                row2 = idx2 // cols;  col2 = idx2 % cols
-                tx = bx + 2.0 + col2 * col_w
-                ty = by + 6.5 + row2 * rh2
-                if ty + rh2 > by + bh:
-                    break
-                ax.text(tx, ty, f"{idx2+1}. {line}", fontsize=6, va='top', zorder=9)
-
-            # Footer brand — full address matching 12:1 style
-            brand = ("Deckmount Electronics Pvt. Ltd., Plot No. 389, Phase 5, "
-                     "Udyog Vihar, Sector 19, Gurgaon, Haryana 122016  |  "
-                     "RhythmPro ECG  |  IEC 60601  |  MADE IN INDIA")
-            ax.text(PAGE_W/2, PAGE_H - MB + 1, brand,
-                    fontsize=5.5, ha='center', va='top', color='#444', zorder=9)
-
-            with PdfPages(path) as pdf:
-                pdf.savefig(fig, bbox_inches=None)
-                
-                # ADDED: Second page for automatic/manual annotations
-                if self.manual_annotations:
-                    fig2 = self._generate_annotation_page()
-                    if fig2:
-                        pdf.savefig(fig2, bbox_inches='tight')
+            # Use fixed 7-second bounds like before? Actually we want full data.
+            # We already bounded the views in android generator.
+            _gen(snap_raw=snap_raw, 
+                 frozen=frozen, 
+                 patient=pat_mapped,
+                 filename=path, 
+                 fmt=pdf_format, 
+                 conc_list=conclusions, 
+                 fs=float(self.sampling_rate),
+                 extra_figs=extra_figs)
 
             # --- Save to history ---
             try:
