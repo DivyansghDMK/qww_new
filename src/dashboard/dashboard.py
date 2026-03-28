@@ -1554,11 +1554,11 @@ class Dashboard(QWidget):
             dialog.reject()
 
     def open_holter_from_dashboard(self):
-        """Navigate to ECG page and open Holter menu with options"""
+        """Navigate to ECG page and open Comphrensive ECG Analysis menu with options"""
         try:
             # Check if ECG test page is available
             if not hasattr(self, 'ecg_test_page'):
-                QMessageBox.warning(self, "Holter Monitor", "ECG Test Page not initialized.")
+                QMessageBox.warning(self, "Comphrensive ECG Analysis Monitor", "ECG Test Page not initialized.")
                 return
 
             # Ask user for choice: Live ECG or Previous Recording
@@ -1595,8 +1595,8 @@ class Dashboard(QWidget):
                     self.ecg_test_page._show_holter_ui(is_recording=False, ecgh_path=None, show_record_mgmt=True)
 
         except Exception as e:
-            print(f"Error opening Holter from dashboard: {e}")
-            QMessageBox.critical(self, "Error", f"Failed to open Holter Monitor: {str(e)}")
+            print(f"Error opening Comphrensive ECG Analysis from dashboard: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to open Comphrensive ECG Analysis Monitor: {str(e)}")
 
     def open_analysis_window(self):
         """Open the ECG Analysis Window"""
