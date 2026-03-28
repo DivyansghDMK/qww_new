@@ -280,7 +280,7 @@ def calculate_time_window_from_width_points(wave_speed_mm_s, width_points):
     return width_mm / max(1e-6, effective_wave_speed_mm_s)
 
 def apply_report_ecg_filters(signal, sampling_rate, settings_manager):
-    from ecg.ecg_filters import apply_ecg_filters, apply_baseline_wander_median_mean
+    from ecg.ecg_filters import apply_ecg_filters, apply_baseline_wander_median_mean, stabilize_report_edges
     arr = np.asarray(signal, dtype=float)
     if arr.size < 10:
         return arr
@@ -373,6 +373,7 @@ def apply_report_ecg_filters(signal, sampling_rate, settings_manager):
         pass
     # Keep natural morphology at strip edges; avoid forced flattening/tapering
     # that can create artificial terminal humps.
+    filtered = stabilize_report_edges(filtered, fs)
     return filtered
 
 def create_ecg_grid_with_waveform(ecg_data, lead_name, width=6, height=2):

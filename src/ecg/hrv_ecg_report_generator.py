@@ -494,7 +494,7 @@ def capture_real_ecg_graphs_from_dashboard(dashboard_instance=None, ecg_test_pag
     # Apply report filters (AC/EMG/DFT) based on current settings
     filtered_ecg_data = real_ecg_data
     try:
-        from ecg.ecg_filters import apply_dft_filter, apply_emg_filter, apply_ac_filter
+        from ecg.ecg_filters import apply_dft_filter, apply_emg_filter, apply_ac_filter, stabilize_report_edges
         dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
         emg_setting = str(settings_manager.get_setting("filter_emg", "off")).strip()
         ac_setting = str(settings_manager.get_setting("filter_ac", "off")).strip()
@@ -510,7 +510,7 @@ def capture_real_ecg_graphs_from_dashboard(dashboard_instance=None, ecg_test_pag
                 filtered = apply_emg_filter(filtered, float(samples_per_second), emg_setting)
             if ac_setting in ("50", "60"):
                 filtered = apply_ac_filter(filtered, float(samples_per_second), ac_setting)
-            filtered_ecg_data[lead] = filtered
+            filtered_ecg_data[lead] = stabilize_report_edges(filtered, float(samples_per_second))
         print(f" Applied report filters: DFT={dft_setting}, EMG={emg_setting}, AC={ac_setting}")
     except Exception as e:
         print(f" Could not apply report filters: {e}")

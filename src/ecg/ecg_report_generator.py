@@ -496,7 +496,7 @@ def calculate_time_window_from_bpm_and_wave_speed(hr_bpm, wave_speed_mm_s, desir
     return calculated_time_window, num_samples
 
 def apply_report_ecg_filters(signal, sampling_rate, settings_manager):
-    from ecg.ecg_filters import apply_ecg_filters, apply_baseline_wander_median_mean
+    from ecg.ecg_filters import apply_ecg_filters, apply_baseline_wander_median_mean, stabilize_report_edges
     arr = np.asarray(signal, dtype=float)
     if arr.size < 10:
         return arr
@@ -591,6 +591,7 @@ def apply_report_ecg_filters(signal, sampling_rate, settings_manager):
     # Do not force waveform edges to a flat mean value. Edge tapering hides
     # clinically relevant terminal morphology and can create visible "humps"
     # before the strip ends. Keep natural morphology after filtering.
+    filtered = stabilize_report_edges(filtered, fs)
     return filtered
 
 
