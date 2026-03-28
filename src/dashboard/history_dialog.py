@@ -17,7 +17,7 @@ class HistoryDialog(QDialog):
         self.tabs = QTabWidget()
         layout.addWidget(self.tabs)
 
-        self.report_types = ["HRV", "Hyperkalemia", "Holter", "Analysis"]
+        self.report_types = ["HRV", "Hyperkalemia", "Comphrensive ECG Analysis", "Analysis"]
         self.tables = {}
 
         for report_type in self.report_types:
@@ -81,6 +81,6 @@ class HistoryDialog(QDialog):
         elif "hyperkalemia" in filename_lower:
             return "Hyperkalemia"
         elif "holter" in filename_lower:
-            return "Holter"
+            return "Comphrensive ECG Analysis"
         else:
             return "Analysis"
