@@ -1188,10 +1188,15 @@ class ECGAnalysisWindow(QDialog):
             QApplication.processEvents()
 
             # ── 1. Build snap_raw (List of 12 numpy arrays) ──
+            st = self.frame_start_sample
             leads_order = ['I', 'II', 'III', 'aVR', 'aVL', 'aVF', 'V1', 'V2', 'V3', 'V4', 'V5', 'V6']
             snap_raw = []
             for l in leads_order:
-                snap_raw.append(self.lead_data.get(l, np.array([])))
+                data_arr = self.lead_data.get(l, np.array([]))
+                if len(data_arr) > st:
+                    snap_raw.append(data_arr[st:])
+                else:
+                    snap_raw.append(np.array([]))
 
             # ── 2. Build frozen (Metrics dictionary) ──
             frozen = {

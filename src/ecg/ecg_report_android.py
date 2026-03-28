@@ -328,7 +328,7 @@ def _draw_2x6(ax, lead_mv, PW, PH, target_samples=None):
     _t(ax, "II", left_margin+10, rhythm_mid-9, 12, bold=True)
     _draw_waveform(ax, lead_mv.get("II", np.array([])),
                    left_margin+14, rhythm_mid,
-                   PW - left_margin - MR - 25, row_h*0.45, target_samples=target_samples)
+                   PW - left_margin - MR - 25, row_h*0.45, target_samples=5000)
 
 
 # ─── 4:3 Landscape ────────────────────────────────────────────────────────────
@@ -386,7 +386,7 @@ def _draw_3x4(ax, lead_mv, PW, PH, target_samples=None):
     _t(ax, "II", left_margin+10, rhythm_mid-9, 12.5, bold=True)
     _draw_waveform(ax, lead_mv.get("II", np.array([])),
                    left_margin+14, rhythm_mid,
-                   PW - left_margin - MR - 25, row_h*0.45, target_samples=target_samples)
+                   PW - left_margin - MR - 25, row_h*0.45, target_samples=5000)
 
 
 # ─── Footer ───────────────────────────────────────────────────────────────────
