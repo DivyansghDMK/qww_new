@@ -51,21 +51,27 @@ class ArrhythmiaDetector:
 
         def _try(label, fn, *args):
             try:
+                if fn is None:
+                    return
                 result = fn(*args)
                 if result:
                     arrhythmias.append(result if isinstance(result, str) else label)
             except Exception as e:
                 print(f"Error detecting {label}: {e}")
 
+        def _m(name):
+            fn = getattr(self, name, None)
+            return fn if callable(fn) else None
+
         # Life-threatening ventricular
         _try("Ventricular Fibrillation Detected",
-             self._is_ventricular_fibrillation, signal_arr, r_peaks, rr_ms)
+             _m("_is_ventricular_fibrillation"), signal_arr, r_peaks, rr_ms)
         _try("Torsade de Pointes",
-             self._is_torsade_de_pointes, signal_arr, r_peaks, rr_ms, qrs_duration)
+             _m("_is_torsade_de_pointes"), signal_arr, r_peaks, rr_ms, qrs_duration)
         _try("Polymorphic Ventricular Tachycardia",
-             self._is_poly_vtach, signal_arr, r_peaks, rr_ms, qrs_duration)
+             _m("_is_poly_vtach"), signal_arr, r_peaks, rr_ms, qrs_duration)
         _try("Possible Ventricular Tachycardia",
-             self._is_ventricular_tachycardia, rr_ms, qrs_duration)
+             _m("_is_ventricular_tachycardia"), rr_ms, qrs_duration)
 
         # R-on-T
         if self._is_pvc_r_on_t(signal_arr, r_peaks, rr_ms, qrs_duration, 'LV'):
@@ -83,11 +89,11 @@ class ArrhythmiaDetector:
             print(f"Error in AF detection: {e}")
 
         _try("Possible Atrial Flutter",
-             self._is_atrial_flutter, hr, qrs_duration, rr_ms, p_peaks, r_peaks)
+             _m("_is_atrial_flutter"), hr, qrs_duration, rr_ms, p_peaks, r_peaks)
 
         # PVCs & Ectopics
         _try("Ventricular Ectopics Detected",
-             self._is_ventricular_ectopics, signal_arr, r_peaks, qrs_duration, p_peaks, rr_ms)
+             _m("_is_ventricular_ectopics"), signal_arr, r_peaks, qrs_duration, p_peaks, rr_ms)
         for label in self._classify_pvcs(signal_arr, r_peaks, rr_ms, qrs_duration, p_peaks, q_peaks, s_peaks):
             arrhythmias.append(label)
 
@@ -99,9 +105,9 @@ class ArrhythmiaDetector:
                 bigeminy_detected = True
         except Exception as e:
             print(f"Error in bigeminy detection: {e}")
-        _try("Trigeminy", self._is_trigeminy, rr_ms, qrs_duration, signal_arr, r_peaks)
+        _try("Trigeminy", _m("_is_trigeminy"), rr_ms, qrs_duration, signal_arr, r_peaks)
         _try("Run of PVCs (>=3 consecutive)",
-             self._is_run_of_pvcs, signal_arr, r_peaks, rr_ms, qrs_duration)
+             _m("_is_run_of_pvcs"), signal_arr, r_peaks, rr_ms, qrs_duration)
 
         # AV Blocks
         try:
@@ -111,13 +117,13 @@ class ArrhythmiaDetector:
         except Exception as e:
             print(f"Error in AV block detection: {e}")
         _try("High AV-Block",
-             self._is_high_av_block, pr_interval, p_peaks, r_peaks, rr_ms, hr)
+             _m("_is_high_av_block"), pr_interval, p_peaks, r_peaks, rr_ms, hr)
 
         # Bundle branch / WPW
         _try("WPW Syndrome (Wolff-Parkinson-White)",
-             self._is_wpw_syndrome, pr_interval, qrs_duration, signal_arr, p_peaks, q_peaks, r_peaks)
+             _m("_is_wpw_syndrome"), pr_interval, qrs_duration, signal_arr, p_peaks, q_peaks, r_peaks)
         _try("Left Bundle Branch Block (LBBB)",
-             self._is_left_bundle_branch_block, qrs_duration, pr_interval, rr_ms, signal_arr, q_peaks, r_peaks)
+             _m("_is_left_bundle_branch_block"), qrs_duration, pr_interval, rr_ms, signal_arr, q_peaks, r_peaks)
         _try("Right Bundle Branch Block (RBBB)",
              self._is_right_bundle_branch_block, qrs_duration, pr_interval, rr_ms, signal_arr, r_peaks)
         _try("Possible LBBB (single-lead morphology)",
@@ -125,23 +131,23 @@ class ArrhythmiaDetector:
         _try("Possible RBBB (single-lead morphology)",
              self._is_rbbb_single_lead, signal_arr, qrs_duration, r_peaks, lead_name)
         _try("Left Anterior Fascicular Block (LAFB)",
-             self._is_left_anterior_fascicular_block, qrs_duration, hr, signal_arr, r_peaks, s_peaks)
+             _m("_is_left_anterior_fascicular_block"), qrs_duration, hr, signal_arr, r_peaks, s_peaks)
         _try("Left Posterior Fascicular Block (LPFB)",
-             self._is_left_posterior_fascicular_block, qrs_duration, hr, signal_arr, r_peaks, s_peaks)
+             _m("_is_left_posterior_fascicular_block"), qrs_duration, hr, signal_arr, r_peaks, s_peaks)
 
         # Supraventricular
         _try("Supraventricular Tachycardia (SVT)",
-             self._is_supraventricular_tachycardia, hr, qrs_duration, rr_ms, p_peaks, r_peaks)
+             _m("_is_supraventricular_tachycardia"), hr, qrs_duration, rr_ms, p_peaks, r_peaks)
         _try("Paroxysmal Atrial Tachycardia (PAT)",
-             self._is_pat, hr, qrs_duration, rr_ms, p_peaks, r_peaks)
+             _m("_is_pat"), hr, qrs_duration, rr_ms, p_peaks, r_peaks)
         _try("Atrial Tachycardia",
-             self._is_atrial_tachycardia, hr, qrs_duration, rr_ms, p_peaks, r_peaks)
+             _m("_is_atrial_tachycardia"), hr, qrs_duration, rr_ms, p_peaks, r_peaks)
         _try("Atrial PAC (Premature Atrial Contraction)",
-             self._is_pac, signal_arr, r_peaks, rr_ms, qrs_duration, p_peaks)
+             _m("_is_pac"), signal_arr, r_peaks, rr_ms, qrs_duration, p_peaks)
         _try("Nodal PNC (Premature Junctional Contraction)",
-             self._is_pnc, signal_arr, r_peaks, rr_ms, qrs_duration, p_peaks, pr_interval)
+             _m("_is_pnc"), signal_arr, r_peaks, rr_ms, qrs_duration, p_peaks, pr_interval)
         _try("Possible Junctional Rhythm",
-             self._is_junctional_rhythm, hr, qrs_duration, pr_interval, rr_ms, p_peaks, r_peaks)
+             _m("_is_junctional_rhythm"), hr, qrs_duration, pr_interval, rr_ms, p_peaks, r_peaks)
 
         # Sinus arrhythmias
         _try("Sinus Arrhythmia",
