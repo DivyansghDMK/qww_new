@@ -20,6 +20,7 @@ class ArrhythmiaDetector:
         p_peaks    = np.array(analysis.get('p_peaks', []), dtype=int)
         q_peaks    = np.array(analysis.get('q_peaks', []), dtype=int)
         s_peaks    = np.array(analysis.get('s_peaks', []), dtype=int)
+        t_peaks    = np.array(analysis.get('t_peaks', []), dtype=int)
         signal_arr = np.asarray(signal, dtype=float) if signal is not None else np.array([])
 
         try:
@@ -156,6 +157,16 @@ class ArrhythmiaDetector:
         if not arrhythmias and self._is_normal_sinus_rhythm(rr_ms):
             return ["Normal Sinus Rhythm"]
 
+        # Add HRV + advanced findings
+        hrv = self._compute_hrv(rr_ms)
+        if hrv.get("sdnn_ms", 0) > 0:
+            arrhythmias.append(f"HRV SDNN: {hrv['sdnn_ms']:.1f} ms")
+            arrhythmias.append(f"HRV RMSSD: {hrv['rmssd_ms']:.1f} ms")
+            arrhythmias.append(f"HRV pNN50: {hrv['pnn50_pct']:.1f}%")
+        _try("QTc Prolongation", self._is_qtc_prolonged, q_peaks, t_peaks, rr_ms)
+        _try("ST Depression / Elevation", self._is_st_change, signal_arr, q_peaks, s_peaks, p_peaks)
+        _try("T-wave Inversion", self._is_t_wave_inversion, signal_arr, t_peaks, r_peaks)
+
         return arrhythmias if arrhythmias else ["Unspecified Irregular Rhythm"]
 
     # ── Utilities ──────────────────────────────────────────────────────────
@@ -199,7 +210,12 @@ class ArrhythmiaDetector:
     def _is_normal_sinus_rhythm(self, rr_intervals):
         rr = np.asarray(rr_intervals, dtype=float)
         if len(rr) < 3: return False
-        return 60 <= 60000.0/float(np.mean(rr)) <= 100 and float(np.std(rr)) < 120
+        mean_rr = float(np.mean(rr))
+        if mean_rr <= 0:
+            return False
+        rr_std = float(np.std(rr))
+        rr_cv = rr_std / mean_rr
+        return 60 <= 60000.0/mean_rr <= 100 and rr_std < 60 and rr_cv < 0.08
 
     def _is_asystole(self, signal, r_peaks, heart_rate, min_data_packets=50):
         sig = np.asarray(signal, dtype=float)
@@ -219,7 +235,7 @@ class ArrhythmiaDetector:
         return False
 
     def _is_atrial_fibrillation(self, signal, r_peaks, p_peaks, rr_intervals, qrs_duration):
-        if len(r_peaks) < 5: return False
+        if len(r_peaks) < 8: return False
         rr = np.asarray(rr_intervals, dtype=float)
         if len(rr) < 2: rr = np.diff(r_peaks)/self.fs*1000.0
         if len(rr) < 2: return False
@@ -235,7 +251,7 @@ class ArrhythmiaDetector:
                     p_iv = np.diff(p_arr)/self.fs*1000.0
                     if len(p_iv)>0 and float(np.mean(p_iv))>0 and float(np.std(p_iv)/np.mean(p_iv))>0.12: return True
                 return True
-        if rr_cv > 0.12 and len(rr) >= 3:
+        if rr_cv > 0.20 and len(rr) >= 8:
             if qrs_duration is None or qrs_duration <= 120:
                 diffs = np.abs(np.diff(rr))
                 if len(diffs)>0 and float(np.std(diffs))>mean_rr*0.08:
@@ -248,31 +264,38 @@ class ArrhythmiaDetector:
 
     def _is_ventricular_tachycardia(self, rr_intervals, qrs_duration):
         rr = np.asarray(rr_intervals, dtype=float)
-        if len(rr) < 3 or qrs_duration is None or qrs_duration <= 120: return False
+        if len(rr) < 5 or qrs_duration is None or qrs_duration <= 120: return False
         mean_rr = float(np.mean(rr))
         if mean_rr <= 0: return False
         return 60000.0/mean_rr > 120 and float(np.std(rr)) < 80
 
     def _is_ventricular_fibrillation(self, signal, r_peaks, rr_intervals):
-        if signal is None or len(signal) < 500: return False
+        if signal is None or len(signal) < int(self.fs * 3): return False
         sig = np.asarray(signal, dtype=float)
+        sig_d = sig - float(np.mean(sig))
+        ptp = float(np.ptp(sig_d))
+        if ptp <= 0:
+            return False
+        sig_norm = sig_d / ptp
         rr  = np.asarray(rr_intervals, dtype=float)
         if len(rr) < 3 and len(r_peaks) >= 3: rr = np.diff(r_peaks)/self.fs*1000.0
+        if len(r_peaks) >= 5:
+            return False
         if len(rr) >= 3:
             mean_rr = float(np.mean(rr))
             if mean_rr > 0 and float(np.std(rr)/mean_rr) > 0.3:
-                if float(np.std(sig)) > 50 and float(np.ptp(sig)) > 100: return True
+                if float(np.std(sig_norm)) > 0.15: return True
         dur = len(sig)/self.fs
         if dur >= 2.0 and len(r_peaks) >= 3:
             crr = np.diff(r_peaks)/self.fs*1000.0
             if len(crr) >= 2:
                 m = float(np.mean(crr))
-                if m > 0 and float(np.std(crr)/m) > 0.25 and float(np.std(sig)) > 40 and float(np.ptp(sig)) > 80: return True
+                if m > 0 and float(np.std(crr)/m) > 0.25 and float(np.std(sig_norm)) > 0.13: return True
         if dur >= 3.0 and len(r_peaks) < 5:
-            if float(np.std(sig)) > 50 and float(np.ptp(sig)) > 100 and float(np.mean(np.abs(sig))) > 30: return True
+            if float(np.std(sig_norm)) > 0.14 and float(np.mean(np.abs(sig_norm))) > 0.05: return True
         if len(sig) >= 1000:
-            ma = float(np.mean(np.abs(sig)))
-            if ma > 0 and float(np.std(sig))/ma > 1.0 and float(np.ptp(sig)) > 100:
+            ma = float(np.mean(np.abs(sig_norm)))
+            if ma > 0 and float(np.std(sig_norm))/ma > 1.0:
                 crr2 = np.diff(r_peaks)/self.fs*1000.0 if len(r_peaks) >= 3 else np.array([])
                 if len(r_peaks) < 8 or (len(crr2)>=3 and float(np.mean(crr2))>0 and float(np.std(crr2)/np.mean(crr2))>0.2): return True
         return False
@@ -366,7 +389,7 @@ class ArrhythmiaDetector:
         if pr_interval is not None and pr_interval > 220: return False
         rr = np.asarray(rr_intervals, dtype=float)
         if len(rr) < 3: return False
-        rr_ms = rr*1000.0 if float(np.max(rr)) < 10 else rr
+        rr_ms = rr
         mean_rr = float(np.mean(rr_ms))
         if mean_rr <= 0 or float(np.std(rr_ms)/mean_rr) > 0.15: return False
         q_arr = np.asarray(q_peaks, dtype=int); r_arr = np.asarray(r_peaks, dtype=int)
@@ -387,7 +410,7 @@ class ArrhythmiaDetector:
         if pr_interval is not None and pr_interval > 220: return False
         rr = np.asarray(rr_intervals, dtype=float)
         if len(rr) < 3: return False
-        rr_ms = rr*1000.0 if float(np.max(rr)) < 10 else rr
+        rr_ms = rr
         mean_rr = float(np.mean(rr_ms))
         if mean_rr <= 0 or float(np.std(rr_ms)/mean_rr) > 0.18: return False
         r_arr = np.asarray(r_peaks, dtype=int)
@@ -452,7 +475,7 @@ class ArrhythmiaDetector:
 
     def _is_junctional_rhythm(self, heart_rate, qrs_duration, pr_interval, rr_intervals, p_peaks, r_peaks):
         if heart_rate is None or qrs_duration is None: return False
-        if not (40 <= heart_rate <= 60) or qrs_duration > 120: return False
+        if not (40 <= heart_rate <= 100) or qrs_duration > 120: return False
         rr = np.asarray(rr_intervals, dtype=float)
         if len(rr) < 3 or float(np.std(rr)) >= 120: return False
         p_arr = np.asarray(p_peaks, dtype=int); r_arr = np.asarray(r_peaks, dtype=int)
@@ -461,12 +484,12 @@ class ArrhythmiaDetector:
 
     def _is_atrial_flutter(self, heart_rate, qrs_duration, rr_intervals, p_peaks, r_peaks):
         if heart_rate is None or qrs_duration is None: return False
-        if not (130 <= heart_rate <= 180) or qrs_duration > 120: return False
+        if not (70 <= heart_rate <= 180) or qrs_duration > 120: return False
         rr = np.asarray(rr_intervals, dtype=float)
         if len(rr) < 3 or float(np.std(rr)) >= 120: return False
         p_arr = np.asarray(p_peaks, dtype=int); r_arr = np.asarray(r_peaks, dtype=int)
         if len(p_arr)==0 or len(r_arr)==0: return False
-        return len(p_arr)/max(len(r_arr),1) >= 1.5
+        return len(p_arr)/max(len(r_arr),1) >= 2.0
 
     def _is_av_block(self, pr_interval, p_peaks, r_peaks, rr_intervals, heart_rate):
         p_arr = np.asarray(p_peaks, dtype=int); r_arr = np.asarray(r_peaks, dtype=int)
@@ -527,7 +550,7 @@ class ArrhythmiaDetector:
                         h=len(seg)//2; rise=float(np.ptp(seg))
                         if rise>0 and float(np.ptp(seg[:h]))>0.3*rise: return True
                     break
-        return True
+        return False
 
     def _is_atrial_tachycardia(self, heart_rate, qrs_duration, rr_intervals, p_peaks, r_peaks):
         if heart_rate is None or qrs_duration is None: return False
@@ -659,3 +682,83 @@ class ArrhythmiaDetector:
                 if 105<=hr<=140: return "Missed Beat at ~120 BPM (SA Block / Sinus Pause)"
                 return "Sinus Pause / Missed Beat"
         return None
+
+    def _compute_hrv(self, rr_ms):
+        rr = np.asarray(rr_ms, dtype=float)
+        if rr.size < 3:
+            return {"sdnn_ms": 0.0, "rmssd_ms": 0.0, "pnn50_pct": 0.0}
+        diffs = np.diff(rr)
+        sdnn = float(np.std(rr))
+        rmssd = float(np.sqrt(np.mean(diffs ** 2))) if diffs.size else 0.0
+        pnn50 = float(np.mean(np.abs(diffs) > 50.0) * 100.0) if diffs.size else 0.0
+        return {"sdnn_ms": sdnn, "rmssd_ms": rmssd, "pnn50_pct": pnn50}
+
+    def _is_qtc_prolonged(self, q_peaks, t_peaks, rr_ms):
+        q_arr = np.asarray(q_peaks, dtype=int)
+        t_arr = np.asarray(t_peaks, dtype=int)
+        rr = np.asarray(rr_ms, dtype=float)
+        if q_arr.size == 0 or t_arr.size == 0 or rr.size == 0:
+            return False
+        qt_vals = []
+        for q in q_arr:
+            t_after = t_arr[t_arr > q]
+            if t_after.size:
+                qt_ms = (t_after[0] - q) / self.fs * 1000.0
+                if 200 <= qt_ms <= 700:
+                    qt_vals.append(qt_ms)
+        if not qt_vals:
+            return False
+        qt = float(np.mean(qt_vals))
+        rr_mean = float(np.mean(rr))
+        if rr_mean <= 0:
+            return False
+        qtc = qt / np.sqrt(rr_mean / 1000.0)
+        return qtc > 460.0
+
+    def _is_st_change(self, signal, q_peaks, s_peaks, p_peaks):
+        sig = np.asarray(signal, dtype=float)
+        s_arr = np.asarray(s_peaks, dtype=int)
+        p_arr = np.asarray(p_peaks, dtype=int)
+        if sig.size == 0 or s_arr.size == 0 or p_arr.size == 0:
+            return False
+        offsets = []
+        j_shift = int(0.08 * self.fs)
+        for s in s_arr[:min(10, len(s_arr))]:
+            j_idx = s + j_shift
+            if j_idx >= len(sig):
+                continue
+            base_idx = p_arr[p_arr < s]
+            if base_idx.size == 0:
+                continue
+            b = base_idx[-1]
+            b0, b1 = max(0, b - int(0.04 * self.fs)), min(len(sig), b)
+            if b1 - b0 < 3:
+                continue
+            baseline = float(np.mean(sig[b0:b1]))
+            offsets.append(float(sig[j_idx] - baseline))
+        if not offsets:
+            return False
+        st_mean = float(np.mean(offsets))
+        return st_mean < -80 or st_mean > 120
+
+    def _is_t_wave_inversion(self, signal, t_peaks, r_peaks):
+        sig = np.asarray(signal, dtype=float)
+        t_arr = np.asarray(t_peaks, dtype=int)
+        r_arr = np.asarray(r_peaks, dtype=int)
+        if sig.size == 0 or t_arr.size == 0 or r_arr.size == 0:
+            return False
+        inv = 0
+        total = 0
+        for t in t_arr[:min(12, len(t_arr))]:
+            r_before = r_arr[r_arr < t]
+            if r_before.size == 0 or t >= len(sig):
+                continue
+            r_idx = r_before[-1]
+            r_amp = float(sig[r_idx])
+            t_amp = float(sig[t])
+            if abs(r_amp) < 1e-6:
+                continue
+            total += 1
+            if np.sign(t_amp) != np.sign(r_amp):
+                inv += 1
+        return total >= 3 and inv / total >= 0.5
