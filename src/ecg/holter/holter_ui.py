@@ -648,6 +648,7 @@ class HolterReplayPanel(QWidget):
     def __init__(self, parent=None, duration_sec: float = 86400):
         super().__init__(parent)
         self.duration_sec = max(1, duration_sec)
+        self._strip_length_sec = 10.0
         self.setStyleSheet(f"background:{COL_DARK};")
         self._replay_engine = None
         self._build_ui()
@@ -784,10 +785,36 @@ class HolterReplayPanel(QWidget):
             tbtn.clicked.connect(lambda _, t=tool, b=tbtn: self._set_tool_mode(t, b))
             toolbar_layout.addWidget(tbtn)
             self._tool_btns[tool] = tbtn
+        self._tool_btns["Measuring Ruler"].setToolTip(
+            "Measure interval in ms and approximate BPM between two points."
+        )
+        self._tool_btns["Parallel Ruler"].setToolTip(
+            "Compare beat-to-beat interval regularity using two vertical markers."
+        )
+        self._tool_btns["Magnifying Glass"].setToolTip(
+            "Drag to zoom-highlight a detailed ECG segment for review."
+        )
+        self._tool_btns["Gain Settings"].setToolTip(
+            "Cycle gain (5/10/20/40 mm/mV equivalent) to improve waveform visibility."
+        )
         toolbar_layout.addStretch()
         layout.addWidget(toolbar)
 
     def _set_tool_mode(self, tool_name: str, btn: QPushButton = None):
+        if "Goto Template" in tool_name:
+            QMessageBox.information(
+                self,
+                "Holter ECG Software Tools — Explained",
+                "Measuring Ruler: measure interval/amplitude and BPM.\n"
+                "Parallel Ruler: compare regularity/coupling across beats.\n"
+                "Magnifying Glass: zoom-highlight subtle waveform details.\n"
+                "Gain Settings: cycle 5/10/20/40 mm/mV-equivalent scaling.\n\n"
+                "End-to-end flow:\n"
+                "Raw recording → Gain optimization → Magnify flagged events → "
+                "Measure intervals (QT/PR/pause) → Parallel comparison → Final report."
+            )
+            return
+
         # Handle state cycles for Gain, Speed, Length
         if "Gain Settings" in tool_name:
             # Cycle: 5 -> 10 -> 20 -> 40
@@ -796,7 +823,10 @@ class HolterReplayPanel(QWidget):
             next_g = (curr_g + 1) % len(gains)
             self._curr_gain_idx = next_g
             val = gains[next_g]
-            for s in self._strip_labels: s.set_gain(val)
+            for s in getattr(self, "_ch_strips", []):
+                s.set_gain(val)
+            if hasattr(self, "_mini_strip"):
+                self._mini_strip.set_gain(val)
             if btn: btn.setText(f"Gain: {int(val*10)}mm/mV")
             return
         elif "Paper speed" in tool_name:
@@ -805,6 +835,10 @@ class HolterReplayPanel(QWidget):
             next_s = (curr_s + 1) % len(speeds)
             self._curr_speed_idx = next_s
             val = speeds[next_s]
+            for s in getattr(self, "_ch_strips", []):
+                s.set_paper_speed(int(val))
+            if hasattr(self, "_mini_strip"):
+                self._mini_strip.set_paper_speed(int(val))
             if btn: btn.setText(f"Paper speed:{val}mm/s")
             # In a real app, this would change self.duration_shown or similar
             return
@@ -814,11 +848,12 @@ class HolterReplayPanel(QWidget):
             next_l = (curr_l + 1) % len(lengths)
             self._curr_length_idx = next_l
             val = lengths[next_l]
+            self._strip_length_sec = float(val)
             if btn: btn.setText(f"Strip Length:{val}s")
             return
 
         mode = tool_name if tool_name in ["Measuring Ruler", "Parallel Ruler", "Magnifying Glass"] else "Normal"
-        for strip in self._strip_labels:
+        for strip in getattr(self, "_ch_strips", []):
             if hasattr(strip, 'set_mode'):
                 strip.set_mode(mode)
         if hasattr(self._mini_strip, 'set_mode'):
@@ -880,7 +915,11 @@ class HolterReplayPanel(QWidget):
         """Update the 12 channel strips inside the Replay tab."""
         if data is None or data.shape[0] < 12:
             return
-            
+
+        strip_len = int(max(1, getattr(self, "_strip_length_sec", 10.0)) * 500)
+        if data.shape[1] > strip_len:
+            data = data[:, -strip_len:]
+
         N = data.shape[1]
         x = np.linspace(0, N/500.0, N) if N > 0 else []
         for i, strip in enumerate(self._ch_strips):
@@ -1020,6 +1059,7 @@ class ECGStripCanvas(QWidget):
         d = self._data
         mn, mx = 0, 4096
         rng = 4096
+        d = np.clip(((d - 2048.0) * self._gain) + 2048.0, mn, mx)
         
         pen = QPen(QColor(self._color))
         pen.setWidthF(self._pen_width)
@@ -1264,6 +1304,18 @@ class HolterWaveGridPanel(QFrame):
         arr = np.nan_to_num(arr, nan=2048.0)
         return arr
 
+    def _to_display_space(self, sig: np.ndarray, lead_name: str) -> np.ndarray:
+        """
+        Recenter leads for readability.
+        - Standard leads centered near midline (2048) in 0..4096 window.
+        - aVR centered near -2048 in 0..-4096 window.
+        """
+        baseline = float(np.median(sig)) if sig.size else 2048.0
+        centered = sig - baseline
+        if lead_name == "aVR":
+            return np.clip((-centered) - 2048.0, -4096.0, 0.0)
+        return np.clip(centered + 2048.0, 0.0, 4096.0)
+
     def refresh_waveforms(self):
         if not self._lead_widgets:
             return
@@ -1284,6 +1336,8 @@ class HolterWaveGridPanel(QFrame):
 
         for idx, (curve, plot) in enumerate(self._lead_widgets):
             sig = lead_data[idx] if idx < len(lead_data) else np.full(400, 2048.0)
+            lead_name = self.LEADS[idx] if idx < len(self.LEADS) else ""
+            sig = self._to_display_space(np.asarray(sig, dtype=float), lead_name)
             # Create time axis based on 500 SPS
             time_axis = np.arange(sig.size, dtype=float) / 500.0
             curve.setData(time_axis, sig)
