@@ -52,18 +52,26 @@ except Exception:
     pg = None
     HAS_PG = False
 
-# ── Colour palette — matching app standard dark/orange theme ─────────────────
-COL_GREEN     = "#ff6600"   # primary accent (orange)
-COL_GREEN_DRK = "#7a3000"   # darker accent
-COL_GREEN_MID = "#e65c00"   # mid accent
-COL_BLACK     = "#0d0d0d"   # near-black background
-COL_DARK      = "#1a1a2e"   # panel background
-COL_GRAY      = "#16213e"   # card background
-COL_BG        = "#0d0d0d"   # main background
-COL_TEXT      = "#ff6600"   # primary text accent
+# ── Comprehensive ECG Analysis professional palette ───────────────────────────
+COL_BLACK     = "#080808"   # root canvas
+COL_DARK      = "#1a1a1a"   # panel dark
+COL_GRAY      = "#111111"   # surface dark
+COL_BG        = COL_BLACK
+COL_TEXT      = "#e0e0e0"   # primary text
+COL_GREEN     = "#00e050"   # waveform green
+COL_GREEN_MID = "#00ff66"   # bright ECG green
+COL_GREEN_DRK = "#2a2a2a"   # borders/separators
 COL_WHITE     = "#FFFFFF"
-COL_YELLOW    = "#FFD700"
-COL_RED       = "#FF4444"
+COL_YELLOW    = "#f5c518"
+COL_RED       = "#ff3333"
+COL_WAVE_ORANGE = "#e06020"
+COL_WAVE_RED    = "#ff3333"
+COL_GRID_MINOR  = "#0a2a0a"
+COL_GRID_MAJOR  = "#1a4a1a"
+COL_BTN_ACTIVE_BG = "#1e4a7a"
+COL_BTN_ACTIVE_TEXT = "#6aacf5"
+COL_TIMESTAMP = "#f0a030"
+COL_BEAT_S = "#ff9900"
 
 
 def _style_btn(bg=COL_GREEN_DRK, fg=COL_WHITE, hover=COL_GREEN):
@@ -71,7 +79,7 @@ def _style_btn(bg=COL_GREEN_DRK, fg=COL_WHITE, hover=COL_GREEN):
         QPushButton {{
             background: {bg};
             color: {fg};
-            border: 1px solid {COL_GREEN};
+            border: 1px solid #3a3a3a;
             border-radius: 6px;
             padding: 6px 14px;
             font-size: 12px;
@@ -89,15 +97,15 @@ def _style_btn(bg=COL_GREEN_DRK, fg=COL_WHITE, hover=COL_GREEN):
 def _style_active_btn():
     return f"""
         QPushButton {{
-            background: {COL_GREEN};
-            color: {COL_WHITE};
-            border: 1px solid {COL_GREEN};
+            background: {COL_BTN_ACTIVE_BG};
+            color: {COL_BTN_ACTIVE_TEXT};
+            border: 1px solid {COL_BTN_ACTIVE_TEXT};
             border-radius: 6px;
             padding: 6px 14px;
             font-size: 12px;
             font-weight: bold;
         }}
-        QPushButton:hover {{ background: {COL_GREEN_MID}; }}
+        QPushButton:hover {{ background: #24588f; }}
     """
 
 
@@ -700,7 +708,7 @@ class HolterReplayPanel(QWidget):
         # Scrub slider row
         slider_row = QHBoxLayout()
         self._time_start_label = QLabel("00:00:00")
-        self._time_start_label.setStyleSheet(f"color:{COL_GREEN};font-family:monospace;font-size:12px;border:none;")
+        self._time_start_label.setStyleSheet(f"color:{COL_TIMESTAMP};font-family:monospace;font-size:12px;border:none;")
         slider_row.addWidget(self._time_start_label)
         self._slider = QSlider(Qt.Horizontal)
         self._slider.setRange(0, int(self.duration_sec))
@@ -713,7 +721,7 @@ class HolterReplayPanel(QWidget):
         self._slider.valueChanged.connect(self._on_slider)
         slider_row.addWidget(self._slider, 1)
         self._pos_label = QLabel("00:00:00")
-        self._pos_label.setStyleSheet(f"color:{COL_GREEN};font-family:monospace;font-size:14px;font-weight:bold;"
+        self._pos_label.setStyleSheet(f"color:{COL_TIMESTAMP};font-family:monospace;font-size:14px;font-weight:bold;"
                                       f"background:{COL_BLACK};padding:4px;border:1px solid {COL_GREEN_DRK};border-radius:4px;border:none;")
         slider_row.addWidget(self._pos_label)
         layout.addLayout(slider_row)
@@ -779,9 +787,9 @@ class HolterReplayPanel(QWidget):
                      "Parallel Ruler", "Magnifying Glass", "Gain Settings",
                      "Paper speed:25mm/s", "Add Event(space)", "Adjust strip position", "Strip Length:10s"]:
             tbtn = QPushButton(tool)
-            tbtn.setStyleSheet(f"QPushButton{{background:{COL_DARK};color:{COL_GREEN};border:1px solid {COL_GREEN_DRK};"
+            tbtn.setStyleSheet(f"QPushButton{{background:{COL_DARK};color:{COL_TEXT};border:1px solid {COL_GREEN_DRK};"
                                f"border-radius:3px;padding:3px 6px;font-size:10px;}}"
-                               f"QPushButton:hover{{background:{COL_GREEN_DRK};color:{COL_WHITE};}}")
+                               f"QPushButton:hover{{background:#202020;color:{COL_WHITE};}}")
             tbtn.clicked.connect(lambda _, t=tool, b=tbtn: self._set_tool_mode(t, b))
             toolbar_layout.addWidget(tbtn)
             self._tool_btns[tool] = tbtn
@@ -973,10 +981,21 @@ class LorenzCanvas(QWidget):
             py = int(h - 10 - (val_y - mn) / rng * (h - 20))
             return px, py
 
-        pen = QPen(QColor(COL_GREEN))
+        if len(self._x) >= 2:
+            tpen = QPen(QColor(COL_WAVE_RED))
+            tpen.setWidth(1)
+            painter.setPen(tpen)
+            prev = None
+            for x, y in zip(self._x, self._y):
+                px, py = to_px(x, y)
+                if prev is not None:
+                    painter.drawLine(prev[0], prev[1], px, py)
+                prev = (px, py)
+
+        pen = QPen(QColor(COL_GREEN_MID))
         pen.setWidth(1)
         painter.setPen(pen)
-        brush = QBrush(QColor(COL_GREEN))
+        brush = QBrush(QColor(COL_GREEN_MID))
         painter.setBrush(brush)
         for x, y in zip(self._x, self._y):
             px, py = to_px(x, y)
@@ -1038,20 +1057,25 @@ class ECGStripCanvas(QWidget):
 
     def mouseReleaseEvent(self, event):
         if self._mode == "Magnifying Glass":
-            self._start_pos = None
-            self._curr_pos = None
+            # Keep selection after mouse release so magnifier stays visible.
+            if self._start_pos is None:
+                self._start_pos = event.pos()
+            self._curr_pos = event.pos()
             self.update()
 
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.fillRect(self.rect(), QColor(COL_BLACK))
-        grid_pen = QPen(QColor(COL_GREEN_DRK))
-        grid_pen.setWidth(1)
-        painter.setPen(grid_pen)
         w, h = self.width(), self.height()
+        minor_pen = QPen(QColor(COL_GRID_MINOR))
+        minor_pen.setWidth(1)
+        major_pen = QPen(QColor(COL_GRID_MAJOR))
+        major_pen.setWidth(1)
         for gx in range(0, w, 20):
+            painter.setPen(major_pen if gx % 100 == 0 else minor_pen)
             painter.drawLine(gx, 0, gx, h)
         for gy in range(0, h, 20):
+            painter.setPen(major_pen if gy % 100 == 0 else minor_pen)
             painter.drawLine(0, gy, w, gy)
 
         if self._data.size < 2:
@@ -1089,10 +1113,45 @@ class ECGStripCanvas(QWidget):
             ms = (dx / w) * (len(d) / 500.0) * 1000 if len(d)>0 else 0
             painter.drawText(min(self._start_pos.x(), self._curr_pos.x()) + dx//2, 12, f"{ms:.0f} ms")
         elif self._mode == "Magnifying Glass" and self._start_pos and self._curr_pos:
-            painter.setPen(QPen(QColor("#FFFFFF"), 1, Qt.DotLine))
-            painter.setBrush(QColor(255, 255, 255, 30))
-            rx, ry, rw, rh = min(self._start_pos.x(), self._curr_pos.x()), min(self._start_pos.y(), self._curr_pos.y()), abs(self._curr_pos.x() - self._start_pos.x()), abs(self._curr_pos.y() - self._start_pos.y())
+            painter.setPen(QPen(QColor(COL_YELLOW), 1, Qt.DashLine))
+            painter.setBrush(QColor(245, 197, 24, 30))
+            rx = min(self._start_pos.x(), self._curr_pos.x())
+            ry = min(self._start_pos.y(), self._curr_pos.y())
+            rw = max(8, abs(self._curr_pos.x() - self._start_pos.x()))
+            rh = max(8, abs(self._curr_pos.y() - self._start_pos.y()))
             painter.drawRect(rx, ry, rw, rh)
+
+            # Magnifier inset (zoomed waveform from selected x-range)
+            x0 = max(0, min(rx, w - 1))
+            x1 = max(0, min(rx + rw, w - 1))
+            i0 = int((x0 / max(1, w - 1)) * (len(d) - 1))
+            i1 = int((x1 / max(1, w - 1)) * (len(d) - 1))
+            if i1 > i0 + 2:
+                sub = d[i0:i1 + 1]
+                inset_w = min(260, max(140, rw * 2))
+                inset_h = min(120, max(70, rh * 2))
+                inset_x = min(w - inset_w - 8, rx + 10)
+                inset_y = max(6, ry - inset_h - 10)
+
+                painter.setPen(QPen(QColor("#3399ff"), 1))
+                painter.setBrush(QColor(8, 8, 8, 220))
+                painter.drawRect(inset_x, inset_y, inset_w, inset_h)
+                painter.setPen(QPen(QColor(COL_GRID_MINOR), 1))
+                for gx in range(inset_x, inset_x + inset_w, 20):
+                    painter.drawLine(gx, inset_y, gx, inset_y + inset_h)
+                for gy in range(inset_y, inset_y + inset_h, 20):
+                    painter.drawLine(inset_x, gy, inset_x + inset_w, gy)
+
+                p = QPen(QColor(self._color))
+                p.setWidthF(max(1.2, self._pen_width * 1.6))
+                painter.setPen(p)
+                sub_x_scale = inset_w / max(1, len(sub) - 1)
+                for i in range(1, len(sub)):
+                    xx1 = int(inset_x + (i - 1) * sub_x_scale)
+                    yy1 = int(inset_y + inset_h - ((sub[i-1] - mn) / rng * inset_h))
+                    xx2 = int(inset_x + i * sub_x_scale)
+                    yy2 = int(inset_y + inset_h - ((sub[i] - mn) / rng * inset_h))
+                    painter.drawLine(xx1, yy1, xx2, yy2)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1257,12 +1316,12 @@ class HolterWaveGridPanel(QFrame):
         for idx, lead in enumerate(self.LEADS):
             card = QFrame()
             # Use a darker green for borders to make the wave pop
-            card.setStyleSheet(f"QFrame{{background:{COL_BLACK};border:1px solid #004400;border-radius:6px;}}")
+            card.setStyleSheet(f"QFrame{{background:{COL_GRAY};border:1px solid {COL_GREEN_DRK};border-radius:6px;}}")
             cl = QVBoxLayout(card)
             cl.setContentsMargins(4, 2, 4, 2)
             cl.setSpacing(0)
             lbl = QLabel(lead)
-            lbl.setStyleSheet(f"color:#00AA00;font-size:11px;font-weight:bold;border:none;padding-left:4px;")
+            lbl.setStyleSheet(f"color:{COL_GREEN};font-size:11px;font-weight:bold;border:none;padding-left:4px;")
             cl.addWidget(lbl)
             plot = pg.PlotWidget()
             plot.setMenuEnabled(False)
@@ -1270,7 +1329,7 @@ class HolterWaveGridPanel(QFrame):
             plot.hideButtons()
             plot.setBackground(COL_BLACK)
             # Use a more subtle grid
-            plot.showGrid(x=True, y=True, alpha=0.1)
+            plot.showGrid(x=True, y=True, alpha=0.25)
             plot.getAxis("left").setStyle(showValues=False)
             plot.getAxis("bottom").setStyle(showValues=False)
             plot.getAxis("left").setPen(pg.mkPen(color='#004400'))
@@ -1281,7 +1340,7 @@ class HolterWaveGridPanel(QFrame):
                 plot.setYRange(0, 4096, padding=0)
             plot.setMinimumHeight(100) # Taller strips for better visibility of III/aVR
             # Set wave thickness to 0.7mm (approx 0.7 pixels for standard displays)
-            curve = plot.plot(pen=pg.mkPen(COL_GREEN, width=0.7))
+            curve = plot.plot(pen=pg.mkPen(COL_WAVE_ORANGE, width=0.8))
             cl.addWidget(plot, 1)
             self._lead_widgets.append((curve, plot))
             self.grid_layout.addWidget(card)
