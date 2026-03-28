@@ -776,7 +776,7 @@ class HolterReplayPanel(QWidget):
         self._tool_btns = {}
         for tool in ["Patient information", "Full Disc.", "Goto Template", "Measuring Ruler",
                      "Parallel Ruler", "Magnifying Glass", "Gain Settings",
-                     "Paper speed:25mm/s", "Add Event(space)", "Adjust strip position", "Strip Length:7s"]:
+                     "Paper speed:25mm/s", "Add Event(space)", "Adjust strip position", "Strip Length:10s"]:
             tbtn = QPushButton(tool)
             tbtn.setStyleSheet(f"QPushButton{{background:{COL_DARK};color:{COL_GREEN};border:1px solid {COL_GREEN_DRK};"
                                f"border-radius:3px;padding:3px 6px;font-size:10px;}}"
@@ -1162,7 +1162,7 @@ class HolterWaveGridPanel(QFrame):
         super().__init__(parent)
         self.live_source = live_source
         self.replay_engine = replay_engine
-        self.window_sec = 8.0
+        self.window_sec = 10.0
         self._lead_widgets = []
         self._replay_buffer = None
         self.setStyleSheet(f"QFrame{{background:{COL_BLACK};border:1px solid {COL_GREEN_DRK};border-radius:12px;}}")
@@ -1179,7 +1179,7 @@ class HolterWaveGridPanel(QFrame):
         header = QHBoxLayout()
         title = QLabel("12‑Lead Live Workspace")
         title.setStyleSheet(f"color:{COL_GREEN};font-size:16px;font-weight:bold;border:none;")
-        subtitle = QLabel("Professional Holter view with synchronized moving strips.")
+        subtitle = QLabel("Professional Comphrensive ECG Analysis view with synchronized moving strips.")
         subtitle.setStyleSheet(f"color:{COL_GREEN_DRK};font-size:11px;font-weight:bold;border:none;")
         hcol = QVBoxLayout()
         hcol.addWidget(title)
@@ -1235,8 +1235,11 @@ class HolterWaveGridPanel(QFrame):
             plot.getAxis("bottom").setStyle(showValues=False)
             plot.getAxis("left").setPen(pg.mkPen(color='#004400'))
             plot.getAxis("bottom").setPen(pg.mkPen(color='#004400'))
-            plot.setYRange(0, 4096, padding=0)
-            plot.setMinimumHeight(80) # Taller strips for 12:1 view
+            if lead == "aVR":
+                plot.setYRange(0, -4096, padding=0)
+            else:
+                plot.setYRange(0, 4096, padding=0)
+            plot.setMinimumHeight(100) # Taller strips for better visibility of III/aVR
             # Set wave thickness to 0.7mm (approx 0.7 pixels for standard displays)
             curve = plot.plot(pen=pg.mkPen(COL_GREEN, width=0.7))
             cl.addWidget(plot, 1)
@@ -1341,7 +1344,7 @@ class HolterInsightPanel(QFrame):
             f"Interpretation:\n"
             f"The recording demonstrates a {rhythm}. Key events: {top}\n\n"
             f"Suggested final report wording:\n"
-            f'"Holter monitoring for {name} shows {rhythm} with an average heart rate of '
+            f'"Comphrensive ECG Analysis monitoring for {name} shows {rhythm} with an average heart rate of '
             f'{avg_hr:.0f} bpm. The minimum recorded rate was {min_hr:.0f} bpm and the '
             f'maximum recorded rate was {max_hr:.0f} bpm. Overall signal quality was '
             f'{quality:.1f}%, enabling comprehensive review of the 12-lead trends and event strips."'
@@ -2146,7 +2149,7 @@ class HolterMainWindow(QDialog):
                  live_source=None,
                  duration_hours: int = 24):
         super().__init__(parent)
-        self.setWindowTitle("Holter ECG Monitor & Analysis")
+        self.setWindowTitle("Comphrensive ECG Analysis Monitor & Analysis")
         self.setMinimumSize(1100, 750)
 
         screen = QApplication.primaryScreen()
@@ -2257,7 +2260,7 @@ class HolterMainWindow(QDialog):
         tb_layout = QHBoxLayout(title_bar)
         tb_layout.setContentsMargins(14, 0, 14, 0)
         tb_layout.setSpacing(14)
-        app_title = QLabel("HOLTER ECG ANALYSIS SUITE")
+        app_title = QLabel("COMPHRENSIVE ECG ANALYSIS SUITE")
         app_title.setStyleSheet(f"color:{COL_GREEN};font-size:18px;font-weight:bold;border:none;")
         tb_layout.addWidget(app_title)
         sep_v = QLabel("|")
@@ -2437,7 +2440,7 @@ class HolterMainWindow(QDialog):
         if self._replay_engine:
             self._replay_engine.seek(target_sec)
             try:
-                data = self._replay_engine.get_all_leads_data(window_sec=8.0)
+                data = self._replay_engine.get_all_leads_data(window_sec=10.0)
                 if hasattr(self, '_wave_panel'):
                     self._wave_panel.set_replay_frame(data)
                 
@@ -2517,7 +2520,7 @@ class HolterMainWindow(QDialog):
             
             # Show dialog to collect patient info AFTER recording
             dialog = HolterStartDialog(self, patient_info=self.patient_info or {}, output_dir=self.session_dir)
-            dialog.setWindowTitle("Save Holter Recording Details")
+            dialog.setWindowTitle("Save Comphrensive ECG Analysis Recording Details")
             if dialog.exec_() == QDialog.Accepted:
                 patient_info, dur, out_dir = dialog.get_result()
                 summary['patient_info'] = patient_info
@@ -2530,7 +2533,7 @@ class HolterMainWindow(QDialog):
                     print(f"Failed to save patient.json: {e}")
 
             QMessageBox.information(self, "Recording Complete",
-                                    f"Holter recording saved to:\n{summary.get('session_dir', '')}")
+                                    f"Comphrensive ECG Analysis recording saved to:\n{summary.get('session_dir', '')}")
             self.load_completed_session(summary.get('session_dir', ''), summary.get('patient_info', {}))
             
             # Auto-generate report when recording is stopped
@@ -2538,7 +2541,7 @@ class HolterMainWindow(QDialog):
 
     def _generate_report(self):
         from PyQt5.QtWidgets import QProgressDialog
-        progress = QProgressDialog("Generating Holter Report...", None, 0, 0, self)
+        progress = QProgressDialog("Generating Comphrensive ECG Analysis Report...", None, 0, 0, self)
         progress.setWindowModality(Qt.WindowModal)
         progress.setStyleSheet(f"QProgressDialog{{background:{COL_DARK};color:{COL_GREEN};}}")
         progress.show()
@@ -2557,12 +2560,12 @@ class HolterMainWindow(QDialog):
                 h_pat = self.patient_info.copy() if self.patient_info else {}
                 if 'patient_name' not in h_pat and 'name' in h_pat:
                     h_pat['patient_name'] = h_pat['name']
-                append_history_entry(h_pat, path, report_type="Holter")
+                append_history_entry(h_pat, path, report_type="Comphrensive ECG Analysis")
             except Exception as h_err:
                 print(f"Failed to append Holter history: {h_err}")
                 
             progress.close()
-            QMessageBox.information(self, "Report Generated", f"Holter report saved:\n{path}")
+            QMessageBox.information(self, "Report Generated", f"Comphrensive ECG Analysis report saved:\n{path}")
         except Exception as e:
             progress.close()
             QMessageBox.warning(self, "Report Error", f"Could not generate report:\n{e}")
