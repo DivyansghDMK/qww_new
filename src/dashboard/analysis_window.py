@@ -64,115 +64,114 @@ class ECGAnalysisWindow(QDialog):
 
         self.setStyleSheet("""
             QDialog {
-                background: #0d0d1a;
-                color: #ffffff;
+                background: #080808;
+                color: #e0e0e0;
             }
             QFrame#topbar {
-                background: #12122a;
+                background: #1a1a1a;
                 border: none;
-                border-bottom: 2px solid #ff6600;
+                border-bottom: 2px solid #2a2a2a;
                 border-radius: 0px;
             }
             QFrame#plotpanel {
-                background: #0d0d1a;
+                background: #080808;
                 border: none;
                 border-radius: 0px;
             }
             QFrame#bottompanel {
-                background: #12122a;
-                border: 1px solid #2a2a4a;
+                background: #1a1a1a;
+                border: 1px solid #2a2a2a;
                 border-radius: 10px;
             }
             QFrame#leadbox {
-                background: #111130;
-                border: 1px solid #2a2a5a;
+                background: #080808;
+                border: 1px solid #1a3a1a;
                 border-radius: 6px;
             }
             QLabel {
-                color: #e0e0ff;
+                color: #e0e0e0;
                 font-size: 11px;
                 background: transparent;
                 border: none;
             }
             QLabel#leadlabel {
-                color: #ff6600;
+                color: #e06020;
                 font-size: 12px;
                 font-weight: bold;
                 background: transparent;
                 border: none;
             }
             QPushButton {
-                background: #1e1e3e;
-                color: #e0e0ff;
-                border: 1px solid #3a3a6a;
+                background: #1a1a1a;
+                color: #e0e0e0;
+                border: 1px solid #2a2a2a;
                 border-radius: 6px;
                 padding: 6px 14px;
                 font-size: 11px;
                 font-weight: 600;
             }
             QPushButton:hover {
-                background: #2a2a5a;
-                border-color: #ff6600;
+                background: #202020;
+                border-color: #1e4a7a;
                 color: white;
             }
             QPushButton#primary {
-                background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-                    stop:0 #ff6600, stop:1 #e65c00);
-                color: white;
-                border: none;
+                background: #1e4a7a;
+                color: #6aacf5;
+                border: 1px solid #6aacf5;
                 border-radius: 6px;
                 font-weight: bold;
             }
-            QPushButton#primary:hover { background: #ff7a26; }
+            QPushButton#primary:hover { background: #24588f; }
             QPushButton#apibtn {
-                background: #1a3a5a;
-                color: #7ab8f5;
-                border: 1px solid #2a6aaa;
+                background: #1e4a7a;
+                color: #6aacf5;
+                border: 1px solid #6aacf5;
                 border-radius: 6px;
             }
-            QPushButton#apibtn:hover { background: #244a6a; }
+            QPushButton#apibtn:hover { background: #24588f; }
             QComboBox {
-                background: #1e1e3e;
-                color: #e0e0ff;
-                border: 1px solid #3a3a6a;
+                background: #111111;
+                color: #e0e0e0;
+                border: 1px solid #2a2a2a;
                 border-radius: 6px;
                 padding: 5px 8px;
                 font-size: 11px;
             }
             QComboBox::drop-down { border: none; }
             QComboBox QAbstractItemView {
-                background: #1e1e3e;
-                color: #e0e0ff;
-                selection-background-color: #ff6600;
+                background: #111111;
+                color: #e0e0e0;
+                selection-background-color: #1e4a7a;
             }
             QLineEdit {
-                background: #1e1e3e;
-                color: #e0e0ff;
-                border: 1px solid #3a3a6a;
+                background: #111111;
+                color: #e0e0e0;
+                border: 1px solid #2a2a2a;
                 border-radius: 6px;
                 padding: 5px 8px;
                 font-size: 11px;
             }
             QTextEdit {
-                background: #1e1e3e;
-                color: #e0e0ff;
-                border: 1px solid #3a3a6a;
+                background: #111111;
+                color: #e0e0e0;
+                border: 1px solid #2a2a2a;
                 border-radius: 6px;
                 padding: 5px;
                 font-size: 11px;
             }
             QTableWidget {
-                background: #111130;
-                color: #e0e0ff;
-                border: 1px solid #2a2a5a;
-                gridline-color: #1e1e4a;
-                selection-background-color: #ff6600;
+                background: #111111;
+                color: #e0e0e0;
+                border: 1px solid #2a2a2a;
+                gridline-color: #1a4a1a;
+                selection-background-color: #1e4a7a;
                 selection-color: white;
                 border-radius: 4px;
             }
             QHeaderView::section {
-                background: #1e1e3e;
-                color: #ff6600;
+                background: #1a1a1a;
+                color: #f0a030;
                 border: none;
                 padding: 6px;
                 font-size: 11px;
@@ -180,26 +179,26 @@ class ECGAnalysisWindow(QDialog):
             }
             QSlider::groove:horizontal {
                 height: 4px;
-                background: #2a2a5a;
+                background: #2a2a2a;
                 border-radius: 2px;
             }
             QSlider::sub-page:horizontal {
-                background: #ff6600;
+                background: #1e4a7a;
                 border-radius: 2px;
             }
             QSlider::handle:horizontal {
                 width: 14px;
                 height: 14px;
-                background: #ff6600;
+                background: #6aacf5;
                 margin: -5px 0;
                 border-radius: 7px;
             }
             QScrollBar:vertical {
-                background: #1e1e3e;
+                background: #1a1a1a;
                 width: 8px;
             }
             QScrollBar::handle:vertical {
-                background: #3a3a7a;
+                background: #2a2a2a;
                 border-radius: 4px;
             }
         """)
@@ -316,7 +315,7 @@ class ECGAnalysisWindow(QDialog):
 
         # Controls bar
         ctrl_frame = QFrame()
-        ctrl_frame.setStyleSheet("background:#12122a;border-radius:8px;border:1px solid #2a2a4a;")
+        ctrl_frame.setStyleSheet("background:#1a1a1a;border-radius:8px;border:1px solid #2a2a2a;")
         controls = QHBoxLayout(ctrl_frame)
         controls.setContentsMargins(10, 6, 10, 6)
         controls.setSpacing(8)
@@ -333,7 +332,7 @@ class ECGAnalysisWindow(QDialog):
         controls.addSpacing(10)
 
         lbl_w = QLabel("Window:")
-        lbl_w.setStyleSheet("color:#aaaacc;border:none;background:transparent;")
+        lbl_w.setStyleSheet("color:#888888;border:none;background:transparent;")
         controls.addWidget(lbl_w)
         self.window_combo = QComboBox()
         self.window_combo.addItems(["1.0 s", "2.0 s", "3.0 s", "5.0 s", "10.0 s"])
@@ -343,7 +342,7 @@ class ECGAnalysisWindow(QDialog):
         controls.addWidget(self.window_combo)
 
         lbl_s = QLabel("Step:")
-        lbl_s.setStyleSheet("color:#aaaacc;border:none;background:transparent;")
+        lbl_s.setStyleSheet("color:#888888;border:none;background:transparent;")
         controls.addWidget(lbl_s)
         self.step_combo = QComboBox()
         self.step_combo.addItems(["0.2 s", "0.5 s", "1.0 s"])
@@ -354,7 +353,7 @@ class ECGAnalysisWindow(QDialog):
 
         controls.addSpacing(14)
         self.frame_label = QLabel("Frame: 0.00s – 2.00s")
-        self.frame_label.setStyleSheet("color:#ff9955;font-weight:bold;border:none;background:transparent;")
+        self.frame_label.setStyleSheet("color:#f0a030;font-weight:bold;border:none;background:transparent;")
         controls.addWidget(self.frame_label)
         controls.addStretch()
         v.addWidget(ctrl_frame)
@@ -367,10 +366,22 @@ class ECGAnalysisWindow(QDialog):
         self.timeline.setFixedHeight(18)
         v.addWidget(self.timeline)
 
+        hint = QLabel(
+            "💡 First time? Load a report from dropdown, or enter API ID and click Fetch. "
+            "Use Prev/Next to move through ECG. Mark ① Start then ② End + Save."
+        )
+        hint.setStyleSheet(
+            "color:#7a9fbf;font-size:10px;background:#0a1a2a;"
+            "border:1px solid #1a3a5a;border-radius:4px;padding:4px 10px;"
+        )
+        hint.setWordWrap(True)
+        hint.setFixedHeight(32)
+        v.addWidget(hint)
+
         # Lead grid (3 rows x 4 cols)
         from PyQt5.QtWidgets import QGridLayout, QWidget as _QW
         grid_widget = _QW()
-        grid_widget.setStyleSheet("background:#0d0d1a;")
+        grid_widget.setStyleSheet("background:#080808;")
         self._lead_grid = QGridLayout(grid_widget)
         self._lead_grid.setContentsMargins(0, 0, 0, 0)
         self._lead_grid.setSpacing(5)
@@ -402,11 +413,11 @@ class ECGAnalysisWindow(QDialog):
                 lbl.setFixedHeight(18)
                 cell_lay.addWidget(lbl)
 
-                fig = Figure(facecolor='#111130')
+                fig = Figure(facecolor='#080808')
                 fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
                 canvas = FigureCanvas(fig)
-                canvas.setStyleSheet("background:#111130;border:none;")
-                ax = fig.add_axes([0, 0, 1, 1], facecolor='#111130')
+                canvas.setStyleSheet("background:#080808;border:none;")
+                ax = fig.add_axes([0, 0, 1, 1], facecolor='#080808')
                 ax.set_axis_off()
 
                 cell_lay.addWidget(canvas, stretch=1)
@@ -437,7 +448,7 @@ class ECGAnalysisWindow(QDialog):
         av.setSpacing(5)
 
         title_lbl = QLabel("Manual Arrhythmia Marking")
-        title_lbl.setStyleSheet("color:#ff9955;font-size:12px;font-weight:bold;border:none;background:transparent;")
+        title_lbl.setStyleSheet("color:#f0a030;font-size:12px;font-weight:bold;border:none;background:transparent;")
         av.addWidget(title_lbl)
 
         row1 = QHBoxLayout()
@@ -462,10 +473,11 @@ class ECGAnalysisWindow(QDialog):
         av.addWidget(self.notes_input)
 
         row2 = QHBoxLayout()
-        self.mark_start_btn = QPushButton("Mark Start")
+        self.mark_start_btn = QPushButton("① Mark Start")
         self.mark_start_btn.clicked.connect(self.mark_start)
-        self.mark_end_btn = QPushButton("Mark End + Save")
+        self.mark_end_btn = QPushButton("② Mark End + Save")
         self.mark_end_btn.clicked.connect(self.mark_end_and_save)
+        self.mark_end_btn.setEnabled(False)
         self.auto_detect_btn = QPushButton("Automatic Detection")
         self.auto_detect_btn.clicked.connect(self.run_automatic_detection)
         self.delete_mark_btn = QPushButton("Delete Selected")
@@ -486,10 +498,29 @@ class ECGAnalysisWindow(QDialog):
         self.annotation_table.setMaximumHeight(120)
         av.addWidget(self.annotation_table)
 
-        h.addWidget(mark_box)
+        h.addWidget(mark_box, stretch=2)
 
+        right_col = QVBoxLayout()
+        right_col.setSpacing(4)
+
+        metrics_lbl = QLabel("ECG Metrics")
+        metrics_lbl.setStyleSheet("color:#f0a030;font-size:12px;font-weight:bold;border:none;background:transparent;")
+        right_col.addWidget(metrics_lbl)
         self.metrics_table = QTableWidget(0, 2)
+        self.metrics_table.setHorizontalHeaderLabels(["Parameter", "Value"])
+        self.metrics_table.horizontalHeader().setStretchLastSection(True)
+        self.metrics_table.setMaximumHeight(130)
+        right_col.addWidget(self.metrics_table)
+
+        findings_lbl = QLabel("Clinical Findings")
+        findings_lbl.setStyleSheet("color:#f0a030;font-size:12px;font-weight:bold;border:none;background:transparent;")
+        right_col.addWidget(findings_lbl)
         self.findings_text = QTextEdit()
+        self.findings_text.setReadOnly(True)
+        self.findings_text.setMaximumHeight(80)
+        right_col.addWidget(self.findings_text)
+
+        h.addLayout(right_col, stretch=1)
 
         return frame
 
@@ -540,6 +571,10 @@ class ECGAnalysisWindow(QDialog):
         self._load_manual_annotations()
 
         self.frame_start_sample = 0
+        self.pending_mark_start_sec = None
+        self.mark_end_btn.setEnabled(False)
+        self.mark_status_lbl.setText("No active mark")
+        self.mark_status_lbl.setStyleSheet("color:#7a9f7a;border:none;background:transparent;")
         self._update_timeline_limits()
         self._render_current_frame()
 
@@ -742,8 +777,8 @@ class ECGAnalysisWindow(QDialog):
         end_sec = en / self.sampling_rate if self.sampling_rate > 0 else 0.0
         self.frame_label.setText(f"Frame: {start_sec:.2f}s \u2013 {end_sec:.2f}s")
 
-        ECG_COLOR = '#ff8844'
-        ANNOT_COLOR = '#ff4444'
+        ECG_COLOR = '#e06020'
+        ANNOT_COLOR = '#ff3333'
 
         for lead in self.LEADS:
             ax = self._lead_axes.get(lead)
@@ -754,12 +789,12 @@ class ECGAnalysisWindow(QDialog):
 
             ax.clear()
             ax.set_axis_off()
-            ax.set_facecolor('#111130')
+            ax.set_facecolor('#080808')
             # Fixed ADC Y-range 0-4096 for all leads
             ax.set_ylim(0, 4096)
             ax.set_xlim(start_sec, end_sec if end_sec > start_sec else start_sec + 1)
-            # Subtle background grid
-            ax.grid(True, color='#1e1e50', linewidth=0.4, linestyle='-', alpha=0.7)
+            # ECG paper style green grid
+            ax.grid(True, color='#0a2a0a', linewidth=0.4, linestyle='-', alpha=0.9)
 
             data = self.lead_data.get(lead, np.array([]))
             if len(data) > 0 and en > st:
@@ -769,7 +804,7 @@ class ECGAnalysisWindow(QDialog):
                 ax.set_xlim(start_sec, end_sec)
             else:
                 ax.text(0.5, 0.5, 'No data', ha='center', va='center',
-                        transform=ax.transAxes, color='#555588', fontsize=9)
+                        transform=ax.transAxes, color='#666666', fontsize=9)
 
             # Annotation span overlays
             for ann in self.manual_annotations:
@@ -790,7 +825,11 @@ class ECGAnalysisWindow(QDialog):
     # --------------------------- manual annotations ---------------------------
     def mark_start(self):
         self.pending_mark_start_sec = self.frame_start_sample / max(self.sampling_rate, 1.0)
-        self.mark_status_lbl.setText(f"Start marked at {self.pending_mark_start_sec:.2f}s")
+        self.mark_end_btn.setEnabled(True)
+        self.mark_status_lbl.setText(
+            f"✅ Start marked at {self.pending_mark_start_sec:.2f}s  →  Now navigate to end, then click ② Mark End + Save"
+        )
+        self.mark_status_lbl.setStyleSheet("color:#f5c518;border:none;background:transparent;")
 
     def mark_end_and_save(self):
         if self.pending_mark_start_sec is None:
@@ -815,7 +854,9 @@ class ECGAnalysisWindow(QDialog):
         }
         self.manual_annotations.append(ann)
         self.pending_mark_start_sec = None
-        self.mark_status_lbl.setText("Saved annotation")
+        self.mark_end_btn.setEnabled(False)
+        self.mark_status_lbl.setText(f"✅ Annotation saved: {arr_type}")
+        self.mark_status_lbl.setStyleSheet("color:#7a9f7a;border:none;background:transparent;")
         self._refresh_annotation_table()
         self._persist_annotations_in_report()
         self._render_current_frame()
@@ -852,37 +893,41 @@ class ECGAnalysisWindow(QDialog):
         if not self.current_report:
             QMessageBox.warning(self, "Detection", "No report loaded.")
             return
-
-        # Use the lead selected in the marking combo, fallback to Lead II
-        lead_name = self.mark_lead_combo.currentText()
-        if lead_name == "All Leads":
-            lead_name = 'II'
-            
-        data = self.lead_data.get(lead_name, np.array([]))
-        if len(data) == 0:
-            # Try to find any lead with data
-            for l in self.LEADS:
-                if len(self.lead_data.get(l, [])) > 0:
-                    lead_name = l
-                    data = self.lead_data[l]
-                    break
-            
-            if len(data) == 0:
-                QMessageBox.warning(self, "Detection", "No ECG data available for analysis.")
-                return
-
-        # Get the current window data
-        ws = self._window_samples()
-        st = self.frame_start_sample
-        en = min(len(data), st + ws)
-        
-        # Analyze current visible segment
-        segment = data[st:en]
-        if len(segment) < self.sampling_rate * 1.5: # At least 1.5 seconds
-            QMessageBox.warning(self, "Detection", "Visible window too short for accurate detection (need >1.5s).")
-            return
+        self.auto_detect_btn.setText("⏳ Analyzing...")
+        self.auto_detect_btn.setEnabled(False)
+        from PyQt5.QtWidgets import QApplication
+        QApplication.processEvents()
 
         try:
+            # Use the lead selected in the marking combo, fallback to Lead II
+            lead_name = self.mark_lead_combo.currentText()
+            if lead_name == "All Leads":
+                lead_name = 'II'
+                
+            data = self.lead_data.get(lead_name, np.array([]))
+            if len(data) == 0:
+                # Try to find any lead with data
+                for l in self.LEADS:
+                    if len(self.lead_data.get(l, [])) > 0:
+                        lead_name = l
+                        data = self.lead_data[l]
+                        break
+                
+                if len(data) == 0:
+                    QMessageBox.warning(self, "Detection", "No ECG data available for analysis.")
+                    return
+
+            # Get the current window data
+            ws = self._window_samples()
+            st = self.frame_start_sample
+            en = min(len(data), st + ws)
+            
+            # Analyze current visible segment
+            segment = data[st:en]
+            if len(segment) < self.sampling_rate * 1.5: # At least 1.5 seconds
+                QMessageBox.warning(self, "Detection", "Visible window too short for accurate detection (need >1.5s).")
+                return
+
             if PQRSTAnalyzer is None or ArrhythmiaDetector is None:
                 QMessageBox.critical(self, "Error", "ECG analysis modules not loaded. Please check your installation.")
                 return
@@ -945,6 +990,9 @@ class ECGAnalysisWindow(QDialog):
             import traceback
             traceback.print_exc()
             QMessageBox.critical(self, "Error", f"Detection failed: {str(e)}")
+        finally:
+            self.auto_detect_btn.setText("Automatic Detection")
+            self.auto_detect_btn.setEnabled(True)
 
     # --------------------------- actions ---------------------------
     # --------------------------- API actions ---------------------------

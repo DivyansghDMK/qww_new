@@ -21,7 +21,6 @@ class ArrhythmiaDetector:
         q_peaks    = np.array(analysis.get('q_peaks', []), dtype=int)
         s_peaks    = np.array(analysis.get('s_peaks', []), dtype=int)
         t_peaks    = np.array(analysis.get('t_peaks', []), dtype=int)
-        lead_name  = str(analysis.get('lead_name', '') or '').upper()
         signal_arr = np.asarray(signal, dtype=float) if signal is not None else np.array([])
 
         try:
@@ -126,11 +125,11 @@ class ArrhythmiaDetector:
         _try("Left Bundle Branch Block (LBBB)",
              _m("_is_left_bundle_branch_block"), qrs_duration, pr_interval, rr_ms, signal_arr, q_peaks, r_peaks)
         _try("Right Bundle Branch Block (RBBB)",
-             _m("_is_right_bundle_branch_block"), qrs_duration, pr_interval, rr_ms, signal_arr, r_peaks)
+             self._is_right_bundle_branch_block, qrs_duration, pr_interval, rr_ms, signal_arr, r_peaks)
         _try("Possible LBBB (single-lead morphology)",
-             _m("_is_lbbb_single_lead"), signal_arr, qrs_duration, r_peaks, s_peaks, lead_name)
+             self._is_lbbb_single_lead, signal_arr, qrs_duration, r_peaks, s_peaks, lead_name)
         _try("Possible RBBB (single-lead morphology)",
-             _m("_is_rbbb_single_lead"), signal_arr, qrs_duration, r_peaks, lead_name)
+             self._is_rbbb_single_lead, signal_arr, qrs_duration, r_peaks, lead_name)
         _try("Left Anterior Fascicular Block (LAFB)",
              _m("_is_left_anterior_fascicular_block"), qrs_duration, hr, signal_arr, r_peaks, s_peaks)
         _try("Left Posterior Fascicular Block (LPFB)",
@@ -152,9 +151,9 @@ class ArrhythmiaDetector:
 
         # Sinus arrhythmias
         _try("Sinus Arrhythmia",
-             _m("_is_sinus_arrhythmia"), rr_ms, hr, p_peaks, r_peaks)
+             self._is_sinus_arrhythmia, rr_ms, hr, p_peaks, r_peaks)
         _try("Asynchronous 75 BPM Rhythm",
-             _m("_is_asynchronous_75_bpm"), hr, rr_ms, p_peaks, r_peaks)
+             self._is_asynchronous_75_bpm, hr, rr_ms, p_peaks, r_peaks)
         missed = self._is_missed_beat(r_peaks, rr_ms, hr)
         if missed:
             arrhythmias.append(missed)
@@ -178,9 +177,9 @@ class ArrhythmiaDetector:
             arrhythmias.append(f"HRV SDNN: {hrv['sdnn_ms']:.1f} ms")
             arrhythmias.append(f"HRV RMSSD: {hrv['rmssd_ms']:.1f} ms")
             arrhythmias.append(f"HRV pNN50: {hrv['pnn50_pct']:.1f}%")
-        _try("QTc Prolongation", _m("_is_qtc_prolonged"), q_peaks, t_peaks, rr_ms)
-        _try("ST Depression / Elevation", _m("_is_st_change"), signal_arr, q_peaks, s_peaks, p_peaks)
-        _try("T-wave Inversion", _m("_is_t_wave_inversion"), signal_arr, t_peaks, r_peaks)
+        _try("QTc Prolongation", self._is_qtc_prolonged, q_peaks, t_peaks, rr_ms)
+        _try("ST Depression / Elevation", self._is_st_change, signal_arr, q_peaks, s_peaks, p_peaks)
+        _try("T-wave Inversion", self._is_t_wave_inversion, signal_arr, t_peaks, r_peaks)
 
         return arrhythmias if arrhythmias else ["Unspecified Irregular Rhythm"]
 
@@ -777,68 +776,3 @@ class ArrhythmiaDetector:
             if np.sign(t_amp) != np.sign(r_amp):
                 inv += 1
         return total >= 3 and inv / total >= 0.5
-
-    def _is_lbbb_single_lead(self, signal, qrs_duration, r_peaks, s_peaks, lead_name):
-        if qrs_duration is None or qrs_duration < 120:
-            return False
-        sig = np.asarray(signal, dtype=float)
-        if sig.size == 0:
-            return False
-        if lead_name in {"V1", "V2", "V3"}:
-            # Dominant S in right precordial leads supports LBBB morphology.
-            r_arr = np.asarray(r_peaks, dtype=int)
-            s_arr = np.asarray(s_peaks, dtype=int)
-            n = min(len(r_arr), len(s_arr), 8)
-            if n < 3:
-                return False
-            dom_s = 0
-            checked = 0
-            for i in range(n):
-                r, s = r_arr[i], s_arr[i]
-                if r >= len(sig) or s >= len(sig):
-                    continue
-                checked += 1
-                if abs(float(sig[s])) > abs(float(sig[r])) * 1.1:
-                    dom_s += 1
-            return checked >= 3 and (dom_s / checked) >= 0.6
-        if lead_name in {"I", "AVL", "V5", "V6"}:
-            # Broad dominant R in lateral leads also supports LBBB.
-            r_arr = np.asarray(r_peaks, dtype=int)
-            if len(r_arr) < 3:
-                return False
-            dom_r = 0
-            checked = 0
-            for r in r_arr[:8]:
-                if r >= len(sig):
-                    continue
-                checked += 1
-                if float(sig[r]) > 0:
-                    dom_r += 1
-            return checked >= 3 and (dom_r / checked) >= 0.7
-        return False
-
-    def _is_rbbb_single_lead(self, signal, qrs_duration, r_peaks, lead_name):
-        if qrs_duration is None or qrs_duration < 120:
-            return False
-        if lead_name not in {"V1", "V2", "V3"}:
-            return False
-        sig = np.asarray(signal, dtype=float)
-        r_arr = np.asarray(r_peaks, dtype=int)
-        if sig.size == 0 or len(r_arr) < 3:
-            return False
-        rsr_count = 0
-        checked = 0
-        for r in r_arr[:8]:
-            st = max(0, r - int(0.03 * self.fs))
-            en = min(len(sig), r + int(0.06 * self.fs))
-            seg = sig[st:en]
-            if len(seg) < 8:
-                continue
-            checked += 1
-            try:
-                pks, _ = find_peaks(seg, distance=max(2, int(0.008 * self.fs)))
-            except Exception:
-                continue
-            if len(pks) >= 2:
-                rsr_count += 1
-        return checked >= 3 and (rsr_count / checked) >= 0.5
