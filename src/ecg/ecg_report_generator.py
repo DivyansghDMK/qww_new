@@ -496,7 +496,7 @@ def calculate_time_window_from_bpm_and_wave_speed(hr_bpm, wave_speed_mm_s, desir
     return calculated_time_window, num_samples
 
 def apply_report_ecg_filters(signal, sampling_rate, settings_manager):
-    from ecg.ecg_filters import apply_ecg_filters, apply_baseline_wander_median_mean
+    from ecg.ecg_filters import apply_ecg_filters_from_settings, stabilize_report_edges
     arr = np.asarray(signal, dtype=float)
     if arr.size < 10:
         return arr
@@ -511,86 +511,10 @@ def apply_report_ecg_filters(signal, sampling_rate, settings_manager):
     window_samples = int(max(1.0, win_sec) * fs)
     if arr.size > window_samples:
         arr = arr[-window_samples:]
-    pad_seconds = 4.0
-    pad_samples = int(pad_seconds * fs)
-    pad = min(pad_samples, max(0, arr.size - 1))
-    if pad > 0:
-        work = np.pad(arr, pad_width=pad, mode="reflect")
-    else:
-        work = arr
-    dft_setting = str(settings_manager.get_setting("filter_dft", "0.5")).strip()
-    emg_setting = str(settings_manager.get_setting("filter_emg", "150")).strip()
-    ac_setting = str(settings_manager.get_setting("filter_ac", "50")).strip()
-    dft_param = dft_setting if dft_setting not in ("off", "") else None
-    emg_param = emg_setting if emg_setting not in ("off", "") else None
-    ac_param = ac_setting if ac_setting not in ("off", "") else None
-    filtered = apply_ecg_filters(
-        work,
-        sampling_rate=fs,
-        ac_filter=ac_param,
-        emg_filter=emg_param,
-        dft_filter=dft_param,
-    )
-    filtered = apply_baseline_wander_median_mean(filtered, fs)
-    try:
-        if filtered.size > 5:
-            from scipy.ndimage import gaussian_filter1d
-            filtered = gaussian_filter1d(filtered, sigma=0.3)
-    except Exception:
-        pass
-    try:
-        if filtered.size > 5:
-            dif = np.diff(filtered, prepend=filtered[0])
-            th = 5.0 * (np.std(dif) + 1e-6)
-            bad = np.where(np.abs(dif) > th)[0]
-            for i in bad:
-                if 1 <= i < filtered.size - 1:
-                    filtered[i] = 0.5 * (filtered[i - 1] + filtered[i + 1])
-    except Exception:
-        pass
-    try:
-        n = filtered.size
-        if n > 50:
-            edge_len = max(50, int(0.10 * n))
-            mid_start = n // 3
-            mid_end = (2 * n) // 3
-            start_std = np.std(np.diff(filtered[:edge_len]))
-            end_std = np.std(np.diff(filtered[-edge_len:]))
-            mid_std = np.std(np.diff(filtered[mid_start:mid_end])) + 1e-6
-            start_trim = int(0.05 * n) if start_std > 1.5 * mid_std else 0
-            end_trim = int(0.05 * n) if end_std > 1.5 * mid_std else 0
-            if start_trim + end_trim < n - 20:
-                filtered = filtered[start_trim:n - end_trim]
-    except Exception:
-        pass
-    if pad > 0 and filtered.size > 2 * pad:
-        filtered = filtered[pad:-pad]
-    try:
-        n2 = filtered.size
-        if n2 > 50:
-            edge_len2 = max(50, int(0.10 * n2))
-            mid_start2 = n2 // 3
-            mid_end2 = (2 * n2) // 3
-            start_std2 = np.std(np.diff(filtered[:edge_len2]))
-            end_std2 = np.std(np.diff(filtered[-edge_len2:]))
-            mid_std2 = np.std(np.diff(filtered[mid_start2:mid_end2])) + 1e-6
-            start_trim2 = int(0.05 * n2) if start_std2 > 1.3 * mid_std2 else 0
-            end_trim2 = int(0.05 * n2) if end_std2 > 1.3 * mid_std2 else 0
-            if start_trim2 + end_trim2 < n2 - 20:
-                filtered = filtered[start_trim2:n2 - end_trim2]
-    except Exception:
-        pass
-    try:
-        n3 = filtered.size
-        if n3 > 100:
-            hard_trim = max(10, int(0.03 * n3))
-            filtered = filtered[hard_trim:n3 - hard_trim]
-    except Exception:
-        pass
-    # NOTE:
-    # Do not force waveform edges to a flat mean value. Edge tapering hides
-    # clinically relevant terminal morphology and can create visible "humps"
-    # before the strip ends. Keep natural morphology after filtering.
+    # Match dashboard/display logic exactly: apply the same filter chain from settings.
+    # Add only light edge stabilization to avoid terminal strip jumps in print output.
+    filtered = apply_ecg_filters_from_settings(arr, sampling_rate=fs, settings_manager=settings_manager)
+    filtered = stabilize_report_edges(filtered, fs)
     return filtered
 
 
