@@ -10,7 +10,8 @@ from scipy.signal import butter, filtfilt
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QGridLayout,
     QSizePolicy, QScrollArea, QGroupBox, QFormLayout, QLineEdit, QComboBox,
-    QMessageBox, QApplication, QDialog, QGraphicsDropShadowEffect, QSlider, QCheckBox
+    QMessageBox, QApplication, QDialog, QGraphicsDropShadowEffect, QSlider, QCheckBox,
+    QTextEdit
 )
 from PyQt5.QtGui import QFont, QColor
 from PyQt5.QtCore import Qt, QTimer
@@ -2258,7 +2259,7 @@ class ExpandedLeadView(QDialog):
     def create_arrhythmia_panel(self, parent_layout):
         """Create the arrhythmia analysis panel"""
         arrhythmia_frame = QFrame()
-        arrhythmia_frame.setFixedHeight(70)
+        arrhythmia_frame.setMinimumHeight(150)
         arrhythmia_frame.setStyleSheet("""
             QFrame {
                 background: white;
@@ -2275,11 +2276,16 @@ class ExpandedLeadView(QDialog):
         title.setStyleSheet("color: #2c3e50; border: none; background: transparent;")
         arrhythmia_layout.addWidget(title)
         
-        self.arrhythmia_list = QLabel("Analyzing...")
-        self.arrhythmia_list.setFont(QFont("Segoe UI", 12, QFont.Bold))
-        self.arrhythmia_list.setStyleSheet("color: #34495e; border: none; background: transparent;")
-        self.arrhythmia_list.setWordWrap(True)
-        self.arrhythmia_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.arrhythmia_list = QTextEdit("Analyzing...")
+        self.arrhythmia_list.setReadOnly(True)
+        self.arrhythmia_list.setFont(QFont("Consolas", 10))
+        self.arrhythmia_list.setStyleSheet("""
+            color: #2c3e50;
+            background: #f8f9fa;
+            border: 1px solid #dcdcdc;
+            border-radius: 6px;
+            padding: 6px;
+        """)
         arrhythmia_layout.addWidget(self.arrhythmia_list, 1)
         
         parent_layout.addWidget(arrhythmia_frame)
@@ -2325,7 +2331,7 @@ class ExpandedLeadView(QDialog):
             print(f" Analyzing arrhythmias for {self.lead_name}: {len(self.ecg_data)} samples, {len(analysis.get('r_peaks', []))} R-peaks detected")
             arrhythmias = self.arrhythmia_detector.detect_arrhythmias(
                 self.ecg_data, 
-                analysis,
+                {**analysis, "lead_name": self.lead_name},
                 has_received_serial_data=has_received_serial_data,
                 min_serial_data_packets=min_serial_data_packets
             )
@@ -2662,8 +2668,17 @@ class ExpandedLeadView(QDialog):
     
     def update_arrhythmia_display(self, arrhythmias):
         """Update the arrhythmia display"""
-        arrhythmia_text = ", ".join(arrhythmias) if arrhythmias else "No specific arrhythmia detected."
-        self.arrhythmia_list.setText(arrhythmia_text)
+        if arrhythmias:
+            unique = []
+            seen = set()
+            for a in arrhythmias:
+                if a not in seen:
+                    unique.append(a)
+                    seen.add(a)
+            arrhythmia_text = "\n".join(f"• {a}" for a in unique)
+        else:
+            arrhythmia_text = "• No specific arrhythmia detected."
+        self.arrhythmia_list.setPlainText(arrhythmia_text)
         
         # Keep parent ECG page's rhythm interpretation in sync for dashboard conclusions
         if hasattr(self, '_parent') and self._parent is not None:
@@ -2675,9 +2690,11 @@ class ExpandedLeadView(QDialog):
         # Color code based on severity
         is_normal = "Normal Sinus Rhythm" in arrhythmia_text
         self.arrhythmia_list.setStyleSheet(f"""
-            color: {'#2ecc71' if is_normal else '#e74c3c'};
-            font-weight: bold;
-            border: none;
+            color: {'#2ecc71' if is_normal else '#b03a2e'};
+            background: #f8f9fa;
+            border: 1px solid #dcdcdc;
+            border-radius: 6px;
+            padding: 6px;
         """)
     
     def update_plot_with_markers(self, analysis):

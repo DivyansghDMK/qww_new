@@ -24,14 +24,16 @@ class ArrhythmiaDetector:
         signal_arr = np.asarray(signal, dtype=float) if signal is not None else np.array([])
 
         try:
-            if has_received_serial_data and len(signal_arr) > 0:
+            if len(signal_arr) > 0:
                 hr = None
                 if len(r_peaks) >= 2:
                     rr_ms = np.diff(r_peaks) / self.fs * 1000.0
                     m = float(np.mean(rr_ms))
                     hr = 60000.0 / m if m > 0 else None
-                if self._is_asystole(signal_arr, r_peaks, hr,
-                                     min_data_packets=min_serial_data_packets):
+                # Always evaluate asystole, but keep serial gate for strict "live" mode.
+                asys = self._is_asystole(signal_arr, r_peaks, hr,
+                                         min_data_packets=min_serial_data_packets)
+                if asys and (has_received_serial_data or len(r_peaks) <= 1):
                     return ["Asystole (Cardiac Arrest)"]
         except Exception as e:
             print(f"Asystole check error: {e}")
@@ -118,6 +120,10 @@ class ArrhythmiaDetector:
              self._is_left_bundle_branch_block, qrs_duration, pr_interval, rr_ms, signal_arr, q_peaks, r_peaks)
         _try("Right Bundle Branch Block (RBBB)",
              self._is_right_bundle_branch_block, qrs_duration, pr_interval, rr_ms, signal_arr, r_peaks)
+        _try("Possible LBBB (single-lead morphology)",
+             self._is_lbbb_single_lead, signal_arr, qrs_duration, r_peaks, s_peaks, lead_name)
+        _try("Possible RBBB (single-lead morphology)",
+             self._is_rbbb_single_lead, signal_arr, qrs_duration, r_peaks, lead_name)
         _try("Left Anterior Fascicular Block (LAFB)",
              self._is_left_anterior_fascicular_block, qrs_duration, hr, signal_arr, r_peaks, s_peaks)
         _try("Left Posterior Fascicular Block (LPFB)",
@@ -140,6 +146,8 @@ class ArrhythmiaDetector:
         # Sinus arrhythmias
         _try("Sinus Arrhythmia",
              self._is_sinus_arrhythmia, rr_ms, hr, p_peaks, r_peaks)
+        _try("Asynchronous 75 BPM Rhythm",
+             self._is_asynchronous_75_bpm, hr, rr_ms, p_peaks, r_peaks)
         missed = self._is_missed_beat(r_peaks, rr_ms, hr)
         if missed:
             arrhythmias.append(missed)
