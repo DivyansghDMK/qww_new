@@ -861,15 +861,6 @@ class HolterReplayPanel(QWidget):
             return
 
         mode = tool_name if tool_name in ["Measuring Ruler", "Parallel Ruler", "Magnifying Glass"] else "Normal"
-        for name, button in self._tool_btns.items():
-            if name in ["Measuring Ruler", "Parallel Ruler", "Magnifying Glass"] and name == mode:
-                button.setStyleSheet(_style_active_btn())
-            elif name in ["Measuring Ruler", "Parallel Ruler", "Magnifying Glass"]:
-                button.setStyleSheet(
-                    f"QPushButton{{background:{COL_DARK};color:{COL_TEXT};border:1px solid {COL_GREEN_DRK};"
-                    f"border-radius:3px;padding:3px 6px;font-size:10px;}}"
-                    f"QPushButton:hover{{background:#202020;color:{COL_WHITE};}}"
-                )
         for strip in getattr(self, "_ch_strips", []):
             if hasattr(strip, 'set_mode'):
                 strip.set_mode(mode)
@@ -1341,8 +1332,8 @@ class HolterWaveGridPanel(QFrame):
             plot.showGrid(x=True, y=True, alpha=0.25)
             plot.getAxis("left").setStyle(showValues=False)
             plot.getAxis("bottom").setStyle(showValues=False)
-            plot.getAxis("left").setPen(pg.mkPen(color=COL_GRID_MAJOR))
-            plot.getAxis("bottom").setPen(pg.mkPen(color=COL_GRID_MAJOR))
+            plot.getAxis("left").setPen(pg.mkPen(color='#004400'))
+            plot.getAxis("bottom").setPen(pg.mkPen(color='#004400'))
             if lead == "aVR":
                 plot.setYRange(0, -4096, padding=0)
             else:
