@@ -28,6 +28,7 @@ Usage:
 """
 
 import numpy as np
+import re
 from scipy.signal import butter, filtfilt, iirnotch, medfilt, find_peaks
 from scipy.ndimage import uniform_filter1d
 from typing import Union, Optional, Tuple
@@ -173,7 +174,9 @@ def apply_ac_filter(signal: np.ndarray, sampling_rate: float, ac_filter: str) ->
         return signal
     
     try:
-        notch_freq = float(ac_filter)  # 50 or 60 Hz
+        ac_text = str(ac_filter).strip().lower()
+        match = re.search(r"(\d+(?:\.\d+)?)", ac_text)
+        notch_freq = float(match.group(1)) if match else float(ac_filter)  # 50 or 60 Hz
         
         # Design notch filter (bandstop filter)
         nyquist = sampling_rate / 2.0
@@ -207,6 +210,42 @@ def apply_ac_filter(signal: np.ndarray, sampling_rate: float, ac_filter: str) ->
     except Exception as e:
         print(f" Error applying AC filter ({ac_filter}Hz): {e}")
         return signal
+
+
+def stabilize_report_edges(signal: np.ndarray, sampling_rate: float, edge_ms: float = 180.0) -> np.ndarray:
+    """
+    Reduce edge transients in report strips so the waveform ends smoothly
+    (no visible terminal jump/spike in printed reports).
+    """
+    arr = np.asarray(signal, dtype=float)
+    if arr.size < 20:
+        return arr
+
+    try:
+        fs = float(sampling_rate)
+    except Exception:
+        fs = 500.0
+    if fs <= 0:
+        fs = 500.0
+
+    edge_n = max(8, int((edge_ms / 1000.0) * fs))
+    edge_n = min(edge_n, max(8, arr.size // 6))
+    if edge_n * 3 >= arr.size:
+        return arr
+
+    stable_tail_start = arr.size - (3 * edge_n)
+    stable_tail_end = arr.size - edge_n
+    stable_head_start = edge_n
+    stable_head_end = 3 * edge_n
+
+    head_target = float(np.median(arr[stable_head_start:stable_head_end]))
+    tail_target = float(np.median(arr[stable_tail_start:stable_tail_end]))
+
+    out = arr.copy()
+    ramp = np.linspace(0.0, 1.0, edge_n, endpoint=True)
+    out[:edge_n] = (1.0 - ramp) * head_target + ramp * out[:edge_n]
+    out[-edge_n:] = (1.0 - ramp) * out[-edge_n:] + ramp * tail_target
+    return out
 
 
 def apply_emg_filter(signal: np.ndarray, sampling_rate: float, emg_filter: str) -> np.ndarray:
