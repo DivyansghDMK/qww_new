@@ -26,11 +26,11 @@ import os
 import logging
 from datetime import datetime
 
-# Setup logging for edge trimming debugging
-log_dir = "/Users/indresh/Desktop/2_mar/logs"
-os.makedirs(log_dir, exist_ok=True)
-log_file = os.path.join(log_dir, f"4_3_debug_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
-logging.basicConfig(filename=log_file, level=logging.DEBUG, 
+# Setup logging - use a path relative to this script to work cross-platform
+_log_base = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'logs'))
+os.makedirs(_log_base, exist_ok=True)
+log_file = os.path.join(_log_base, f"4_3_debug_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+logging.basicConfig(filename=log_file, level=logging.DEBUG,
                    format='%(asctime)s - %(levelname)s - %(message)s')
 console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.DEBUG)
@@ -320,7 +320,7 @@ def apply_report_ecg_filters(signal, sampling_rate, settings_manager):
     try:
         if filtered.size > 5:
             from scipy.ndimage import gaussian_filter1d
-            filtered = gaussian_filter1d(filtered, sigma=0.3)
+            filtered = gaussian_filter1d(filtered, sigma=0.8)  # Match display SMOOTH_SIGMA
     except Exception:
         pass
     try:
@@ -372,20 +372,9 @@ def apply_report_ecg_filters(signal, sampling_rate, settings_manager):
             filtered = filtered[hard_trim:n3 - hard_trim]
     except Exception:
         pass
-    try:
-        n4 = filtered.size
-        if n4 > 50:
-            alpha = 0.5
-            m = max(10, int((alpha * n4) / 2.0))
-            if m * 2 < n4:
-                ramp = 0.5 * (1 - np.cos(np.linspace(0, np.pi, m)))
-                w = np.ones(n4)
-                w[:m] = ramp
-                w[-m:] = ramp[::-1]
-                mu = float(np.mean(filtered))
-                filtered = mu + (filtered - mu) * w
-    except Exception:
-        pass
+    # NOTE: Hanning-window taper removed — it forced large portions of the strip
+    # toward the mean, creating the "hump at the end of wave" artifact the user reported.
+    # stabilize_report_edges does a much gentler (180 ms) blend instead.
     filtered = stabilize_report_edges(filtered, fs)
     return filtered
 
@@ -802,6 +791,9 @@ def create_reportlab_ecg_drawing_with_real_data(lead_name, ecg_data, width=460, 
     total_seconds = width_mm / (speed_mm_s * ECG_SPEED_SCALE)
     height_mm_physical = height / mm  # Convert height points to mm
 
+    fs = float(sampling_rate) if sampling_rate and float(sampling_rate) > 0 else 500.0
+    t_sec = np.arange(len(ecg_data)) / fs
+
     ecg_array = np.asarray(ecg_data, dtype=float)
     
     # ORIGINAL WORKING APPROACH: Simple amplitude normalization like ecg_report_generator.py
@@ -827,23 +819,19 @@ def create_reportlab_ecg_drawing_with_real_data(lead_name, ecg_data, width=460, 
             ecg_mv = ecg_mv - trend  # ALWAYS remove trend - no threshold
             print(f" {lead_name}: FORCEFUL: Removed slope={slope:.6f} (no threshold)")
             
-            # Edge conditioning for all BPM: smooth approach + hard-flat terminal segment.
-            edge_samples = min(80, max(20, len(ecg_mv) // 16))
+            # Edge conditioning: gentle taper only at the very start to avoid
+            # abrupt jumps. Do NOT force end of strip to zero — that creates the
+            # "jumping" artifact at the tail of the printed waveform.
+            edge_samples = min(40, max(10, len(ecg_mv) // 20))
             if len(ecg_mv) > edge_samples * 3:
-                t = np.linspace(0.0, 1.0, edge_samples)
-                taper = 0.5 * (1.0 + np.cos(np.pi * t))
-                ecg_mv[:edge_samples] = ecg_mv[:edge_samples] * (1.0 - taper)
-                ecg_mv[-edge_samples:] = ecg_mv[-edge_samples:] * taper
-
-                flat_tail = max(10, edge_samples // 4)
-                blend = max(8, edge_samples // 5)
-                if len(ecg_mv) > flat_tail + blend:
-                    blend_start = len(ecg_mv) - (flat_tail + blend)
-                    blend_end = len(ecg_mv) - flat_tail
-                    ramp = np.linspace(1.0, 0.0, blend)
-                    ecg_mv[blend_start:blend_end] = ecg_mv[blend_start:blend_end] * ramp
-                    ecg_mv[-flat_tail:] = 0.0
-                print(f" {lead_name}: Applied edge taper + flat tail ({flat_tail} samples)")
+                t_taper = np.linspace(0.0, 1.0, edge_samples)
+                head_ramp = 0.5 * (1.0 - np.cos(np.pi * t_taper))  # 0→1 ramp
+                ecg_mv[:edge_samples] = ecg_mv[:edge_samples] * head_ramp
+                # Tail: blend toward local median value (NOT zero) over last edge_samples
+                tail_target = float(np.median(ecg_mv[-(edge_samples * 3):-edge_samples])) if len(ecg_mv) > edge_samples * 4 else 0.0
+                tail_ramp = np.linspace(1.0, 0.0, edge_samples)  # 1→0 weight for signal
+                ecg_mv[-edge_samples:] = ecg_mv[-edge_samples:] * tail_ramp + tail_target * (1.0 - tail_ramp)
+                print(f" {lead_name}: Applied gentle edge taper (no forced zero tail)")
     
     # ORIGINAL WORKING GAIN: Calculate y_mm AFTER slope removal
     y_mm = ecg_mv * wave_gain_mm_mv

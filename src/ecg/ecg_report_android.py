@@ -37,7 +37,15 @@ ECG_FS        = 500.0
 FIXED_SPEED   = 25.0
 FIXED_GAIN    = 10.0
 MM_PER_SAMPLE = FIXED_SPEED / ECG_FS   # 0.05 mm/sample
-ADC_PER_MM    = 128.0
+# ADC_PER_MM: ADC counts per 1mm at standard 10mm/mV gain.
+# Formula: (ADC_full_scale / mV_full_scale) / (mm_per_mV)
+# = 6400 ADC / 50mV / 10mm*mV = 12800 / 1000 = 12.8? No -
+# The hardware is 12-bit with mid=2000, span ~6400 ADC for 50mV swing.
+# At 10mm/mV: 1mV = 10mm, 1mm = 0.1mV, 1mm = 6400/50*0.1 = 12.8 ADC? 
+# Empirically from 4_3 code: adc_per_box = 6400/wave_gain, box=5mm
+# So ADC_per_mm = 6400/(wave_gain*5) = 1280/wave_gain
+# At wave_gain=10: ADC_per_mm = 128  ✓
+ADC_PER_MM    = 128.0   # updated dynamically from wave_gain setting in generate_report()
 
 COL_MINOR = '#f5dcdc'
 COL_MAJOR = '#e69696'
@@ -72,7 +80,7 @@ def generate_report(snap_raw, frozen, patient, filename, fmt,
     conc_list : conclusion strings (max 5 shown)
     fs        : sampling rate Hz
     """
-    global ECG_FS, MM_PER_SAMPLE
+    global ECG_FS, MM_PER_SAMPLE, ADC_PER_MM
     ECG_FS        = float(fs)
     MM_PER_SAMPLE = FIXED_SPEED / ECG_FS
 
@@ -81,7 +89,46 @@ def generate_report(snap_raw, frozen, patient, filename, fmt,
     PW = A4_P_W if is_portrait else A4_L_W
     PH = A4_P_H if is_portrait else A4_L_H
 
-    # ── Bandpass + baseline all 12 leads ──────────────────────────────────
+    # ── Read user filter settings ──────────────────────────────────────────
+    _settings_mgr = None
+    try:
+        import sys as _sys, os as _os
+        _here = _os.path.dirname(_os.path.abspath(__file__))
+        _src  = _os.path.abspath(_os.path.join(_here, '..'))
+        for _p in [_here, _src]:
+            if _p not in _sys.path:
+                _sys.path.insert(0, _p)
+        from utils.settings_manager import SettingsManager
+        _settings_mgr = SettingsManager()
+    except Exception as _e:
+        print(f"[ecg_report_android] Could not load SettingsManager: {_e}")
+
+    def _get_filter_setting(key, default):
+        if _settings_mgr is None:
+            return default
+        try:
+            val = _settings_mgr.get_setting(key, default)
+            return str(val).strip() if val else default
+        except Exception:
+            return default
+
+    ac_setting  = _get_filter_setting("filter_ac",  "50")   # "50", "60", or "off"
+    emg_setting = _get_filter_setting("filter_emg", "150")  # "25".."150" or "off"
+    dft_setting = _get_filter_setting("filter_dft", "0.5")  # "0.05", "0.5", or "off"
+    print(f"[ecg_report_android] Filter settings — AC:{ac_setting}  EMG:{emg_setting}  DFT:{dft_setting}")
+
+    # Read wave_gain from settings to set correct ADC→mm scaling
+    wave_gain_val = 10.0
+    try:
+        wg = _get_filter_setting("wave_gain", "10")
+        wave_gain_val = float(wg) if wg and wg not in ("", "off") else 10.0
+    except Exception:
+        wave_gain_val = 10.0
+    # ADC_per_mm: at wave_gain=10mm/mV, 1mm = 128 ADC. Formula: 1280/wave_gain
+    ADC_PER_MM = 1280.0 / max(wave_gain_val, 1.0)
+    print(f"[ecg_report_android] wave_gain={wave_gain_val} mm/mV  →  ADC_PER_MM={ADC_PER_MM:.2f}")
+
+    # ── Apply user-selected filters to all 12 leads ───────────────────────
     lead_mv = {}
     for i, lead in enumerate(ALL_LEADS):
         arr = np.asarray(snap_raw[i], dtype=float) if i < len(snap_raw) else np.array([])
@@ -89,10 +136,22 @@ def generate_report(snap_raw, frozen, patient, filename, fmt,
             lead_mv[lead] = arr
             continue
         try:
-            nyq = ECG_FS / 2.0
-            b, a = butter(2, [0.5/nyq, min(40/nyq, 0.99)], btype='band')
-            lead_mv[lead] = filtfilt(b, a, arr)
-        except Exception:
+            from ecg.ecg_filters import apply_ecg_filters, stabilize_report_edges
+            ac_param  = ac_setting  if ac_setting  not in ("off", "") else None
+            emg_param = emg_setting if emg_setting not in ("off", "") else None
+            dft_param = dft_setting if dft_setting not in ("off", "") else None
+            filtered = apply_ecg_filters(
+                arr,
+                sampling_rate=float(ECG_FS),
+                ac_filter=ac_param,
+                emg_filter=emg_param,
+                dft_filter=dft_param,
+            )
+            # Gentle edge stabilisation (removes filter transients at strip edges)
+            filtered = stabilize_report_edges(filtered, float(ECG_FS))
+            lead_mv[lead] = filtered
+        except Exception as _fe:
+            print(f"[ecg_report_android] Filter failed for {lead}: {_fe} — using median-centred raw")
             lead_mv[lead] = arr - float(np.median(arr))
 
     # ── Figure — exact A4, white background ───────────────────────────────
@@ -276,7 +335,11 @@ def _draw_1x12(ax, lead_mv, PW, PH, target_samples=None):
     cell_h     = usable_h / 12.0                 # 19.5mm per lead
 
     wave_w = PW - ML - MR - 15.0   # 185mm
-    half   = cell_h * 0.45
+    # half_clip: allow peaks to use up to 90% of half cell height
+    # (8.775mm per side) → prevents flat-topping of V4/V5 R-waves.
+    # Clinical ECGs allow peaks to extend to adjacent rows; we clip at
+    # the full cell height (both sides) to allow true amplitude display.
+    half_clip = cell_h * 0.90   # ~17.5mm at 10mm/mV → allows ~1.75mV peaks
 
     for i, lead in enumerate(ALL_LEADS):
         mid_y   = top_offset + i * cell_h + cell_h / 2.0
@@ -284,7 +347,7 @@ def _draw_1x12(ax, lead_mv, PW, PH, target_samples=None):
         _draw_calibration(ax, ML, mid_y, FIXED_GAIN)
         _t(ax, lead, ML+11, label_y, 8.5, bold=True)
         _draw_waveform(ax, lead_mv.get(lead, np.array([])),
-                       ML+13, mid_y, wave_w, half, target_samples=target_samples)
+                       ML+13, mid_y, wave_w, half_clip, target_samples=target_samples)
 
 
 # ─── 6:2 Landscape ────────────────────────────────────────────────────────────
@@ -307,13 +370,14 @@ def _draw_2x6(ax, lead_mv, PW, PH, target_samples=None):
     for r, (l1, l2) in enumerate(pair_map):
         mid_y   = start_y + r*row_h + row_h/2.0
         label_y = mid_y - 9.0
-        half    = row_h * 0.45
+        # half_clip: 90% of row half-height to show true peak amplitude
+        half_clip = row_h * 0.90
 
         _draw_calibration_pad(ax, left_margin-4, mid_y, FIXED_GAIN)
 
         _t(ax, l1, left_margin+9, label_y, 10, bold=True)
         _draw_waveform(ax, lead_mv.get(l1, np.array([])),
-                       left_margin+14, mid_y, lead_w, half, target_samples=target_samples)
+                       left_margin+14, mid_y, lead_w, half_clip, target_samples=target_samples)
 
         div_x = left_margin + 14 + lead_w + div_pad
         # Removed vertical dashes completely
@@ -321,14 +385,14 @@ def _draw_2x6(ax, lead_mv, PW, PH, target_samples=None):
         right_x = div_x + div_pad
         _t(ax, l2, right_x, label_y, 10, bold=True)
         _draw_waveform(ax, lead_mv.get(l2, np.array([])),
-                       right_x+5, mid_y, lead_w, half, target_samples=target_samples)
+                       right_x+5, mid_y, lead_w, half_clip, target_samples=target_samples)
 
     rhythm_mid = start_y + 6*row_h + row_h/2.0
     _draw_calibration_pad(ax, left_margin-4, rhythm_mid, FIXED_GAIN)
     _t(ax, "II", left_margin+10, rhythm_mid-9, 12, bold=True)
     _draw_waveform(ax, lead_mv.get("II", np.array([])),
                    left_margin+14, rhythm_mid,
-                   PW - left_margin - MR - 25, row_h*0.45, target_samples=5000)
+                   PW - left_margin - MR - 25, row_h*0.90, target_samples=5000)
 
 
 # ─── 4:3 Landscape ────────────────────────────────────────────────────────────
@@ -361,13 +425,14 @@ def _draw_3x4(ax, lead_mv, PW, PH, target_samples=None):
     for r, group in enumerate(lead_groups):
         mid_y   = start_y + r*row_h + row_h/2.0
         label_y = mid_y - 9.0
-        half    = row_h * 0.45
+        # half_clip: 90% of row half-height to show true peak amplitude
+        half_clip = row_h * 0.90
         _draw_calibration_pad(ax, left_margin-4, mid_y, FIXED_GAIN)
         for c, lead in enumerate(group):
             x_start = left_pad if c == 0 else left_pad + c*(lead_w+div_pad+div_pad)
             _t(ax, lead, x_start, label_y, 10.5, bold=True)
             _draw_waveform(ax, lead_mv.get(lead, np.array([])),
-                           x_start, mid_y, lead_w, half, target_samples=target_samples)
+                           x_start, mid_y, lead_w, half_clip, target_samples=target_samples)
             if c < 2:
                 div_x = x_start + lead_w + div_pad
                 if div_x not in col_dividers:
@@ -386,7 +451,7 @@ def _draw_3x4(ax, lead_mv, PW, PH, target_samples=None):
     _t(ax, "II", left_margin+10, rhythm_mid-9, 12.5, bold=True)
     _draw_waveform(ax, lead_mv.get("II", np.array([])),
                    left_margin+14, rhythm_mid,
-                   PW - left_margin - MR - 25, row_h*0.45, target_samples=5000)
+                   PW - left_margin - MR - 25, row_h*0.90, target_samples=5000)
 
 
 # ─── Footer ───────────────────────────────────────────────────────────────────
@@ -510,14 +575,24 @@ def _draw_waveform(ax, samples, x0_mm, y0_mm, width_mm, half_cell_mm=10.0, targe
         
     if len(arr) < 2:
         return
-        
+
+    # Apply Gaussian smoothing to match live display (SMOOTH_SIGMA = 0.8)
+    try:
+        from scipy.ndimage import gaussian_filter1d
+        arr = gaussian_filter1d(arr, sigma=0.8)
+    except Exception:
+        pass
+
     # X coordinate strictly respects the scale
     xs = x0_mm + np.arange(len(arr)) * MM_PER_SAMPLE
     
-    # "chnage the y axis" - Using standard 128.0 ADC unit conversion as Y axis baseline
+    # Y axis: ADC units → mm using dynamic ADC_PER_MM (set from wave_gain in generate_report)
     ys = y0_mm - arr / ADC_PER_MM
-    clip = max(half_cell_mm, 8.0)
-    ys   = np.clip(ys, y0_mm - clip, y0_mm + clip)
+    # Clip at the full cell boundary (half_cell_mm from caller already accounts for
+    # full allowed height). Do NOT use the old max(..., 8.0) floor — that was
+    # the root cause of V4/V5 flat-topped peaks.
+    ys = np.clip(ys, y0_mm - half_cell_mm, y0_mm + half_cell_mm)
+
     ax.plot(xs, ys, color='black', linewidth=0.5,
             solid_joinstyle='round', solid_capstyle='round', zorder=5)
 

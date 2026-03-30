@@ -535,7 +535,7 @@ def apply_report_ecg_filters(signal, sampling_rate, settings_manager):
     try:
         if filtered.size > 5:
             from scipy.ndimage import gaussian_filter1d
-            filtered = gaussian_filter1d(filtered, sigma=0.3)
+            filtered = gaussian_filter1d(filtered, sigma=0.8)  # Match display SMOOTH_SIGMA
     except Exception:
         pass
     try:
@@ -1008,6 +1008,23 @@ def create_reportlab_ecg_drawing_with_real_data(lead_name, ecg_data, width=REPOR
 
     fs = float(sampling_rate)
 
+    # ── Apply ECG filters (50Hz notch + bandpass 0.5-40Hz) ──────────────────
+    if settings_manager is not None and len(ecg_mv) > 30:
+        try:
+            ecg_mv = apply_report_ecg_filters(ecg_mv, fs, settings_manager)
+        except Exception as _fe:
+            print(f"[Report] Filter failed for {lead_name}: {_fe}")
+            # fallback: manual notch + bandpass
+            try:
+                from scipy.signal import butter, filtfilt, iirnotch
+                nyq = fs / 2.0
+                b_n, a_n = iirnotch(50.0 / nyq, Q=35.0)
+                ecg_mv = filtfilt(b_n, a_n, ecg_mv)
+                b_b, a_b = butter(4, [0.5 / nyq, 40.0 / nyq], btype='band')
+                ecg_mv = filtfilt(b_b, a_b, ecg_mv)
+            except Exception:
+                pass
+
     # Show ALL available data - NO MASKING to prevent cutting last beat
     print(f" Available data: {len(ecg_mv)} points, Time window: {total_seconds:.2f}s")
     
@@ -1028,6 +1045,14 @@ def create_reportlab_ecg_drawing_with_real_data(lead_name, ecg_data, width=REPOR
             slope = coeffs[0]
             trend = np.polyval(coeffs, x)
             ecg_mv = ecg_mv - trend
+
+            # ✅ ADD: taper edges to prevent jump at start/end of strip
+            taper_len = min(int(0.05 * fs), len(ecg_mv) // 10)  # 50ms taper
+            if taper_len > 2:
+                taper = np.linspace(0, 1, taper_len)
+                ecg_mv[:taper_len]  *= taper
+                ecg_mv[-taper_len:] *= taper[::-1]
+
             print(f" {lead_name}: Removed baseline slope={slope:.6f}")
     
     # PROPER ECG SCALING: Use actual ECG paper scaling (25mm/s with proper grid alignment)

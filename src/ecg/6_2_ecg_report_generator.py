@@ -26,11 +26,11 @@ import os
 import logging
 from datetime import datetime
 
-# Setup logging for edge trimming debugging
-log_dir = "/Users/indresh/Desktop/2_mar/logs"
-os.makedirs(log_dir, exist_ok=True)
-log_file = os.path.join(log_dir, f"6_2_debug_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
-logging.basicConfig(filename=log_file, level=logging.DEBUG, 
+# Setup logging - use a path relative to this script to work cross-platform
+_log_base = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'logs'))
+os.makedirs(_log_base, exist_ok=True)
+log_file = os.path.join(_log_base, f"6_2_debug_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+logging.basicConfig(filename=log_file, level=logging.DEBUG,
                    format='%(asctime)s - %(levelname)s - %(message)s')
 console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.DEBUG)
@@ -319,7 +319,7 @@ def apply_report_ecg_filters(signal, sampling_rate, settings_manager):
     try:
         if filtered.size > 5:
             from scipy.ndimage import gaussian_filter1d
-            filtered = gaussian_filter1d(filtered, sigma=0.3)
+            filtered = gaussian_filter1d(filtered, sigma=0.8)  # Match display SMOOTH_SIGMA
     except Exception:
         pass
     try:
@@ -539,7 +539,8 @@ def capture_real_ecg_graphs_from_dashboard(dashboard_instance=None, ecg_test_pag
     # Map lead names to indices
     lead_to_index = {
         "I": 0, "II": 1, "III": 2, "aVR": 3, "aVL": 4, "aVF": 5,
-        "V6": 11, "Extra Lead II": 12
+        "V1": 6, "V2": 7, "V3": 8, "V4": 9, "V5": 10, "V6": 11,
+        "Extra Lead II": 12
     }
     
     # FORCE REAL DATA ONLY - DISABLE DEMO MODE FOR REPORTS
@@ -614,7 +615,9 @@ def capture_real_ecg_graphs_from_dashboard(dashboard_instance=None, ecg_test_pag
                 filtered_ecg_data.get(lead), 
                 width=460, 
                 height=45,
-                wave_gain_mm_mv=wave_gain_mm_mv
+                wave_gain_mm_mv=wave_gain_mm_mv,
+                sampling_rate=samples_per_second,
+                settings_manager=settings_manager
             )
             lead_drawings[lead] = drawing
             
@@ -651,14 +654,10 @@ ADC_PER_BOX_CONFIG = {
     '-aVR': 6400.0,  # For Cabrera sequence
 }
 
-def create_reportlab_ecg_drawing_with_real_data(lead_name, ecg_data, width=460, height=45, wave_gain_mm_mv=10.0):
+def create_reportlab_ecg_drawing_with_real_data(lead_name, ecg_data, width=460, height=45, wave_gain_mm_mv=10.0, sampling_rate=500.0, settings_manager=None):
     """
-    Create ECG drawing using ReportLab with REAL ECG data showing MAXIMUM heartbeats
-    Returns: ReportLab Drawing with guaranteed pink background and REAL ECG waveform
-    
-    Parameters:
-        wave_gain_mm_mv: Wave gain in mm/mV (default: 10.0 mm/mV)
-                         Used for amplitude scaling: 10mm/mV = 1.0x, 20mm/mV = 2.0x, 5mm/mV = 0.5x
+    Create ECG drawing using ReportLab with REAL ECG data.
+    Uses proper sample-rate-based time axis so beats are displayed at correct speed.
     """
     drawing = Drawing(width, height)
     
@@ -667,9 +666,9 @@ def create_reportlab_ecg_drawing_with_real_data(lead_name, ecg_data, width=460, 
     bg_rect = Rect(0, 0, width, height, fillColor=bg_color, strokeColor=None)
     drawing.add(bg_rect)
     
-    # STEP 2: Draw pink ECG grid lines (even lighter colors)
-    light_grid_color = colors.HexColor("#ffd1d1")  # Darker minor grid
-    major_grid_color = colors.HexColor("#ffb3b3")   # Darker major grid
+    # STEP 2: Draw pink ECG grid lines
+    light_grid_color = colors.HexColor("#ffd1d1")  # Light minor grid
+    major_grid_color = colors.HexColor("#ffb3b3")   # Major grid
     
     # Minor grid lines (1mm spacing equivalent)
     minor_spacing_x = width / 60  # 60 divisions across width
@@ -703,79 +702,82 @@ def create_reportlab_ecg_drawing_with_real_data(lead_name, ecg_data, width=460, 
         line = Line(0, y_pos, width, y_pos, strokeColor=major_grid_color, strokeWidth=0.8)
         drawing.add(line)
     
-    # STEP 3: Draw ALL AVAILABLE ECG data - NO DOWNSAMPLING, NO LIMITS!
-    if ecg_data is not None and len(ecg_data) > 0:
-        print(f" Drawing ALL AVAILABLE ECG data for {lead_name}: {len(ecg_data)} points (NO LIMITS)")
-        
-        # SIMPLE APPROACH: Use ALL available data points - NO cutting, NO downsampling
-        # This will show as many heartbeats as possible in the available data
-        
-        # Create time array for ALL the data
-        t = np.linspace(0, width, len(ecg_data))
-        
-        
-        # Get lead-specific ADC per box multiplier (default: 6400)
-        adc_per_box_multiplier = ADC_PER_BOX_CONFIG.get(lead_name, 6400.0)
-        
-        # Convert to numpy array
-        adc_data = np.array(ecg_data, dtype=float)
-        
-        # Apply baseline 2000 (subtract baseline from ADC values)
-        baseline_adc = 2000.0
-        centered_adc = adc_data - baseline_adc
-        
-        # Calculate ADC per box based on wave_gain and lead-specific multiplier
-        adc_per_box = adc_per_box_multiplier / max(1e-6, wave_gain_mm_mv)  # Avoid division by zero
-        
-        # Convert ADC offset to boxes (vertical units)
-        # Direct calculation: boxes_offset = centered_adc / adc_per_box
-        boxes_offset = centered_adc / adc_per_box
-        
-        # Convert boxes to Y position
-        center_y = height / 2.0  # Center of the graph in points
-        box_height_points = 5.0  # 1 box = 5mm = 5 points
-        
-        # Convert boxes offset to Y position
-        ecg_normalized = center_y + (boxes_offset * box_height_points)
-        
-        try:
-            from ecg.ecg_filters import apply_baseline_wander_median_mean
-            local = ecg_normalized - center_y
-            local = apply_baseline_wander_median_mean(local, 500.0)
-            ecg_normalized = center_y + local
-        except Exception:
-            pass
-        try:
-            idx = np.arange(len(ecg_normalized))
-            local = ecg_normalized - center_y
-            trend = np.polyval(np.polyfit(idx, local, 2), idx)
-            ecg_normalized = center_y + (local - trend)
-        except Exception:
-            pass
-        try:
-            local = ecg_normalized - center_y
-            wl = max(25, int(0.12 * len(local)))
-            kernel = np.ones(wl) / float(wl)
-            baseline = np.convolve(local, kernel, mode="same")
-            ecg_normalized = center_y + (local - baseline)
-        except Exception:
-            pass
-        # Do not force-flat the tail; keep true waveform until the strip end.
-        
-        # Draw ALL ECG data points - NO REDUCTION
-        ecg_color = colors.HexColor("#000000")  # Black ECG line
-        
-        # OPTIMIZED: Draw every point for maximum detail
-        for i in range(len(t) - 1):
-            line = Line(t[i], ecg_normalized[i], 
-                       t[i+1], ecg_normalized[i+1], 
-                       strokeColor=ecg_color, strokeWidth=0.5)
-            drawing.add(line)
-        
-        print(f" Drew ALL {len(ecg_data)} ECG data points for {lead_name} - showing MAXIMUM heartbeats!")
-    else:
+    # STEP 3: Draw ECG waveform on proper time axis
+    if ecg_data is None or len(ecg_data) == 0:
         print(f" No real data available for {lead_name} - showing flat line")
+        return drawing
     
+    print(f" Drawing ECG data for {lead_name}: {len(ecg_data)} points")
+    
+    fs = float(sampling_rate) if sampling_rate and float(sampling_rate) > 0 else 500.0
+    
+    # Get wave_speed for proper beat timing
+    speed_mm_s = 25.0  # default
+    if settings_manager:
+        try:
+            ws = settings_manager.get_setting("wave_speed")
+            if ws:
+                speed_mm_s = float(ws)
+        except Exception:
+            pass
+    
+    width_mm = width / mm  # Convert width points to mm
+    effective_speed_mm_s = speed_mm_s * ECG_SPEED_SCALE
+    max_display_seconds = width_mm / max(effective_speed_mm_s, 1e-6)
+    max_samples = int(max_display_seconds * fs)
+    
+    ecg_array = np.asarray(ecg_data, dtype=float)
+    
+    # Amplitude conversion: if raw ADC values, center and scale
+    med_abs = np.nanmedian(np.abs(ecg_array)) if len(ecg_array) else 0.0
+    if med_abs > 20.0:  # Raw ADC
+        ecg_mv = ecg_array / 1000.0  # ADC -> mV
+    else:
+        ecg_mv = ecg_array  # Already in mV
+    
+    # Remove DC offset and baseline slope
+    if len(ecg_mv) > 0:
+        dc_offset = np.nanmean(ecg_mv)
+        ecg_mv = ecg_mv - dc_offset
+        if len(ecg_mv) > 20:
+            x_idx = np.arange(len(ecg_mv))
+            coeffs = np.polyfit(x_idx, ecg_mv, 1)
+            ecg_mv = ecg_mv - np.polyval(coeffs, x_idx)
+        
+        # Gentle head taper only (no forced zero tail)
+        edge_samples = min(40, max(10, len(ecg_mv) // 20))
+        if len(ecg_mv) > edge_samples * 3:
+            t_taper = np.linspace(0.0, 1.0, edge_samples)
+            head_ramp = 0.5 * (1.0 - np.cos(np.pi * t_taper))  # 0→1
+            ecg_mv[:edge_samples] = ecg_mv[:edge_samples] * head_ramp
+            tail_target = float(np.median(ecg_mv[-(edge_samples * 3):-edge_samples])) if len(ecg_mv) > edge_samples * 4 else 0.0
+            tail_ramp = np.linspace(1.0, 0.0, edge_samples)
+            ecg_mv[-edge_samples:] = ecg_mv[-edge_samples:] * tail_ramp + tail_target * (1.0 - tail_ramp)
+    
+    # Time window clip
+    if len(ecg_mv) > max_samples:
+        ecg_mv = ecg_mv[-max_samples:]
+    
+    # Build time axis
+    t_sec = np.arange(len(ecg_mv)) / fs
+    x_pos_mm = t_sec * effective_speed_mm_s
+    
+    # mV -> Y position in points
+    height_mm_physical = height / mm
+    y_mm = (height_mm_physical / 2.0) + ecg_mv * wave_gain_mm_mv
+    y_mm = np.clip(y_mm, 0.0, height_mm_physical)
+    x_pos_mm = np.clip(x_pos_mm, 0.0, width_mm)
+    
+    # Draw ECG line
+    ecg_color = colors.HexColor("#000000")
+    for i in range(len(x_pos_mm) - 1):
+        x1 = x_pos_mm[i] * mm
+        y1 = y_mm[i] * mm
+        x2 = x_pos_mm[i+1] * mm
+        y2 = y_mm[i+1] * mm
+        drawing.add(Line(x1, y1, x2, y2, strokeColor=ecg_color, strokeWidth=0.5))
+    
+    print(f" Drew {len(ecg_mv)} ECG points for {lead_name} at fs={fs:.0f}Hz, speed={speed_mm_s}mm/s")
     return drawing
 
 def create_clean_ecg_image(lead_name, width=6, height=2):

@@ -19,6 +19,7 @@ import traceback
 import numpy as np
 from datetime import datetime
 from typing import Optional
+from scipy.signal import butter, filtfilt, iirnotch
 
 
 # ── resource helper ──────────────────────────────────────────────────────────
@@ -176,6 +177,9 @@ def _generate_pdf_report(session_dir: str,
         data_arr = lead_data.get(lead, np.array([]))
         if len(data_arr) > 10:
             seg      = np.asarray(data_arr, dtype=float)
+            
+            seg = _apply_ecg_filters(seg, fs=FS)
+            
             baseline = float(np.median(seg))
             seg_mm   = (seg - baseline) / ADC_PER_MM       # ADC → mm
             wx0      = ML + 13.0
@@ -305,6 +309,26 @@ def _load_lead_data(session_dir: str) -> dict:
 
     # 3) Return empty arrays — page still renders pink grid + header
     return {lead: np.array([]) for lead in leads}
+def _apply_ecg_filters(sig: np.ndarray, fs: float = 500.0) -> np.ndarray:
+    """
+    Same filters as smooth_display.py IncrementalFilter:
+      - Bandpass 0.5-40 Hz  (baseline wander + EMG removal)
+      - Notch 50 Hz         (powerline noise removal)
+    Uses filtfilt (zero-phase) — ideal for static report rendering.
+    """
+    if len(sig) < 30:
+        return sig
+    nyq = fs / 2.0
+
+    # Notch filter — 50 Hz
+    b_notch, a_notch = iirnotch(50.0 / nyq, Q=35.0)
+    sig = filtfilt(b_notch, a_notch, sig)
+
+    # Bandpass filter — 0.5 to 40 Hz
+    b_bp, a_bp = butter(4, [0.5 / nyq, 40.0 / nyq], btype='band')
+    sig = filtfilt(b_bp, a_bp, sig)
+
+    return sig
 
 
 def _build_conclusions(summary: dict) -> list:
