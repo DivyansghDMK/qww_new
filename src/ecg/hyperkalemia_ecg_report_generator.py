@@ -2362,9 +2362,9 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
 
     # Format axis values for display (remove ° symbol for compact display)
     # Convert to string first in case they're integers
-    p_axis_display = "--"
-    qrs_axis_display = "--"
-    t_axis_display = "--"
+    p_axis_display = str(p_axis_deg).replace("°", "") if p_axis_deg != "--" else "--"
+    qrs_axis_display = str(qrs_axis_deg).replace("°", "") if qrs_axis_deg != "--" else "--"
+    t_axis_display = str(t_axis_deg).replace("°", "") if t_axis_deg != "--" else "--"
     
     # Extract numeric values for JSON storage (convert from string format like "45°" to int)
     def extract_axis_value(axis_str):
@@ -2381,19 +2381,55 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     qrs_mm = extract_axis_value(qrs_axis_deg)
     t_mm = extract_axis_value(t_axis_deg)
 
-    # SECOND COLUMN - P/QRS/T Axis (SAME LINE AS HR - right column) - DUMMY LABEL
-    p_qrs_label = String(240, 740, "P/QRS/T  : --/--/--°",  # Same y as HR (740)
-                     fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    # SECOND COLUMN - P/QRS/T Axis (SAME LINE AS HR - right column)
+    p_qrs_label = String(
+        240, 740,
+        f"P/QRS/T  : {p_axis_display}/{qrs_axis_display}/{t_axis_display}°",
+        fontSize=10, fontName="Helvetica", fillColor=colors.black
+    )
     master_drawing.add(p_qrs_label)
 
-    # SECOND COLUMN - RV5/SV1 (SAME LINE AS PR - right column) - DUMMY LABEL
-    rv5_sv_label = String(240, 720, "RV5/SV1  : -- mV/-- mV",  # Same y as PR (720)
-                      fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    # SECOND COLUMN - RV5/SV1 (SAME LINE AS PR - right column)
+    # Use the same ADC -> mV calibration as the main viewer.
+    adc_midpoint = 2048.0
+    counts_per_mv = 500.0
+    rv5_mv = 0.0
+    sv1_mv = 0.0
+    try:
+        if ecg_test_page is not None and hasattr(ecg_test_page, "data") and len(ecg_test_page.data) > 10:
+            v5_arr = np.asarray(ecg_test_page.data[10], dtype=float)  # V5
+            v1_arr = np.asarray(ecg_test_page.data[6], dtype=float)    # V1
+
+            if v5_arr.size > 10:
+                v5_mv_arr = (v5_arr - adc_midpoint) / counts_per_mv
+                v5_centered = v5_mv_arr - np.mean(v5_mv_arr)
+                rv5_mv = float(np.percentile(v5_centered, 98))
+                rv5_mv = max(0.0, round(rv5_mv, 3))
+
+            if v1_arr.size > 10:
+                v1_mv_arr = (v1_arr - adc_midpoint) / counts_per_mv
+                v1_centered = v1_mv_arr - np.mean(v1_mv_arr)
+                sv1_mv = float(np.percentile(v1_centered, 2))  # keep sign (should be <= 0)
+                if sv1_mv > 0:
+                    sv1_mv = 0.0
+                sv1_mv = round(sv1_mv, 3)
+    except Exception:
+        # Keep defaults (0.0) if RV5/SV1 cannot be computed.
+        pass
+
+    rv5_sv_label = String(
+        240, 720,
+        f"RV5/SV1  : {rv5_mv:.3f} mV/{sv1_mv:.3f} mV",
+        fontSize=10, fontName="Helvetica", fillColor=colors.black
+    )
     master_drawing.add(rv5_sv_label)
 
     # SECOND COLUMN - RV5+SV1 (SAME LINE AS QRS - right column) - DUMMY LABEL
-    rv5_sv1_sum_label = String(240, 700, "RV5+SV1 : -- mV",  # Same y as QRS (700)
-                               fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    rv5_sv1_sum_label = String(
+        240, 700,
+        f"RV5+SV1 : {(rv5_mv + abs(sv1_mv)):.3f} mV",
+        fontSize=10, fontName="Helvetica", fillColor=colors.black
+    )
     master_drawing.add(rv5_sv1_sum_label)
 
     # SECOND COLUMN - QTCF (SAME LINE AS RR - right column) - DUMMY LABEL

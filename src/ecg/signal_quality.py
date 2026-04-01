@@ -1,3 +1,84 @@
+import numpy as np
+from scipy.signal import butter, filtfilt, welch, find_peaks
+
+
+def assess_signal_quality(signal, fs: int = 500):
+    """Return (quality_score 0.0–1.0, reason) for an ECG window.
+
+    Score < 0.5 → do not analyze this window for arrhythmia.
+    Expects `signal` in millivolts (mV), already calibrated from ADC counts.
+    """
+    # Require at least ~2 seconds of data
+    if len(signal) < fs * 2:
+        return 0.0, "Too short"
+
+    sig = np.asarray(signal, dtype=float)
+
+    # 1. Flatline check — electrode off or disconnected
+    if np.std(sig) < 0.05:
+        return 0.0, "Flatline — check electrodes"
+
+    # 2. Saturation check — ADC clipping (±4.5 mV is well beyond physiologic)
+    clipped = np.sum((sig > 4.5) | (sig < -4.5))
+    if clipped / len(sig) > 0.01:
+        return 0.2, "Signal saturated — electrode issue"
+
+    # 3. Baseline wander — excessive low‑frequency power (<0.5 Hz)
+    try:
+        b_low, a_low = butter(2, 0.5 / (fs / 2), btype="low")
+        baseline = filtfilt(b_low, a_low, sig)
+        baseline_power = np.var(baseline)
+        total_power = np.var(sig)
+        if total_power > 0 and baseline_power / total_power > 0.30:
+            return 0.4, "Excessive baseline wander — patient breathing or movement"
+    except Exception:
+        total_power = np.var(sig)
+
+    # 4. High‑frequency noise (EMG / motion artifact) — >100 Hz band
+    try:
+        if fs > 200:
+            b_high, a_high = butter(2, 100 / (fs / 2), btype="high")
+            hf_signal = filtfilt(b_high, a_high, sig)
+            hf_power = np.var(hf_signal)
+            if total_power > 0 and hf_power / total_power > 0.40:
+                return 0.4, "High frequency noise — patient movement or EMG"
+    except Exception:
+        pass
+
+    # 5. 50 Hz powerline interference (India standard)
+    try:
+        freqs, psd = welch(sig, fs=fs, nperseg=min(256, len(sig) // 2))
+        if len(freqs) > 0:
+            idx_50hz = np.argmin(np.abs(freqs - 50.0))
+            idx_base = np.argmin(np.abs(freqs - 10.0))
+            if psd[idx_base] > 0 and psd[idx_50hz] / psd[idx_base] > 10:
+                return 0.5, "50 Hz powerline interference"
+    except Exception:
+        pass
+
+    # 6. R‑peak regularity sanity check — extreme irregularity before arrhythmia logic → likely artifact
+    try:
+        diff = np.diff(sig)
+        sq = diff ** 2
+        win = int(0.15 * fs)
+        win = max(win, 3)
+        mwa = np.convolve(sq, np.ones(win) / win, mode="same")
+        peaks, _ = find_peaks(
+            mwa,
+            height=np.mean(mwa) + np.std(mwa),
+            distance=int(0.3 * fs),
+        )
+        if len(peaks) < 2:
+            return 0.3, "No clear heartbeat detected"
+        rr = np.diff(peaks)
+        rr_cv = np.std(rr) / np.mean(rr) if np.mean(rr) > 0 else 1.0
+        if rr_cv > 0.8:
+            return 0.4, "Irregular signal — possible noise or artifact"
+    except Exception:
+        pass
+
+    return 1.0, "Clean"
+
 """Signal Quality Index (SQI) Module
 
 This module provides signal quality assessment for ECG signals.

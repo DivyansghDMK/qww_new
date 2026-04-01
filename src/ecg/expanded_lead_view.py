@@ -20,6 +20,17 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import matplotlib.patches as patches
 from .arrhythmia_detector import ArrhythmiaDetector
+from .signal_quality import assess_signal_quality
+
+try:
+    # Optional NeuroKit2-powered PQRST analyzer (if dependency is installed).
+    from .pqrst_neurokit import PQRSTAnalyzerNK
+    NEUROKIT2_AVAILABLE = True
+except Exception:
+    PQRSTAnalyzerNK = None
+    NEUROKIT2_AVAILABLE = False
+    print(" [ExpandedLeadView] NeuroKit2 not available — using basic PQRSTAnalyzer")
+
 try:
     from .ecg_filters import extract_respiration, estimate_baseline_drift, apply_ac_filter, apply_emg_filter, apply_ecg_filters
 except ImportError:
@@ -120,9 +131,11 @@ class PQRSTAnalyzer:
             if len(signal) < 10:
                 return []
             
-            # Filter the signal first to reduce noise
-            filtered_signal = self._filter_signal(signal)
-            
+            # Signal is already filtered by the caller (_filter_signal in analyze_signal).
+            # FIX-BUG4: Do NOT filter again here — double Butterworth filtering introduces
+            # phase distortion and suppresses real R-peaks, causing underdetection.
+            filtered_signal = signal
+
             # Differentiate
             diff = np.ediff1d(filtered_signal)
             # Square
@@ -375,8 +388,20 @@ class ExpandedLeadView(QDialog):
         self.sampling_rate = sampling_rate
         # Keep a reference to parent ECG page for shared metrics
         self._parent = parent
-        self.analyzer = PQRSTAnalyzer(sampling_rate)
-        self.arrhythmia_detector = ArrhythmiaDetector(sampling_rate)
+
+        # Hardware calibration (12‑bit ADC, India-tuned mV scaling).
+        # adc_midpoint centers raw samples; counts_per_mv converts ADC counts → mV.
+        self.adc_midpoint = 2048.0
+        self.counts_per_mv = 500.0
+
+        if NEUROKIT2_AVAILABLE and PQRSTAnalyzerNK is not None:
+            self.analyzer = PQRSTAnalyzerNK(sampling_rate)
+            print(f" [ExpandedLeadView] Using NeuroKit2 PQRSTAnalyzer for lead {lead_name}")
+        else:
+            self.analyzer = PQRSTAnalyzer(sampling_rate)
+        # Pass India‑specific counts_per_mv into the detector so all amplitude
+        # thresholds operate in real mV instead of raw ADC counts.
+        self.arrhythmia_detector = ArrhythmiaDetector(sampling_rate, counts_per_mv=self.counts_per_mv)
         # Display gain (no pre-scaling; gain applied once at display stage)
         self.display_gain = 1.0
 
@@ -1322,12 +1347,12 @@ class ExpandedLeadView(QDialog):
     
     def update_live_data(self):
         """Update ECG data from parent (hardware)"""
-        if not self.is_live or not hasattr(self, 'parent') or self.parent() is None:
+        if not self.is_live or self._parent is None:
             return
         
         try:
             # Get current data from parent ECG test page
-            parent = self.parent()
+            parent = self._parent
             # Keep expanded-view sampling stable across focus/tab switches.
             try:
                 self.sampling_rate = float(self._resolve_runtime_sampling_rate(parent))
@@ -1441,106 +1466,6 @@ class ExpandedLeadView(QDialog):
         else:
             return 0
     
-    def analyze_ecg(self):
-        """Analyze the current ECG data segment for PQRST features and arrhythmias."""
-        if len(self.ecg_data) == 0:
-            return
-
-        try:
-            # FIX-ELV2: Pull metrics from parent's authoritative calculation
-            # so that expanded view and 12-lead view show identical numbers.
-            parent = self.parent() if hasattr(self, 'parent') and callable(self.parent) else None
-            parent_metrics = None
-            if parent and hasattr(parent, 'get_current_metrics'):
-                try:
-                    parent_metrics = parent.get_current_metrics()
-                except Exception:
-                    parent_metrics = None
-
-            if parent_metrics:
-                # Use parent's calculated metrics — single source of truth
-                rr_val = parent_metrics.get('rr_interval')
-                pr_val = parent_metrics.get('pr_interval')
-                qrs_val = parent_metrics.get('qrs_duration')
-                p_val = parent_metrics.get('p_duration') or parent_metrics.get('st_interval')
-
-                if rr_val is not None:
-                    try:
-                        self.update_metric('rr_interval', int(float(str(rr_val).replace('--', '0'))))
-                    except (ValueError, TypeError):
-                        self.update_metric('rr_interval', 0)
-                if pr_val is not None:
-                    try:
-                        self.update_metric('pr_interval', int(float(str(pr_val).replace('--', '0'))))
-                    except (ValueError, TypeError):
-                        self.update_metric('pr_interval', 0)
-                if qrs_val is not None:
-                    try:
-                        self.update_metric('qrs_duration', int(float(str(qrs_val).replace('--', '0'))))
-                    except (ValueError, TypeError):
-                        self.update_metric('qrs_duration', 0)
-                if p_val is not None:
-                    try:
-                        self.update_metric('p_duration', int(float(str(p_val).replace('--', '0'))))
-                    except (ValueError, TypeError):
-                        self.update_metric('p_duration', 0)
-            else:
-                # Fallback: compute locally (same as before but with fixed min_distance)
-                filtered_signal = self._apply_display_bandpass(self.ecg_data, self.sampling_rate)
-                p_peaks, q_peaks, r_peaks, s_peaks, t_peaks = self.analyzer.find_pqrst(filtered_signal)
-
-                self.p_peaks = p_peaks
-                self.q_peaks = q_peaks
-                self.r_peaks = r_peaks
-                self.s_peaks = s_peaks
-                self.t_peaks = t_peaks
-
-                rr_intervals = np.diff(r_peaks) / self.sampling_rate * 1000
-                if len(rr_intervals) > 0:
-                    self.update_metric('rr_interval', int(np.median(rr_intervals)))
-                else:
-                    self.update_metric('rr_interval', 0)
-
-                pr_intervals = self.analyzer.calculate_pr_interval(p_peaks, r_peaks)
-                if len(pr_intervals) > 0:
-                    self.update_metric('pr_interval', int(np.median(pr_intervals)))
-                else:
-                    self.update_metric('pr_interval', 0)
-
-                qrs_durations = self.analyzer.calculate_qrs_duration(q_peaks, s_peaks)
-                if len(qrs_durations) > 0:
-                    self.update_metric('qrs_duration', int(np.median(qrs_durations)))
-                else:
-                    self.update_metric('qrs_duration', 0)
-
-                p_duration = self.calculate_p_duration(p_peaks, filtered_signal)
-                self.update_metric('p_duration', p_duration)
-
-            # Still run PQRST analysis for markers/arrhythmia display
-            # (even when using parent metrics for numbers)
-            filtered_signal = self._apply_display_bandpass(self.ecg_data, self.sampling_rate)
-            p_peaks, q_peaks, r_peaks, s_peaks, t_peaks = self.analyzer.find_pqrst(filtered_signal)
-            self.p_peaks = p_peaks
-            self.q_peaks = q_peaks
-            self.r_peaks = r_peaks
-            self.s_peaks = s_peaks
-            self.t_peaks = t_peaks
-
-            rr_intervals = np.diff(r_peaks) / self.sampling_rate * 1000 if len(r_peaks) > 1 else np.array([])
-            
-            # Fix call to detect_arrhythmias: it expects (signal, analysis_dict)
-            analysis_dict = {
-                'r_peaks': r_peaks,
-                'p_peaks': p_peaks,
-                'q_peaks': q_peaks,
-                's_peaks': s_peaks,
-                't_peaks': t_peaks
-            }
-            arrhythmias = self.arrhythmia_detector.detect_arrhythmias(filtered_signal, analysis_dict)
-            self.update_arrhythmia_display(arrhythmias)
-
-        except Exception as e:
-            print(f" Error during ECG analysis: {e}")
     
     def get_lead_index(self):
         """Get the lead index for this lead name"""
@@ -1899,27 +1824,7 @@ class ExpandedLeadView(QDialog):
 
             self.ax.clear()
 
-            # Heat map overlay behind waveform
-            if (
-                self.heatmap_overlay is not None
-                and self.heatmap_time_axis is not None
-                and len(self.heatmap_time_axis) > 0
-            ):
-                window_half = max(0.001, self.heatmap_window_step / 2.0)
-                extent = [
-                    self.heatmap_time_axis[0] - window_half,
-                    self.heatmap_time_axis[-1] + window_half,
-                    ylim_low,
-                    ylim_high,
-                ]
-                self.ax.imshow(
-                    self.heatmap_overlay,
-                    extent=extent,
-                    aspect='auto',
-                    origin='lower',
-                    interpolation='nearest',
-                    zorder=0,
-                )
+            # Heatmap overlay intentionally disabled per user request.
 
             # Ensure time and display_adc arrays have matching lengths
             if len(time) != len(display_adc):
@@ -1971,17 +1876,25 @@ class ExpandedLeadView(QDialog):
                 t_start, t_end = time[0], time[-1]
                 for evt_time, evt_label in self.arrhythmia_events:
                     if t_start <= evt_time <= t_end:
-                        # Vertical dashed red line
-                        self.ax.axvline(evt_time, color="#e74c3c", linestyle="--", linewidth=1.0, alpha=0.9, zorder=2)
+                        # Vertical dashed line color per rhythm type.
+                        evt_label_str = str(evt_label or "")
+                        if "Atrial Flutter" in evt_label_str:
+                            line_color = "#9b59b6"
+                        elif "Atrial Fibrillation" in evt_label_str:
+                            line_color = "#e74c3c"
+                        else:
+                            line_color = "#e74c3c"
+                        self.ax.axvline(evt_time, color=line_color, linestyle="--", linewidth=1.0, alpha=0.9, zorder=2)
                         # Small label at the top of the plot
                         try:
                             ylim_current = self.ax.get_ylim()
                             y_top = ylim_current[1]
+                            star_color = line_color
                             self.ax.text(
                                 evt_time,
                                 y_top,
                                 "★",
-                                color="#e74c3c",
+                                color=star_color,
                                 fontsize=10,
                                 fontweight="bold",
                                 ha="center",
@@ -2259,7 +2172,9 @@ class ExpandedLeadView(QDialog):
     def create_arrhythmia_panel(self, parent_layout):
         """Create the arrhythmia analysis panel"""
         arrhythmia_frame = QFrame()
-        arrhythmia_frame.setMinimumHeight(150)
+        # Keep this compact so it matches the interpretation-only UI.
+        # (Graph code and plot rendering are not touched.)
+        arrhythmia_frame.setFixedHeight(70)
         arrhythmia_frame.setStyleSheet("""
             QFrame {
                 background: white;
@@ -2276,16 +2191,12 @@ class ExpandedLeadView(QDialog):
         title.setStyleSheet("color: #2c3e50; border: none; background: transparent;")
         arrhythmia_layout.addWidget(title)
         
-        self.arrhythmia_list = QTextEdit("Analyzing...")
-        self.arrhythmia_list.setReadOnly(True)
-        self.arrhythmia_list.setFont(QFont("Consolas", 10))
-        self.arrhythmia_list.setStyleSheet("""
-            color: #2c3e50;
-            background: #f8f9fa;
-            border: 1px solid #dcdcdc;
-            border-radius: 6px;
-            padding: 6px;
-        """)
+        # QLabel style to match the second screenshot (no boxed QTextEdit).
+        self.arrhythmia_list = QLabel("Analyzing...")
+        self.arrhythmia_list.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        self.arrhythmia_list.setStyleSheet("color: #34495e; border: none; background: transparent;")
+        self.arrhythmia_list.setWordWrap(True)
+        self.arrhythmia_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         arrhythmia_layout.addWidget(self.arrhythmia_list, 1)
         
         parent_layout.addWidget(arrhythmia_frame)
@@ -2304,9 +2215,64 @@ class ExpandedLeadView(QDialog):
                 if hasattr(self, 'arrhythmia_list'):
                     self.arrhythmia_list.setText("Collecting data...")
                 return
-            
-            # Analyze signal for PQRST waves
-            analysis = self.analyzer.analyze_signal(self.ecg_data)
+
+            # Convert raw ADC counts to calibrated mV for quality assessment and amplitudes.
+            raw_adc = self.ecg_data.astype(float)
+            signal_mv = (raw_adc - float(self.adc_midpoint)) / float(self.counts_per_mv)
+
+            # Stage 1 — Signal quality gate (India-specific, 500 Hz).
+            quality_score, quality_reason = assess_signal_quality(signal_mv, int(self.sampling_rate))
+            print(f"[Quality] {quality_score:.2f} — {quality_reason}")
+            if quality_score < 0.5:
+                if hasattr(self, 'arrhythmia_list'):
+                    self.arrhythmia_list.setText(f"Poor signal quality: {quality_reason}")
+                # Do not attempt PQRST / arrhythmia on noisy windows.
+                return
+
+            # FIX-BUG3: Filter signal before PQRST analysis AND before detect_arrhythmias.
+            # Raw ADC data has a large DC offset (0-4095 range); we center it here and
+            # then apply the clinical display filter chain.
+            adc_centered = raw_adc - float(self.adc_midpoint)
+            filtered_signal = adc_centered
+
+            # Prefer the same clinical-grade filter chain used by display.
+            # This aligns analysis behavior with Philips-style monitors more closely.
+            try:
+                if apply_ecg_filters is not None:
+                    ac_opt = "50"
+                    emg_opt = "off"
+                    dft_opt = "off"
+                    if hasattr(self._parent, "settings_manager") and self._parent.settings_manager is not None:
+                        ac_opt = str(self._parent.settings_manager.get_setting("filter_ac", "50")).strip()
+                        emg_opt = str(self._parent.settings_manager.get_setting("filter_emg", "off")).strip()
+                        dft_opt = str(self._parent.settings_manager.get_setting("filter_dft", "off")).strip()
+
+                    filtered_signal = apply_ecg_filters(
+                        signal=adc_centered,
+                        sampling_rate=float(self.sampling_rate),
+                        ac_filter=(ac_opt if ac_opt in ("50", "60") else None),
+                        emg_filter=(emg_opt if emg_opt not in ("off", "") else None),
+                        dft_filter=(dft_opt if dft_opt not in ("off", "") else None),
+                    )
+                else:
+                    filtered_signal = self._apply_display_bandpass(
+                        adc_centered,
+                        self.sampling_rate,
+                        low=0.5,
+                        high=40.0,
+                        order=2,
+                    )
+            except Exception:
+                filtered_signal = self._apply_display_bandpass(
+                    adc_centered,
+                    self.sampling_rate,
+                    low=0.5,
+                    high=40.0,
+                    order=2,
+                )
+
+            # Analyze signal for PQRST waves using the filtered signal
+            analysis = self.analyzer.analyze_signal(filtered_signal)
             self.calculate_metrics(analysis)
             
             # Check if serial data has actually started flowing (not just initial state)
@@ -2327,39 +2293,31 @@ class ExpandedLeadView(QDialog):
                         else:
                             print(f" Waiting for serial data: {data_count}/{min_serial_data_packets} packets - asystole detection disabled")
             
-            # Detect arrhythmias using raw ECG data
-            print(f" Analyzing arrhythmias for {self.lead_name}: {len(self.ecg_data)} samples, {len(analysis.get('r_peaks', []))} R-peaks detected")
+            # Detect arrhythmias using bandpass-filtered signal (not raw ADC)
+            print(f" Analyzing arrhythmias for {self.lead_name}: {len(filtered_signal)} samples, {len(analysis.get('r_peaks', []))} R-peaks detected")
+
+            # Optional multi-lead fusion: when we have other leads available, pass them in.
+            lead_signals = None
+            try:
+                parent = getattr(self, "_parent", None)
+                if parent is not None and hasattr(parent, "latest_multilead_snapshot") and getattr(parent, "latest_multilead_snapshot", None):
+                    lead_signals = getattr(parent, "latest_multilead_snapshot")
+            except Exception:
+                lead_signals = None
+
             arrhythmias = self.arrhythmia_detector.detect_arrhythmias(
-                self.ecg_data, 
+                filtered_signal,
                 {**analysis, "lead_name": self.lead_name},
                 has_received_serial_data=has_received_serial_data,
-                min_serial_data_packets=min_serial_data_packets
+                min_serial_data_packets=min_serial_data_packets,
+                lead_signals=lead_signals
             )
             print(f" Arrhythmia detection result for {self.lead_name}: {arrhythmias}")
             self.update_arrhythmia_display(arrhythmias)
             
-            # Generate heat map data (optional - don't break if method doesn't exist)
-            try:
-                if len(analysis.get('r_peaks', [])) > 0:
-                    # Check if method exists before calling
-                    if hasattr(self.arrhythmia_detector, 'detect_arrhythmias_with_probabilities'):
-                        heat_map_data = self.arrhythmia_detector.detect_arrhythmias_with_probabilities(
-                            self.ecg_data, analysis['r_peaks'], window_size=2.0
-                        )
-                        self.prepare_heatmap_overlay(heat_map_data)
-                    else:
-                        # Method doesn't exist, clear heatmap
-                        self.heatmap_overlay = None
-                        self.heatmap_time_axis = None
-                else:
-                    # No R-peaks detected, clear heatmap
-                    self.heatmap_overlay = None
-                    self.heatmap_time_axis = None
-            except Exception as heatmap_error:
-                # Heatmap is optional - don't break arrhythmia display
-                print(f" Heatmap generation error (non-critical): {heatmap_error}")
-                self.heatmap_overlay = None
-                self.heatmap_time_axis = None
+            # Heatmap intentionally disabled.
+            self.heatmap_overlay = None
+            self.heatmap_time_axis = None
             
             self.update_plot_with_markers(analysis)
             
@@ -2370,19 +2328,36 @@ class ExpandedLeadView(QDialog):
             error_msg = f"Error in ECG analysis for {self.lead_name}: {str(e)}"
             print(error_msg)
             traceback.print_exc()
-            if hasattr(self, 'arrhythmia_list'):
-                self.arrhythmia_list.setText(f"Analysis error: {str(e)[:50]}")
             print(traceback.format_exc())
-            # Still try to show rate-based detection even if other detections fail
+            # Still try to show rate-based detection even if full pipeline failed.
+            # Route through update_arrhythmia_display so colour-coding and bullet
+            # formatting are applied consistently (Bug 5 fix).
+            fallback_labels = []
             try:
                 if len(self.ecg_data) > 0:
-                    # Try to get r_peaks from analyzer if analysis failed
                     try:
-                        temp_analysis = self.analyzer.analyze_signal(self.ecg_data)
+                        adc_centered = self.ecg_data.astype(float) - float(self.adc_midpoint)
+                        if apply_ecg_filters is not None:
+                            _fs = apply_ecg_filters(
+                                signal=adc_centered,
+                                sampling_rate=float(self.sampling_rate),
+                                ac_filter=None,
+                                emg_filter=None,
+                                dft_filter=None,
+                            )
+                        else:
+                            _fs = self._apply_display_bandpass(
+                                adc_centered,
+                                self.sampling_rate,
+                                low=0.5,
+                                high=40.0,
+                                order=2,
+                            )
+                        temp_analysis = self.analyzer.analyze_signal(_fs)
                         r_peaks = temp_analysis.get('r_peaks', [])
-                    except:
+                    except Exception:
                         r_peaks = []
-                    
+
                     if len(r_peaks) >= 3:
                         rr_intervals = np.diff(r_peaks) / self.sampling_rate * 1000
                         if len(rr_intervals) >= 2:
@@ -2390,22 +2365,16 @@ class ExpandedLeadView(QDialog):
                             if mean_rr > 0:
                                 heart_rate = 60000 / mean_rr
                                 if heart_rate >= 100:
-                                    self.arrhythmia_list.setText("Sinus Tachycardia")
+                                    fallback_labels = ["Sinus Tachycardia"]
                                 elif heart_rate < 60:
-                                    self.arrhythmia_list.setText("Sinus Bradycardia")
-                                else:
-                                    self.arrhythmia_list.setText(f"Analysis error: {str(e)[:50]}")
-                            else:
-                                self.arrhythmia_list.setText(f"Analysis error: {str(e)[:50]}")
-                        else:
-                            self.arrhythmia_list.setText(f"Analysis error: {str(e)[:50]}")
-                    else:
-                        self.arrhythmia_list.setText(f"Analysis error: {str(e)[:50]}")
-                else:
-                    self.arrhythmia_list.setText(f"Analysis error: {str(e)[:50]}")
+                                    fallback_labels = ["Sinus Bradycardia"]
             except Exception as e2:
                 print(f"Error in fallback detection: {e2}")
-                self.arrhythmia_list.setText(f"Analysis error: {str(e)[:50]}")
+
+            if fallback_labels:
+                self.update_arrhythmia_display(fallback_labels)
+            elif hasattr(self, 'arrhythmia_list'):
+                self.arrhythmia_list.setText(f"Analysis error: {str(e)[:80]}")
     
     def calculate_metrics(self, analysis):
         """Calculate ECG metrics from analysis results
@@ -2669,16 +2638,147 @@ class ExpandedLeadView(QDialog):
     def update_arrhythmia_display(self, arrhythmias):
         """Update the arrhythmia display"""
         if arrhythmias:
+            # Display only true rhythm findings (avoid clutter like HRV stats).
+            filtered = []
+            for a in arrhythmias:
+                if not a:
+                    continue
+                s = str(a).strip()
+                # Normalize detector output (UI no longer adds bullet characters).
+                s = s.lstrip("•").strip()
+                if not s:
+                    continue
+                if s.startswith("HRV "):
+                    continue
+                filtered.append(s)
+
+            # Show only ONE rhythm label at a time (no extra findings).
+            # We keep detection multi-label internally, but the UI shows the best single rhythm.
+            priority = [
+                "Asystole (Cardiac Arrest)",
+                "Ventricular Fibrillation Detected",
+                "Torsade de Pointes",
+                "Polymorphic Ventricular Tachycardia",
+                "Possible Ventricular Tachycardia",
+                # Runs / frequent PVCs
+                "Run of PVCs (>=3 consecutive)",
+                "Frequent Multi-focal PVCs",
+                "Ventricular Ectopics Detected",
+                # Pauses / dropped beats (show these when present)
+                "Missed Beat at ~80 BPM (SA Block / Sinus Pause)",
+                "Missed Beat at ~120 BPM (SA Block / Sinus Pause)",
+                "Sinus Pause / Missed Beat",
+                "Atrial Fibrillation 2 (with RVR)",
+                "Atrial Fibrillation Detected",
+                # Ectopy patterns (important to surface)
+                "Trigeminy",
+                "Bigeminy",
+                "Possible Atrial Flutter",
+                "Supraventricular Tachycardia (SVT)",
+                "Paroxysmal Atrial Tachycardia (PAT)",
+                "Atrial Tachycardia",
+                "Junctional Tachycardia",
+                "Possible Junctional Rhythm",
+                "Nodal PNC (Premature Junctional Contraction)",
+                "Second-Degree AV Block (Type I - Wenckebach)",
+                "Second-Degree AV Block (Type II)",
+                "Second-Degree AV Block",
+                "Third-Degree AV Block (Complete Heart Block)",
+                "First-Degree AV Block",
+                "Sinus Tachycardia",
+                "Sinus Bradycardia",
+                "Sinus Arrhythmia",
+                "Normal Sinus Rhythm",
+            ]
+
+            # Map raw labels to canonical rhythm label buckets.
+            # (Detector sometimes returns extra descriptive text; we match by substring.)
+            def _match_label(s: str):
+                for lab in priority:
+                    if lab in s:
+                        return lab
+                return None
+
+            best = None
+
+            # Hard override: if a missed-beat/pause is present, show it (even if flutter is also present).
+            for pause_lab in (
+                "Missed Beat at ~80 BPM (SA Block / Sinus Pause)",
+                "Missed Beat at ~120 BPM (SA Block / Sinus Pause)",
+                "Sinus Pause / Missed Beat",
+            ):
+                if any(pause_lab in s for s in filtered):
+                    best = pause_lab
+                    break
+
+            # Hard override: if ectopy pattern is present, surface it (even if flutter is also present).
+            if best is None:
+                if any("Run of PVCs (>=3 consecutive)" in s for s in filtered):
+                    best = "Run of PVCs (>=3 consecutive)"
+                elif any("Frequent Multi-focal PVCs" in s for s in filtered):
+                    best = "Frequent Multi-focal PVCs"
+                if any("Trigeminy" in s for s in filtered):
+                    best = "Trigeminy"
+                elif any("Bigeminy" in s for s in filtered):
+                    best = "Bigeminy"
+
+            # Otherwise use priority order.
+            for lab in priority:
+                if best is None and any(lab in s for s in filtered):
+                    best = lab
+                    break
+            if best is None:
+                # Fallback: try substring matching into known labels.
+                for s in filtered:
+                    m = _match_label(s)
+                    if m is not None:
+                        best = m
+                        break
+
+            if best is not None:
+                # Rhythm hold (anti-flicker): keep AF stable if it appears intermittently.
+                # Many real-world windows will alternate between AF and flutter depending on
+                # short-term RR regularity; clinically, if AF is present we don't want the UI
+                # to bounce to flutter every other window.
+                now = time.monotonic()
+                if not hasattr(self, "_rhythm_hold"):
+                    self._rhythm_hold = {"label": None, "until": 0.0}
+
+                hold_label = self._rhythm_hold.get("label")
+                hold_until = float(self._rhythm_hold.get("until", 0.0))
+
+                # If we just detected AF, hold it for a while.
+                if best in ("Atrial Fibrillation Detected", "Atrial Fibrillation 2 (with RVR)"):
+                    self._rhythm_hold["label"] = best
+                    self._rhythm_hold["until"] = now + 12.0
+
+                # If we're holding AF, don't downgrade to flutter.
+                if hold_label in ("Atrial Fibrillation Detected", "Atrial Fibrillation 2 (with RVR)") and now < hold_until:
+                    if best == "Possible Atrial Flutter":
+                        best = hold_label
+
+                # If flutter is only "possible" but we have a clear ectopy pattern, prefer it.
+                # This keeps the UI clinically useful without changing detector outputs.
+                if best == "Possible Atrial Flutter":
+                    if any("Trigeminy" in s for s in filtered):
+                        best = "Trigeminy"
+                    elif any("Bigeminy" in s for s in filtered):
+                        best = "Bigeminy"
+
+                filtered = [best]
+
             unique = []
             seen = set()
-            for a in arrhythmias:
+            for a in filtered:
                 if a not in seen:
                     unique.append(a)
                     seen.add(a)
-            arrhythmia_text = "\n".join(f"• {a}" for a in unique)
+
+            # Interpretation UI shows a single plain label (no bullet list).
+            arrhythmia_text = unique[0] if unique else "No specific arrhythmia detected."
         else:
-            arrhythmia_text = "• No specific arrhythmia detected."
-        self.arrhythmia_list.setPlainText(arrhythmia_text)
+            arrhythmia_text = "No specific arrhythmia detected."
+        self.arrhythmia_list.setText(arrhythmia_text)
         
         # Keep parent ECG page's rhythm interpretation in sync for dashboard conclusions
         if hasattr(self, '_parent') and self._parent is not None:
@@ -2687,15 +2787,13 @@ class ExpandedLeadView(QDialog):
             except Exception:
                 pass
         
-        # Color code based on severity
+        # Color code based on severity (keep "no data" neutral)
         is_normal = "Normal Sinus Rhythm" in arrhythmia_text
-        self.arrhythmia_list.setStyleSheet(f"""
-            color: {'#2ecc71' if is_normal else '#b03a2e'};
-            background: #f8f9fa;
-            border: 1px solid #dcdcdc;
-            border-radius: 6px;
-            padding: 6px;
-        """)
+        is_no_specific = "No specific arrhythmia detected" in arrhythmia_text
+        color = "#34495e" if is_no_specific else ("#2ecc71" if is_normal else "#b03a2e")
+        self.arrhythmia_list.setStyleSheet(
+            f"color: {color}; border: none; background: transparent;"
+        )
     
     def update_plot_with_markers(self, analysis):
         """Update the plot without PQRST labels/markers (as requested)"""
@@ -2704,10 +2802,17 @@ class ExpandedLeadView(QDialog):
 
         try:
             # Remove any previously drawn markers/labels and do not add new ones
-            while len(self.ax.collections) > 0:
-                self.ax.collections.pop()
-            while len(self.ax.texts) > 0:
-                self.ax.texts.pop()
+            # Matplotlib uses an ArtistList for these; it may not support pop().
+            for artist in list(getattr(self.ax, "collections", [])):
+                try:
+                    artist.remove()
+                except Exception:
+                    pass
+            for artist in list(getattr(self.ax, "texts", [])):
+                try:
+                    artist.remove()
+                except Exception:
+                    pass
 
             # Ensure no legend is shown
             leg = self.ax.get_legend()
@@ -2727,6 +2832,7 @@ class ExpandedLeadView(QDialog):
         colors = {
             "Normal Sinus Rhythm": "#2ecc71",
             "Atrial Fibrillation": "#e74c3c",
+            "Atrial Flutter": "#9b59b6",
             "Ventricular Tachycardia": "#8e44ad",
             "Premature Ventricular Contractions": "#f39c12",
             "Sinus Bradycardia": "#3498db",

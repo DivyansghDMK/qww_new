@@ -713,9 +713,14 @@ class HRVTestWindow(QWidget):
                 self.stop_capture(device_not_sending=True)
                 return
             
+            # Leads required by HRV PDF header calculations:
+            # - P/QRS/T axis: needs Lead I + Lead aVF
+            # - RV5/SV1: needs V1 + V5
+            _required_header_leads = {"I", "aVF", "V1", "V5"}
+
             for packet in packets:
                 # Packet is a dictionary with lead names as keys (e.g., {"I": value, "II": value, ...})
-                # Extract selected lead directly from the packet
+                # Extract selected lead directly from the packet (used for HRV metrics + display).
                 lead_value = packet.get(self.selected_lead, None)
 
                 # ── Feed packet to HolterBPMController ──────────────────────────
@@ -725,33 +730,45 @@ class HRVTestWindow(QWidget):
                 except Exception:
                     pass
                 
+                # 1) ANALYSIS BUFFERS (Must be RAW for accurate interval calculation)
+                # Always buffer the leads required for HRV PDF header computations.
+                if self.ecg_calculator:
+                    try:
+                        # Map lead name to index
+                        lead_indices = {
+                            "I": 0, "II": 1, "III": 2, "aVR": 3, "aVL": 4, "aVF": 5,
+                            "V1": 6, "V2": 7, "V3": 8, "V4": 9, "V5": 10, "V6": 11
+                        }
+
+                        leads_to_write = set(_required_header_leads)
+                        leads_to_write.add(self.selected_lead)
+
+                        for lead_name in leads_to_write:
+                            if lead_name not in packet:
+                                continue
+                            raw = packet.get(lead_name, None)
+                            if raw is None:
+                                continue
+                            lead_value_f = float(raw)
+                            lead_idx = lead_indices.get(lead_name, None)
+                            if lead_idx is None or lead_idx >= len(self.ecg_calculator.data):
+                                continue
+                            self.ecg_calculator.data[lead_idx] = np.roll(self.ecg_calculator.data[lead_idx], -1)
+                            self.ecg_calculator.data[lead_idx][-1] = lead_value_f
+
+                        # FORCE UPDATE LEAD II (Index 1) if the selected lead is not II,
+                        # to keep the dashboard-style lead II buffer aligned with the selected lead.
+                        if self.selected_lead != "II" and lead_value is not None:
+                            lead_value_f = float(lead_value)
+                            self.ecg_calculator.data[1] = np.roll(self.ecg_calculator.data[1], -1)
+                            self.ecg_calculator.data[1][-1] = lead_value_f
+
+                    except Exception as e:
+                        print(f" Error updating calculator buffer: {e}")
+
                 if lead_value is not None:
                     lead_value = float(lead_value)
                     self.active_samples = min(len(self.data), self.active_samples + 1)
-                    
-                    # 1. ANALYSIS DATA (Must be RAW for accurate interval calculation)
-                    # We update the calculator's buffer with the UNTOUCHED lead value
-                    if self.ecg_calculator:
-                        try:
-                            # Map lead name to index
-                            lead_indices = {
-                                "I": 0, "II": 1, "III": 2, "aVR": 3, "aVL": 4, "aVF": 5,
-                                "V1": 6, "V2": 7, "V3": 8, "V4": 9, "V5": 10, "V6": 11
-                            }
-                            lead_idx = lead_indices.get(self.selected_lead, 1)  # Default to II if not found
-                            
-                            self.ecg_calculator.data[lead_idx] = np.roll(self.ecg_calculator.data[lead_idx], -1)
-                            self.ecg_calculator.data[lead_idx][-1] = lead_value
-
-                            # FORCE UPDATE LEAD II (Index 1) if different
-                            # This ensures the dashboard metrics (which often rely on Lead II) 
-                            # reflect the SELECTED lead's data.
-                            if lead_idx != 1:
-                                self.ecg_calculator.data[1] = np.roll(self.ecg_calculator.data[1], -1)
-                                self.ecg_calculator.data[1][-1] = lead_value
-
-                        except Exception as e:
-                            print(f" Error updating calculator buffer: {e}")
                     
                     # 2. DISPLAY DATA (Use RAW data for display as requested)
                     # User requested raw plot centered at 2048
@@ -1099,8 +1116,12 @@ class HRVTestWindow(QWidget):
             # Generate report using the COMPLETE format (same as main ECG report)
             # This includes: Patient Details, Observation, Conclusions, and 5 one-minute Lead II graphs
 
-            # Retrieve ecg_test_page from dashboard if available to enable P/QRS/T and RV5/SV1 axis computations
-            ecg_page = getattr(self.dashboard_instance, 'ecg_test_page', None) if hasattr(self, 'dashboard_instance') and self.dashboard_instance else None
+            # HRV PDF header needs: Lead I + Lead aVF (P/QRS/T axis) and V1 + V5 (RV5/SV1).
+            # Use the internal ecg_calculator (it has the data we captured during this HRV run).
+            # Fallback to dashboard ecg_test_page only if internal calculator is unavailable.
+            ecg_page = self.ecg_calculator
+            if ecg_page is None:
+                ecg_page = getattr(self.dashboard_instance, 'ecg_test_page', None) if hasattr(self, 'dashboard_instance') and self.dashboard_instance else None
 
             result = generate_hrv_ecg_report(
                 filename=filepath,

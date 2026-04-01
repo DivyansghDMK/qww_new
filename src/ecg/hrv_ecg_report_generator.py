@@ -2245,38 +2245,9 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     except Exception as e:
         print(f"⚠️ RV5/SV1 calc failed: {e}")
         
-    # Dummy values (remove real axis calculations for labels)
-    p_axis_display = "--"
-    qrs_axis_display = "--"
-    t_axis_display = "--"
-    p_mm = 0
-    qrs_mm = 0
-    t_mm = 0
-    
-    #P/QRS/T SECOND COLUMN - P/QRS/T Axis (ABOVE ECG GRAPH - same position)
-    p_qrs_label = String(240, 740, f"P/QRS/T  : {p_axis_display}/{qrs_axis_display}/{t_axis_display}°",  # Changed to axis values
-                         fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(p_qrs_label)
-
-    # Dummy values (remove real RV5/SV1 calculations for labels)
-    rv5_mv = 0.0
-    sv1_mv = 0.0
-    
-    # SECOND COLUMN - RV5/SV1 (ABOVE ECG GRAPH - shifted further up)
-    # Display SV1 as negative mV (GE/Hospital standard)
-    # Use 3 decimal places for precision (not rounded to integers)
-    rv5_sv_label = String(240, 720, f"RV5/SV1  : {rv5_mv:.3f} mV/{sv1_mv:.3f} mV",  # SV1 will show as negative
-                          fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(rv5_sv_label)
-
-    # Dummy value for RV5+SV1 label
-    rv5_sv1_sum = 0.0
-    
-    # SECOND COLUMN - RV5+SV1 (ABOVE ECG GRAPH - shifted further up)
-    # Use 3 decimal places for precision
-    rv5_sv1_sum_label = String(240, 700, f"RV5+SV1 : {rv5_sv1_sum:.3f} mV",  # Moved up from 660 to 670
-                               fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(rv5_sv1_sum_label)
+    # For HRV test we capture a single lead window. Axis and RV5/SV1 are not
+    # clinically meaningful in this context, so we intentionally omit those
+    # header lines from the HRV report.
 
     # Dummy value for QTCF label (remove real calculation)
     qtcf_val = None
@@ -3555,9 +3526,9 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
 
     # ── RIGHT metrics block (x=420) ───────────────────────────────────────────
     _RX = 420
-    master_drawing.add(String(_RX, 525, f"P/QRS/T : {p_axis}/{qrs_axis_str}/{t_axis_str}\u00b0", fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
-    master_drawing.add(String(_RX, 511, f"RV5/SV1 : {rv5:.3f}/{sv1:.3f} mV",                    fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
-    master_drawing.add(String(_RX, 497, f"RV5+SV1 : {rv5_sv1_sum:.3f} mV",                      fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
+    # master_drawing.add(String(_RX, 525, f"P/QRS/T : {p_axis}/{qrs_axis_str}/{t_axis_str}\u00b0", fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
+    # master_drawing.add(String(_RX, 511, f"RV5/SV1 : {rv5:.3f}/{sv1:.3f} mV",                    fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
+    # master_drawing.add(String(_RX, 497, f"RV5+SV1 : {rv5_sv1_sum:.3f} mV",                      fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
     master_drawing.add(String(_RX, 483, f"QTCF     : {qtcf_text}",                               fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
     master_drawing.add(String(_RX, 469, filter_line,                                             fontSize=8,   fontName="Helvetica", fillColor=colors.black))
 

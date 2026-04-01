@@ -66,11 +66,11 @@ class ECGAnalysisWindow(QDialog):
             QFrame { background: #ffffff; border: 1px solid #e2e2e2; border-radius: 8px; }
             QLabel { color: #111111; font-size: 11px; }
             QPushButton {
-                background: #111111; color: #ffffff; border: 1px solid #111111;
+                background: #ffffff; color: #ffffff; border: 1px solid #111111;
                 border-radius: 6px; padding: 6px 12px; font-size: 11px; font-weight: 600;
             }
             QPushButton:hover { background: #000000; }
-            QPushButton:pressed { background: #2a2a2a; }
+            QPushButton:pressed { background: #dcdde1; }
             QPushButton#secondary {
                 background: #ffffff; color: #111111; border: 1px solid #111111;
             }
@@ -84,11 +84,11 @@ class ECGAnalysisWindow(QDialog):
                 gridline-color: #ededed; selection-background-color: #111111; selection-color: #ffffff;
             }
             QHeaderView::section {
-                background: #111111; color: #ffffff; border: none;
+                background: #ffffff; color: #ffffff; border: none;
                 padding: 6px; font-size: 11px; font-weight: bold;
             }
             QSlider::groove:horizontal { height: 6px; background: #dddddd; border-radius: 3px; }
-            QSlider::handle:horizontal { width: 14px; background: #111111; margin: -5px 0; border-radius: 7px; }
+            QSlider::handle:horizontal { width: 14px; background: #ffffff; margin: -5px 0; border-radius: 7px; }
         """)
 
         self.reports = []
@@ -160,7 +160,7 @@ class ECGAnalysisWindow(QDialog):
         self.export_btn.clicked.connect(self.export_report)
 
         self.pdf_btn = QPushButton("Generate PDF")
-        self.pdf_btn.setStyleSheet("background: #e74c3c; color: white; font-weight: bold;")
+        self.pdf_btn.setStyleSheet("background: #e74c3c; color: #0097e6; font-weight: bold;")
         self.pdf_btn.clicked.connect(self.generate_pdf_report)
 
         self.api_id_lbl = QLabel("API ID:")
@@ -169,7 +169,7 @@ class ECGAnalysisWindow(QDialog):
         self.api_id_input.setFixedWidth(60)
         
         self.api_fetch_btn = QPushButton("Fetch")
-        self.api_fetch_btn.setStyleSheet("background: #3498db; color: white;")
+        self.api_fetch_btn.setStyleSheet("background: #3498db; color: #0097e6;")
         self.api_fetch_btn.clicked.connect(self.fetch_api_report)
 
         right.addWidget(QLabel("Report:"))

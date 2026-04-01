@@ -741,6 +741,9 @@ class ECGTestPage(QWidget):
         # Use GitHub version data structure: list of numpy arrays for all 12 leads
         # Initialize data buffers with memory management
         self.data = [np.zeros(HISTORY_LENGTH, dtype=np.float32) for _ in range(12)]
+        # Multi-lead snapshot for ExpandedLeadView (Phase 4 fusion).
+        # Updated continuously from the same 12-lead packet stream.
+        self.latest_multilead_snapshot = {}
         
         # Filter Pipeline Configuration (from standalone_ecg_plot.py)
         self.SAMPLE_RATE = 500
@@ -1160,7 +1163,8 @@ class ECGTestPage(QWidget):
 
         # --- NEW: Create the PyQtGraph plot grid (from GitHub version) ---
         grid = QGridLayout(self.plot_area)
-        grid.setSpacing(8)
+        grid.setSpacing(2)   # Tight spacing so black borders are visible between cells
+        grid.setContentsMargins(2, 2, 2, 2)
         self.plot_widgets = []
         self.data_lines = []
         
@@ -1189,8 +1193,15 @@ class ECGTestPage(QWidget):
             # Hide Y-axis labels for cleaner display
             plot_widget.getAxis('left').setTicks([])
             plot_widget.getAxis('left').setLabel('')
-            plot_widget.getAxis('bottom').setTextPen('k')
-            
+            plot_widget.getAxis('left').setStyle(showValues=False)
+            # Hide X-axis labels (tick numbers) completely
+            plot_widget.getAxis('bottom').setTicks([])
+            plot_widget.getAxis('bottom').setLabel('')
+            plot_widget.getAxis('bottom').setStyle(showValues=False)
+            plot_widget.getAxis('bottom').hide()
+            # Black 1px border around each plot box
+            plot_widget.setStyleSheet("border: 1px solid black;")
+
             # Get color for this lead
             lead_name = self.leads[i]
             lead_color = lead_colors.get(lead_name, '#000000')
@@ -8644,6 +8655,19 @@ class ECGTestPage(QWidget):
                             except Exception as e:
                                 print(f" Error updating data buffer {i} ({lead_name}): {e}")
                                 continue
+
+                        # Publish a multi-lead snapshot for fusion detectors.
+                        # (Key names must match what ArrhythmiaDetector expects.)
+                        try:
+                            if len(self.data) >= 11:
+                                self.latest_multilead_snapshot = {
+                                    "I": self.data[0],
+                                    "aVF": self.data[5],
+                                    "V1": self.data[6],
+                                    "V5": self.data[10],
+                                }
+                        except Exception:
+                            pass
                         
                         # Update sampling rate counter
                         try:

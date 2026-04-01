@@ -3555,9 +3555,9 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
 
     # ── RIGHT metrics block (x=420) ───────────────────────────────────────────
     _RX = 420
-    master_drawing.add(String(_RX, 525, f"P/QRS/T : {p_axis}/{qrs_axis_str}/{t_axis_str}\u00b0", fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
-    master_drawing.add(String(_RX, 511, f"RV5/SV1 : {rv5:.3f}/{sv1:.3f} mV",                    fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
-    master_drawing.add(String(_RX, 497, f"RV5+SV1 : {rv5_sv1_sum:.3f} mV",                      fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
+    # master_drawing.add(String(_RX, 525, f"P/QRS/T : {p_axis}/{qrs_axis_str}/{t_axis_str}\u00b0", fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
+    # master_drawing.add(String(_RX, 511, f"RV5/SV1 : {rv5:.3f}/{sv1:.3f} mV",                    fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
+    # master_drawing.add(String(_RX, 497, f"RV5+SV1 : {rv5_sv1_sum:.3f} mV",                      fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
     master_drawing.add(String(_RX, 483, f"QTCF     : {qtcf_text}",                               fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
     master_drawing.add(String(_RX, 469, filter_line,                                             fontSize=8,   fontName="Helvetica", fillColor=colors.black))
 

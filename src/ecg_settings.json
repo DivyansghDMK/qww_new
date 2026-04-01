@@ -15,5 +15,5 @@
   "factory_self_test": "skip",
   "factory_memory_reset": "keep",
   "factory_reset": "cancel",
-  "report_format": "6_2"
+  "report_format": "12_1"
 }
