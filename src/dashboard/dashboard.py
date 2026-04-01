@@ -1476,7 +1476,7 @@ class Dashboard(QWidget):
             fade_format.setForeground(QColor(200, 200, 200))
             fade_format.setBackground(QColor(240, 240, 240))
             
-            days_in_month = QDate.daysInMonth(month, year)
+            days_in_month = QDate(year, month, 1).daysInMonth()
             for day in range(1, days_in_month + 1):
                 check_date = QDate(year, month, day)
                 if check_date.isValid() and check_date < self._user_signup_date:
@@ -1616,12 +1616,6 @@ class Dashboard(QWidget):
 
     def refresh_recent_reports_ui(self, filter_date=None):
         import os, json
-        
-        # CRITICAL FIX: Skip complete UI refresh when triggered by calendar  
-        # This prevents the mysterious popup from appearing
-        if getattr(self, '_calendar_triggered', False):
-            print(" BLOCKED: Skipping refresh_recent_reports_ui during calendar click to prevent popup")
-            return
         
         base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
         reports_dir = os.path.join(base_dir, "..", "reports")

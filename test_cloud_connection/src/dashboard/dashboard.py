@@ -1612,11 +1612,8 @@ class Dashboard(QWidget):
     def refresh_recent_reports_ui(self, filter_date=None):
         import os, json
         
-        # CRITICAL FIX: Skip complete UI refresh when triggered by calendar  
-        # This prevents the mysterious popup from appearing
-        if getattr(self, '_calendar_triggered', False):
-            print(" BLOCKED: Skipping refresh_recent_reports_ui during calendar click to prevent popup")
-            return
+        # Note: We deliberately DO NOT block UI refresh here anymore.
+        # The 'mysterious popup' is handled by _calendar_triggered elsewhere.
         
         base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
         reports_dir = os.path.join(base_dir, "..", "reports")

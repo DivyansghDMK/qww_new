@@ -59,7 +59,8 @@ class ECGAnalysisWindow(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("ECG Analysis")
-        self.setGeometry(80, 60, 1700, 980)
+        self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
+        self.showMaximized()
 
         self.setStyleSheet("""
             QDialog { background: #ffffff; color: #111111; }
@@ -127,6 +128,12 @@ class ECGAnalysisWindow(QDialog):
         frame = QFrame()
         lay = QHBoxLayout(frame)
         lay.setContentsMargins(10, 8, 10, 8)
+
+        self.back_btn = QPushButton("⬅ Back to Dashboard")
+        self.back_btn.setStyleSheet("background: #ff6600; color: white; font-weight: bold; font-size: 13px; padding: 8px 15px; border: none; border-radius: 6px;")
+        self.back_btn.clicked.connect(self.close)
+        lay.addWidget(self.back_btn)
+        lay.addSpacing(20)
 
         # Add logo to the top bar
         logo_label = QLabel()
