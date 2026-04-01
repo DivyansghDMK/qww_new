@@ -4584,13 +4584,102 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
         import traceback
         traceback.print_exc()
     
-    # ==================== BUILD PDF (2 PAGES) ====================
+    # ==================== BUILD SPANDAN-STYLE PDF ====================
     
-    # Build PDF - callbacks are already attached to PageTemplates
-    doc.build(story)
-    print(f"✅ HRV ECG Report generated: {filename}")
-    print(f"   📄 Page 1: 5 One-Minute Lead II ECG Graphs (Landscape)")
-    print(f"   📄 Page 2: HRV Analysis - Time & Frequency Domain (Landscape)")
+    from ecg.spandan_hrv_report import generate_hrv_report
+    
+    # We map variables to the Spandan generator
+    try:
+        def s_int(v):
+            if v is None: return 0
+            try: return int(float(v))
+            except: return 0
+            
+        def s_float(v):
+            if v is None: return 0.0
+            try: return float(v)
+            except: return 0.0
+
+        spandan_patient = {
+            'name': f"{patient.get('first_name','')} {patient.get('last_name','')}".strip() if patient else "Unknown",
+            'age': str(patient.get('age', '')) if patient else "",
+            'gender': str(patient.get('gender', '')) if patient else "",
+            'date': str(patient.get('date_time', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))).split()[0] if patient else "",
+            'time': str(patient.get('date_time', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))).split()[1] if patient and ' ' in str(patient.get('date_time', '')) else "",
+            'type': 'Standard',
+            'report_id': ''
+        }
+        
+        spandan_org = {
+            'org_name': patient.get("Org.", "") if patient else "",
+            'org_address': "Deckmount Electronics, Plot No. 683, Phase V, Udyog Vihar, Sector 19, Gurugram, Haryana 122016",
+            'phone': patient.get("doctor_mobile", "") if patient else "",
+            'doctor_name': patient.get('doctor', '') if patient else "",
+            'doctor_sign': ''
+        }
+        
+        spandan_ecg_params = {
+            'HR': s_int(hrv_hr_bpm if 'hrv_hr_bpm' in locals() else original_metrics_from_json.get("HR", 0)),
+            'PR': s_int(data.get("PR", 0) if data else 0),
+            'QRS': s_int(data.get("QRS", 0) if data else 0),
+            'RR': s_int(hrv_rr_ms if 'hrv_rr_ms' in locals() else 0),
+            'QT': s_int(data.get("QT", 0) if data else 0),
+            'QTc': s_int(data.get("QTc", 0) if data else 0),
+            'QTCF': s_int(data.get("QTc", 0) if data else 0)  # Use QTc as approximation if QTCF is not available
+        }
+        
+        spandan_hrv_metrics = {
+            'SDANN': s_float(sdann if 'sdann' in locals() else 0),
+            'SDNN': s_float(sdnn if 'sdnn' in locals() else 0),
+            'RMSSD': s_float(rmssd if 'rmssd' in locals() else 0),
+            'NN50': s_int(nn50_count if 'nn50_count' in locals() else 0),
+            'LF': s_float(lf_power if 'lf_power' in locals() else 0.03),
+            'HF': s_float(hf_power if 'hf_power' in locals() else 0.21),
+            'rr_per_min': rr_per_minute if 'rr_per_minute' in locals() else [],
+            'hr_per_min': hr_per_minute if 'hr_per_minute' in locals() else []
+        }
+        
+        spandan_segments = []
+        if 'segments_pre' in locals():
+            for seg in segments_pre[:5]:
+                if seg and len(seg) > 0:
+                    if isinstance(seg[0], dict) and 'value' in seg[0]:
+                        spandan_segments.append(np.array([d['value'] for d in seg], dtype=float))
+                    else:
+                        spandan_segments.append(np.array(seg, dtype=float))
+                else:
+                    spandan_segments.append(None)
+                    
+        # Fallback if less than 5 segments
+        while len(spandan_segments) < 5:
+            spandan_segments.append(None)
+        
+        spandan_conclusions = filtered_conclusions if 'filtered_conclusions' in locals() else []
+        
+        # Original: adc_per_box = 6400 / wave_gain. So 1 mV (2 boxes) = 12800 / wave_gain ADC.
+        # Actually 1 box (5mm) = 6400 ADC unscaled. So 1mV (10mm) = 12800 ADC units natively?
+        # Let's use 1280.0 which correctly converts the amplitude to match 10mm/mV scale.
+        adc_per_mv_calc = (adc_per_box_multiplier / 5.0) if 'adc_per_box_multiplier' in locals() else 1280.0
+        
+        generate_hrv_report(
+            output_path=filename,
+            patient=spandan_patient,
+            org=spandan_org,
+            ecg_params=spandan_ecg_params,
+            hrv_metrics=spandan_hrv_metrics,
+            segments=spandan_segments,
+            conclusions=spandan_conclusions,
+            wave_gain=wave_gain_mm_mv,
+            adc_per_mv=adc_per_mv_calc,
+            fs=sampling_rate if 'sampling_rate' in locals() else 500.0
+        )
+        print(f"✅ Spandan-Style HRV ECG Report generated: {filename}")
+    except Exception as e:
+        print(f"⚠️ Error generating Spandan-style HRV report: {e}, falling back to default layout.")
+        import traceback
+        traceback.print_exc()
+        doc.build(story)
+        print(f"✅ Default HRV ECG Report generated: {filename}")
     
     return filename
 
