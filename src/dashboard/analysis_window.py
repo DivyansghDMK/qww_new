@@ -20,7 +20,7 @@ from pathlib import Path
 
 from PyQt5.QtCore import Qt, QTimer, QPoint, QPointF, QRect, QRectF, pyqtSignal
 from PyQt5.QtGui import (QFont, QPixmap, QCursor, QPainter, QPen,
-                         QColor, QBrush, QRadialGradient, QFontMetrics)
+                         QColor, QBrush, QRadialGradient, QFontMetrics, QImage)
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTableWidget, QTableWidgetItem, QFrame, QMessageBox,
@@ -70,7 +70,7 @@ TOOL_CURSORS = {
     TOOL_SELECT:    Qt.ArrowCursor,
     TOOL_RULER:     Qt.CrossCursor,
     TOOL_CALIPER:   Qt.SplitHCursor,
-    TOOL_MAGNIFIER: Qt.OpenHandCursor,
+    TOOL_MAGNIFIER: Qt.CrossCursor,
     TOOL_ANNOTATE:  Qt.PointingHandCursor,
 }
 
@@ -166,7 +166,8 @@ class InteractiveLeadCanvas(FigureCanvas):
         tool = self.tool
         xd, yd = self._data_coords(event)
         if xd is None:
-            self._clear_overlay('_crosshair_v', '_crosshair_h', '_readout_text')
+            if tool != TOOL_MAGNIFIER:
+                self._clear_overlay('_crosshair_v', '_crosshair_h', '_readout_text')
             self.draw_idle()
             return
 
@@ -188,6 +189,17 @@ class InteractiveLeadCanvas(FigureCanvas):
             self.update()   # triggers paintEvent for magnifier glass
 
         self.draw_idle()
+
+    def mouseMoveEvent(self, event):
+        if self.tool == TOOL_MAGNIFIER:
+            self._mag_pos = event.pos()
+            self.update()
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event):
+        self._mag_pos = None
+        self.update()
+        super().leaveEvent(event)
 
     def _on_mouse_press(self, event):
         tool = self.tool
@@ -341,10 +353,10 @@ class InteractiveLeadCanvas(FigureCanvas):
         """Right-click context menu for quick annotation."""
         menu = QMenu(self)
         menu.setStyleSheet("""
-            QMenu { background:#1e2235; color:#e0e8ff; border:1px solid #3a4a7a;
+            QMenu { background:#1e2235; color:#fff4e8; border:1px solid #6a4d24;
                     font-size:11px; border-radius:6px; }
-            QMenu::item:selected { background:#0097e6; color:white; }
-            QMenu::separator { height:1px; background:#3a4a7a; margin:2px 10px; }
+            QMenu::item:selected { background:#ff8a1f; color:white; }
+            QMenu::separator { height:1px; background:#6a4d24; margin:2px 10px; }
         """)
         menu.addAction(f"📍  Mark point at {xd*1000:.0f} ms")
         menu.addSeparator()
@@ -392,7 +404,7 @@ class InteractiveLeadCanvas(FigureCanvas):
         clip_path.addEllipse(QPointF(cx, cy), r, r)
         painter.setClipPath(clip_path)
 
-        # Source rect from current pixmap (zoomed content)
+        # Source rect from current rendered canvas
         src_w = int(self.width() / zoom)
         src_h = int(self.height() / zoom)
         src_x = max(0, min(cx - src_w // 2, self.width()  - src_w))
@@ -400,27 +412,36 @@ class InteractiveLeadCanvas(FigureCanvas):
         src_rect = QRect(src_x, src_y, src_w, src_h)
         dst_rect = QRect(cx - r, cy - r, 2 * r, 2 * r)
 
-        px = self.grab()
-        painter.drawPixmap(dst_rect, px, src_rect)
+        try:
+            buf = np.asarray(self.buffer_rgba())
+            h, w, _ = buf.shape
+            img = QImage(buf.data, w, h, 4 * w, QImage.Format_RGBA8888)
+            px = QPixmap.fromImage(img.copy())
+            painter.drawPixmap(dst_rect, px, src_rect)
+        except Exception:
+            painter.setBrush(QColor(255, 255, 255, 30))
+            painter.setPen(Qt.NoPen)
+            painter.drawEllipse(QPointF(cx, cy), r - 2, r - 2)
         painter.setClipping(False)
 
         # Lens border
         grad = QRadialGradient(QPointF(cx, cy), r)
-        grad.setColorAt(0.85, QColor(0, 0, 0, 0))
-        grad.setColorAt(1.0,  QColor(0, 180, 255, 180))
+        grad.setColorAt(0.0, QColor(255, 255, 255, 35))
+        grad.setColorAt(0.82, QColor(255, 255, 255, 8))
+        grad.setColorAt(1.0,  QColor(255, 140, 24, 170))
         painter.setBrush(QBrush(grad))
-        painter.setPen(QPen(QColor(0, 200, 255), 2.2))
+        painter.setPen(QPen(QColor(255, 166, 77), 2.4))
         painter.drawEllipse(QPointF(cx, cy), r, r)
 
         # Crosshair inside lens
-        painter.setPen(QPen(QColor(0, 230, 255, 160), 1))
+        painter.setPen(QPen(QColor(255, 255, 255, 180), 1))
         painter.drawLine(cx - r, cy, cx + r, cy)
         painter.drawLine(cx, cy - r, cx, cy + r)
 
         # Zoom label
-        painter.setPen(QPen(QColor(0, 200, 255)))
+        painter.setPen(QPen(QColor(255, 244, 232)))
         painter.setFont(QFont("Consolas", 7))
-        painter.drawText(cx - r + 4, cy + r - 4, f"{zoom}×")
+        painter.drawText(cx - r + 6, cy + r - 8, f"{zoom}x")
         painter.end()
 
 
@@ -473,40 +494,40 @@ class ECGAnalysisWindow(QDialog):
     def _apply_stylesheet(self):
         self.setStyleSheet("""
             QDialog {
-                background: #0d0f1a;
-                color: #c8d8f0;
+                background: #0f1220;
+                color: #f3e8dc;
             }
             QFrame#topbar {
-                background: #12152a;
+                background: #15192b;
                 border: none;
-                border-bottom: 2px solid #1e2d5a;
+                border-bottom: 2px solid #6d4a1f;
             }
             QFrame#plotpanel {
-                background: #0d0f1a;
+                background: #0f1220;
                 border: none;
             }
             QFrame#bottompanel {
-                background: #12152a;
-                border: 1px solid #1e2d5a;
+                background: #15192b;
+                border: 1px solid #5f4523;
                 border-radius: 8px;
             }
             QFrame#leadbox {
                 background: #090b14;
-                border: 1px solid #1a2240;
+                border: 1px solid #342a23;
                 border-radius: 4px;
             }
             QFrame#leadbox_expanded {
                 background: #090b14;
-                border: 2px solid #0097e6;
+                border: 2px solid #ff8a1f;
                 border-radius: 6px;
             }
             QFrame#toolbar_frame {
-                background: #161929;
-                border: 1px solid #1e2d5a;
+                background: #171b2e;
+                border: 1px solid #5b4325;
                 border-radius: 8px;
             }
             QLabel {
-                color: #a0b8d8;
+                color: #e9dccd;
                 font-size: 11px;
                 background: transparent;
                 border: none;
@@ -520,37 +541,37 @@ class ECGAnalysisWindow(QDialog):
                 border: none;
             }
             QPushButton {
-                background: #161929;
-                color: #a0b8d8;
-                border: 1px solid #2a3a6a;
+                background: #1b2036;
+                color: #fff4e8;
+                border: 1px solid #5e4827;
                 border-radius: 5px;
                 padding: 5px 12px;
                 font-size: 11px;
             }
             QPushButton:hover {
-                background: #1e2d5a;
-                border-color: #0097e6;
+                background: #2a2230;
+                border-color: #ff8a1f;
                 color: #ffffff;
             }
             QPushButton#primary {
-                background: #0097e6;
+                background: #ff8a1f;
                 color: #ffffff;
-                border: 1px solid #0097e6;
+                border: 1px solid #ff8a1f;
                 font-weight: bold;
             }
-            QPushButton#primary:hover { background: #0080bc; }
+            QPushButton#primary:hover { background: #ff9d3d; }
             QPushButton#apibtn {
-                background: #0097e6;
+                background: #ff8a1f;
                 color: #ffffff;
                 border: none;
                 border-radius: 5px;
             }
-            QPushButton#apibtn:hover { background: #0080bc; }
+            QPushButton#apibtn:hover { background: #ff9d3d; }
             /* Tool buttons */
             QToolButton {
-                background: #161929;
-                color: #a0b8d8;
-                border: 1px solid #2a3a6a;
+                background: #191d31;
+                color: #fff4e8;
+                border: 1px solid #5b4b2a;
                 border-radius: 6px;
                 padding: 6px;
                 font-size: 13px;
@@ -558,19 +579,19 @@ class ECGAnalysisWindow(QDialog):
                 min-height: 36px;
             }
             QToolButton:hover {
-                background: #1e2d5a;
-                border-color: #0097e6;
+                background: #2a2230;
+                border-color: #ff8a1f;
                 color: #ffffff;
             }
             QToolButton:checked {
-                background: #0056a3;
-                border: 2px solid #0097e6;
+                background: #ff8a1f;
+                border: 2px solid #ffd9b0;
                 color: #ffffff;
             }
             QComboBox {
-                background: #161929;
-                color: #a0b8d8;
-                border: 1px solid #2a3a6a;
+                background: #1a1f34;
+                color: #fff4e8;
+                border: 1px solid #5b4525;
                 border-radius: 5px;
                 padding: 4px 8px;
                 font-size: 11px;
@@ -578,58 +599,58 @@ class ECGAnalysisWindow(QDialog):
             QComboBox::drop-down { border: none; width: 18px; }
             QComboBox::down-arrow { image: none; }
             QComboBox QAbstractItemView {
-                background: #161929;
-                color: #a0b8d8;
-                selection-background-color: #0097e6;
-                border: 1px solid #2a3a6a;
+                background: #1a1f34;
+                color: #fff4e8;
+                selection-background-color: #ff8a1f;
+                border: 1px solid #5b4525;
             }
             QLineEdit {
-                background: #161929;
-                color: #c8d8f0;
-                border: 1px solid #2a3a6a;
+                background: #1a1f34;
+                color: #fff4e8;
+                border: 1px solid #5b4525;
                 border-radius: 5px;
                 padding: 4px 8px;
                 font-size: 11px;
             }
             QTextEdit {
                 background: #090b14;
-                color: #a0b8d8;
-                border: 1px solid #2a3a6a;
+                color: #f0e1d1;
+                border: 1px solid #5b4525;
                 border-radius: 5px;
                 padding: 4px;
                 font-size: 10px;
             }
             QTableWidget {
                 background: #090b14;
-                color: #a0b8d8;
-                border: 1px solid #2a3a6a;
-                gridline-color: #1e2d5a;
-                selection-background-color: #0056a3;
+                color: #f0e1d1;
+                border: 1px solid #5b4525;
+                gridline-color: #46341f;
+                selection-background-color: #ff8a1f;
                 selection-color: #ffffff;
                 border-radius: 4px;
                 font-size: 10px;
             }
             QHeaderView::section {
-                background: #161929;
-                color: #6888b8;
+                background: #1a1f34;
+                color: #ffcb95;
                 border: none;
-                border-bottom: 1px solid #2a3a6a;
+                border-bottom: 1px solid #5b4525;
                 padding: 5px;
                 font-size: 10px;
                 font-weight: bold;
             }
             QSlider::groove:horizontal {
                 height: 3px;
-                background: #2a3a6a;
+                background: #5b4525;
                 border-radius: 1px;
             }
             QSlider::sub-page:horizontal {
-                background: #0097e6;
+                background: #ff8a1f;
                 border-radius: 1px;
             }
             QSlider::handle:horizontal {
                 width: 12px; height: 12px;
-                background: #0097e6;
+                background: #ffb15a;
                 margin: -4px 0;
                 border-radius: 6px;
             }
@@ -638,7 +659,7 @@ class ECGAnalysisWindow(QDialog):
                 width: 6px;
             }
             QScrollBar::handle:vertical {
-                background: #2a3a6a;
+                background: #6b4a23;
                 border-radius: 3px;
             }
         """)
@@ -687,21 +708,21 @@ class ECGAnalysisWindow(QDialog):
         else:
             logo_label.setText("◈ DECKMOUNT")
             logo_label.setStyleSheet(
-                "color:#0097e6;font-size:15px;font-weight:bold;font-family:'Courier New';")
+                "color:#ffb15a;font-size:15px;font-weight:bold;font-family:'Courier New';")
         lay.addWidget(logo_label)
 
         sep = QFrame()
         sep.setFrameShape(QFrame.VLine)
-        sep.setStyleSheet("background:#0097e6;max-width:2px;margin:4px 6px;border:none;")
+        sep.setStyleSheet("background:#ff8a1f;max-width:2px;margin:4px 6px;border:none;")
         lay.addWidget(sep)
 
         pat_col = QVBoxLayout()
         pat_col.setSpacing(1)
         self.patient_lbl = QLabel("Patient: —")
         self.patient_lbl.setFont(QFont("Courier New", 11, QFont.Bold))
-        self.patient_lbl.setStyleSheet("color:#e0ecff;font-weight:bold;")
+        self.patient_lbl.setStyleSheet("color:#fff5ea;font-weight:bold;")
         self.patient_meta_lbl = QLabel("ID: — | Age: — | Gender: —")
-        self.patient_meta_lbl.setStyleSheet("color:#5878a8;font-size:10px;")
+        self.patient_meta_lbl.setStyleSheet("color:#d8b28b;font-size:10px;")
         pat_col.addWidget(self.patient_lbl)
         pat_col.addWidget(self.patient_meta_lbl)
         lay.addLayout(pat_col)
@@ -710,8 +731,8 @@ class ECGAnalysisWindow(QDialog):
         # Measurement readout bar (ruler/caliper results)
         self.measure_lbl = QLabel("")
         self.measure_lbl.setStyleSheet(
-            "color:#ffdd00;font-family:'Courier New';font-size:11px;"
-            "background:#1a1400;border:1px solid #554400;border-radius:4px;padding:3px 10px;")
+            "color:#ffe5bf;font-family:'Courier New';font-size:11px;"
+            "background:#241808;border:1px solid #8a5a1f;border-radius:4px;padding:3px 10px;")
         self.measure_lbl.setMinimumWidth(280)
         self.measure_lbl.setAlignment(Qt.AlignCenter)
         lay.addWidget(self.measure_lbl)
@@ -739,7 +760,7 @@ class ECGAnalysisWindow(QDialog):
 
         sep2 = QFrame()
         sep2.setFrameShape(QFrame.VLine)
-        sep2.setStyleSheet("background:#2a3a6a;max-width:1px;margin:4px 4px;border:none;")
+        sep2.setStyleSheet("background:#5b4525;max-width:1px;margin:4px 4px;border:none;")
         lay.addWidget(sep2)
 
         lay.addWidget(QLabel("API ID:"))
@@ -763,11 +784,11 @@ class ECGAnalysisWindow(QDialog):
         lay.setSpacing(6)
 
         tool_data = [
-            (TOOL_SELECT,    "⊹",  "Select / Pan\n(S)"),
-            (TOOL_RULER,     "📏",  "Measurement Ruler\nDrag to measure Δt & ΔmV\n(R)"),
-            (TOOL_CALIPER,   "⊢⊣", "Interval Caliper\nClick ×2 → RR/PP bpm\n(C)"),
-            (TOOL_MAGNIFIER, "🔍", "Magnifier Lens\nHover to zoom in\n(M)"),
-            (TOOL_ANNOTATE,  "✎",  "Quick Annotate\nClick start→end on lead\n(A)"),
+            (TOOL_SELECT,    "S", "Select / Pan\n(S)"),
+            (TOOL_RULER,     "R", "Measurement Ruler\nDrag to measure dt & dmV\n(R)"),
+            (TOOL_CALIPER,   "C", "Interval Caliper\nClick x2 -> RR/PP bpm\n(C)"),
+            (TOOL_MAGNIFIER, "Z", "Magnifier Lens\nHover to zoom in\n(M)"),
+            (TOOL_ANNOTATE,  "A", "Quick Annotate\nClick start->end on lead\n(A)"),
         ]
 
         self._tool_btns = {}
@@ -779,7 +800,7 @@ class ECGAnalysisWindow(QDialog):
             btn.setText(icon)
             btn.setToolTip(tip)
             btn.setCheckable(True)
-            btn.setFont(QFont("Segoe UI Emoji", 14))
+            btn.setFont(QFont("Arial", 11, QFont.Bold))
             if tool_id == TOOL_SELECT:
                 btn.setChecked(True)
             btn.clicked.connect(lambda checked, t=tool_id: self.set_tool(t))
@@ -792,7 +813,7 @@ class ECGAnalysisWindow(QDialog):
         # Separator
         sep = QFrame()
         sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet("background:#2a3a6a;border:none;max-height:1px;")
+        sep.setStyleSheet("background:#5b4525;border:none;max-height:1px;")
         lay.addWidget(sep)
 
         lay.addSpacing(4)
@@ -800,25 +821,32 @@ class ECGAnalysisWindow(QDialog):
         # Zoom level for magnifier
         zoom_lbl = QLabel("Zoom")
         zoom_lbl.setAlignment(Qt.AlignCenter)
-        zoom_lbl.setStyleSheet("color:#5878a8;font-size:9px;")
+        zoom_lbl.setStyleSheet("color:#ffd7b0;font-size:9px;font-weight:bold;")
         lay.addWidget(zoom_lbl)
 
         self.zoom_combo = QComboBox()
-        self.zoom_combo.addItems(["2×", "3×", "4×", "5×"])
+        self.zoom_combo.addItems(["2x", "3x", "4x", "5x"])
         self.zoom_combo.setCurrentIndex(1)
         self.zoom_combo.currentIndexChanged.connect(
             lambda i: setattr(self, 'magnifier_zoom', i + 2))
         self.zoom_combo.setFixedWidth(40)
-        self.zoom_combo.setStyleSheet("font-size:10px;padding:2px;")
+        self.zoom_combo.setStyleSheet("""
+            font-size:10px;
+            padding:2px;
+            color:#fff4e8;
+            background:#1b1f34;
+            border:1px solid #6a532e;
+            border-radius:4px;
+        """)
         lay.addWidget(self.zoom_combo)
 
         lay.addStretch()
 
         # Clear overlays button
         clr_btn = QToolButton()
-        clr_btn.setText("✕")
+        clr_btn.setText("X")
         clr_btn.setToolTip("Clear all measurements & overlays")
-        clr_btn.setFont(QFont("Arial", 12))
+        clr_btn.setFont(QFont("Arial", 11, QFont.Bold))
         clr_btn.clicked.connect(self._clear_all_overlays)
         lay.addWidget(clr_btn)
 
@@ -832,10 +860,10 @@ class ECGAnalysisWindow(QDialog):
         # Update measure label hint
         hints = {
             TOOL_SELECT:    "",
-            TOOL_RULER:     "📏  Drag on any lead to measure time & amplitude",
-            TOOL_CALIPER:   "⊢⊣  Click once = Line 1 · Click again = Line 2 (RR/PP interval)",
-            TOOL_MAGNIFIER: "🔍  Hover over waveform to zoom. Use sidebar to change power.",
-            TOOL_ANNOTATE:  "✎  Click start point · Click end point on any lead",
+            TOOL_RULER:     "Ruler active. Drag on any lead to measure time and amplitude.",
+            TOOL_CALIPER:   "Caliper active. Click once for line 1, again for line 2.",
+            TOOL_MAGNIFIER: "Magnifier active. Hover over waveform to zoom. Use sidebar power.",
+            TOOL_ANNOTATE:  "Annotate active. Click start point, then click end point.",
         }
         self.measure_lbl.setText(hints.get(tool_id, ""))
 
@@ -861,7 +889,7 @@ class ECGAnalysisWindow(QDialog):
         # Controls bar
         ctrl_frame = QFrame()
         ctrl_frame.setStyleSheet(
-            "background:#12152a;border-radius:6px;border:1px solid #1e2d5a;")
+            "background:#15192b;border-radius:6px;border:1px solid #5b4525;")
         controls = QHBoxLayout(ctrl_frame)
         controls.setContentsMargins(10, 5, 10, 5)
         controls.setSpacing(8)
@@ -895,13 +923,13 @@ class ECGAnalysisWindow(QDialog):
         controls.addSpacing(12)
         self.frame_label = QLabel("Frame: 0.00s – 10.00s")
         self.frame_label.setStyleSheet(
-            "color:#c8d8f0;font-weight:bold;font-family:'Courier New';font-size:11px;")
+            "color:#fff4e8;font-weight:bold;font-family:'Courier New';font-size:11px;")
         controls.addWidget(self.frame_label)
         controls.addStretch()
 
         # Expand/collapse hint
         expand_hint = QLabel("dbl-click lead = expand  |  right-click = annotate menu")
-        expand_hint.setStyleSheet("color:#3a5a8a;font-size:9px;")
+        expand_hint.setStyleSheet("color:#c59768;font-size:9px;")
         controls.addWidget(expand_hint)
 
         v.addWidget(ctrl_frame)
@@ -917,7 +945,7 @@ class ECGAnalysisWindow(QDialog):
         # Lead grid
         from PyQt5.QtWidgets import QGridLayout, QWidget as _QW
         self._grid_widget = _QW()
-        self._grid_widget.setStyleSheet("background:#0d0f1a;")
+        self._grid_widget.setStyleSheet("background:#0f1220;")
         self._lead_grid = QGridLayout(self._grid_widget)
         self._lead_grid.setContentsMargins(0, 0, 0, 0)
         self._lead_grid.setSpacing(4)
@@ -1049,7 +1077,7 @@ class ECGAnalysisWindow(QDialog):
 
         title_lbl = QLabel("▌ Manual Arrhythmia Marking")
         title_lbl.setStyleSheet(
-            "color:#c8d8f0;font-size:12px;font-weight:bold;font-family:'Courier New';")
+            "color:#fff4e8;font-size:12px;font-weight:bold;font-family:'Courier New';")
         av.addWidget(title_lbl)
 
         row1 = QHBoxLayout()
@@ -1077,7 +1105,7 @@ class ECGAnalysisWindow(QDialog):
         av.addLayout(row1b)
 
         row2 = QHBoxLayout()
-        btn_s = ("background:#12152a;color:#c8d8f0;border:2px solid #0097e6;"
+        btn_s = ("background:#15192b;color:#fff4e8;border:2px solid #ff8a1f;"
                  "border-radius:5px;padding:5px 12px;font-weight:bold;")
         self.mark_start_btn = QPushButton("① Mark Start")
         self.mark_start_btn.setStyleSheet(btn_s)
@@ -1094,7 +1122,7 @@ class ECGAnalysisWindow(QDialog):
 
         self.delete_mark_btn = QPushButton("🗑 Delete")
         self.delete_mark_btn.setStyleSheet(
-            "background:#12152a;color:#ff6666;border:2px solid #993333;"
+            "background:#15192b;color:#ff8b8b;border:2px solid #a63d2d;"
             "border-radius:5px;padding:5px 12px;font-weight:bold;")
         self.delete_mark_btn.clicked.connect(self.delete_selected_annotation)
 
@@ -1105,7 +1133,7 @@ class ECGAnalysisWindow(QDialog):
 
         self.mark_status_lbl = QLabel("No active mark")
         self.mark_status_lbl.setStyleSheet(
-            "color:#5a8a5a;font-family:'Courier New';font-size:10px;")
+            "color:#d7b183;font-family:'Courier New';font-size:10px;")
         av.addWidget(self.mark_status_lbl)
 
         self.annotation_table = QTableWidget(0, 5)
@@ -1123,7 +1151,7 @@ class ECGAnalysisWindow(QDialog):
 
         metrics_lbl = QLabel("▌ ECG Metrics")
         metrics_lbl.setStyleSheet(
-            "color:#c8d8f0;font-size:11px;font-weight:bold;font-family:'Courier New';")
+            "color:#fff4e8;font-size:11px;font-weight:bold;font-family:'Courier New';")
         right_col.addWidget(metrics_lbl)
         self.metrics_table = QTableWidget(0, 2)
         self.metrics_table.setHorizontalHeaderLabels(["Parameter", "Value"])
@@ -1133,7 +1161,7 @@ class ECGAnalysisWindow(QDialog):
 
         findings_lbl = QLabel("▌ Clinical Findings")
         findings_lbl.setStyleSheet(
-            "color:#c8d8f0;font-size:11px;font-weight:bold;font-family:'Courier New';")
+            "color:#fff4e8;font-size:11px;font-weight:bold;font-family:'Courier New';")
         right_col.addWidget(findings_lbl)
         self.findings_text = QTextEdit()
         self.findings_text.setReadOnly(True)

@@ -227,23 +227,22 @@ class LoginRegisterDialog(QDialog):
         main_layout.addStretch(1)
         # Title (outside glass) - logo style
         title = QLabel("CardioX by Deckmount")
-        title.setFont(QFont("Arial", 44, QFont.Black))
+        title.setFont(QFont("Arial", 42, QFont.Black))
         title.setStyleSheet("""
-            color: #fff6ee;
+            color: #ffb347;
             letter-spacing: 2px;
             margin-bottom: 0px;
             padding-top: 0px;
             padding-bottom: 0px;
             font-weight: 900;
             border-radius: 18px;
-            text-shadow: 0 0 24px rgba(255, 120, 24, 0.35);
         """)
         title.setAlignment(Qt.AlignHCenter)
         main_layout.addWidget(title)
         # Tagline (outside glass)
         tagline = QLabel("Built to Detect. Designed to Last.")
         tagline.setFont(QFont("Arial", 16, QFont.Bold))
-        tagline.setStyleSheet("color: rgba(255, 184, 120, 0.92); margin-bottom: 24px; margin-top: 2px; background: transparent;")
+        tagline.setStyleSheet("color: #ff7a12; margin-bottom: 20px; margin-top: 2px; background: transparent;")
         tagline.setAlignment(Qt.AlignHCenter)
         main_layout.addWidget(tagline)
         # --- Glass effect container in center ---
@@ -253,15 +252,12 @@ class LoginRegisterDialog(QDialog):
         glass.setObjectName("Glass")
         glass.setStyleSheet("""
             QWidget#Glass {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 rgba(15, 15, 15, 0.74),
-                    stop:0.5 rgba(26, 18, 18, 0.70),
-                    stop:1 rgba(18, 18, 18, 0.78));
-                border-radius: 34px;
-                border: 1px solid rgba(255,255,255,0.18);
+                background: rgba(255,255,255,0.14);
+                border-radius: 30px;
+                border: 1px solid rgba(255,255,255,0.26);
             }
         """)
-        glass.setMinimumSize(860, 620)
+        glass.setMinimumSize(560, 500)
         # Create stacked widget and login/register widgets BEFORE using stacked_col
         self.stacked = QStackedWidget(glass)
         self.login_widget = self.create_login_widget()
@@ -269,28 +265,9 @@ class LoginRegisterDialog(QDialog):
         self.stacked.addWidget(self.login_widget)
         self.stacked.addWidget(self.register_widget)
         glass_layout = QHBoxLayout(glass)
-        glass_layout.setContentsMargins(38, 34, 38, 34)
-        glass_layout.setSpacing(34)
-        # ECG image inside glass, left side (larger)
-        ecg_img = QLabel()
-        ecg_pix = QPixmap(resource_path('assets/v1.png'))
-        if not ecg_pix.isNull():
-            ecg_img.setPixmap(ecg_pix.scaled(400, 540, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-            ecg_img.setAlignment(Qt.AlignVCenter | Qt.AlignHCenter)
-            ecg_img.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-            ecg_img.setStyleSheet("""
-                margin: 0px 8px 0px 0px;
-                border-radius: 28px;
-                background: rgba(255,255,255,0.02);
-                border: 1px solid rgba(255,255,255,0.07);
-            """)
-        # Wrap image in a layout to center vertically
-        img_col = QVBoxLayout()
-        img_col.addStretch(1)
-        img_col.addWidget(ecg_img, alignment=Qt.AlignHCenter)
-        img_col.addStretch(1)
-        glass_layout.addLayout(img_col, 2)
-        # Login/Register stacked widget (vertical)
+        glass_layout.setContentsMargins(28, 28, 28, 24)
+        glass_layout.setSpacing(12)
+        # Login/Register stacked widget only, centered like the reference
         stacked_col = QVBoxLayout()
         stacked_col.setSpacing(14)
         stacked_col.addWidget(self.stacked, 1)
@@ -321,8 +298,8 @@ class LoginRegisterDialog(QDialog):
         # Insert login_row at the bottom of the register widget
         self.register_widget.layout().addSpacing(12)
         self.register_widget.layout().addLayout(login_row)
-        glass_layout.addLayout(stacked_col, 3)
-        row.addWidget(glass, 1)
+        glass_layout.addLayout(stacked_col, 1)
+        row.addWidget(glass, 0, Qt.AlignHCenter)
         row.addStretch(1)
         main_layout.addLayout(row)
         main_layout.addStretch(1)   
@@ -360,8 +337,8 @@ class LoginRegisterDialog(QDialog):
     def create_login_widget(self):
         widget = QWidget()
         layout = QVBoxLayout()
-        layout.setContentsMargins(18, 12, 18, 12)
-        layout.setSpacing(16)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(12)
 
         input_style = """
             QLineEdit {
@@ -422,6 +399,10 @@ class LoginRegisterDialog(QDialog):
         section_title = QLabel("Sign in to continue")
         section_title.setStyleSheet("color: white; font-size: 30px; font-weight: bold;")
 
+        section_subtitle = QLabel("Use your account password or request an OTP on your phone.")
+        section_subtitle.setWordWrap(True)
+        section_subtitle.setStyleSheet("color: rgba(255,255,255,0.78); font-size: 13px;")
+
         password_header = QLabel("ACCOUNT LOGIN")
         password_header.setStyleSheet("color: #ffb347; font-size: 12px; font-weight: bold; letter-spacing: 1px;")
 
@@ -464,7 +445,7 @@ class LoginRegisterDialog(QDialog):
         phone_btn.clicked.connect(self.handle_phone_login)
 
         self.login_phone = QLineEdit()
-        self.login_phone.setPlaceholderText("+91 XXXXXXXXXX")
+        self.login_phone.setPlaceholderText("Phone number (10 digits)")
         self.login_phone.setMinimumHeight(44)
         self.login_phone.setMaxLength(10)
         self.login_phone.setValidator(QIntValidator(0, 2147483647, self))
@@ -511,23 +492,27 @@ class LoginRegisterDialog(QDialog):
         phone_card = QWidget()
         phone_card.setStyleSheet("""
             background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                stop:0 rgba(255,255,255,0.08),
-                stop:1 rgba(255,255,255,0.04));
-            border: 1px solid rgba(255,255,255,0.14);
-            border-radius: 20px;
+                stop:0 rgba(255,255,255,0.10),
+                stop:1 rgba(255,255,255,0.05));
+            border: 1px solid rgba(255,255,255,0.18);
+            border-radius: 18px;
         """)
         phone_card_layout = QVBoxLayout(phone_card)
-        phone_card_layout.setContentsMargins(18, 16, 18, 16)
-        phone_card_layout.setSpacing(12)
-        phone_card_title = QLabel("Register with Phone")
+        phone_card_layout.setContentsMargins(14, 12, 14, 12)
+        phone_card_layout.setSpacing(10)
+        phone_card_title = QLabel("Phone Login")
         phone_card_title.setStyleSheet("""
             color: white;
             font-size: 18px;
             font-weight: bold;
-            padding-bottom: 6px;
+            padding-bottom: 4px;
             border-bottom: 1px solid rgba(255,255,255,0.12);
         """)
+        phone_card_desc = QLabel("Enter your mobile number, request an OTP, then verify it to sign in.")
+        phone_card_desc.setWordWrap(True)
+        phone_card_desc.setStyleSheet("color: rgba(255,255,255,0.74); font-size: 12px;")
         phone_card_layout.addWidget(phone_card_title)
+        phone_card_layout.addWidget(phone_card_desc)
         phone_card_layout.addLayout(phone_row)
         phone_card_layout.addLayout(otp_row)
 
@@ -550,14 +535,14 @@ class LoginRegisterDialog(QDialog):
         self.login_otp.textChanged.connect(self._update_verify_otp_button)
 
         layout.addWidget(section_title)
-        layout.addSpacing(4)
+        layout.addWidget(section_subtitle)
         layout.addWidget(password_header)
         layout.addWidget(self.login_email)
         layout.addLayout(password_row)
         layout.addWidget(login_btn)
-        layout.addSpacing(6)
+        layout.addSpacing(4)
         layout.addWidget(divider)
-        layout.addSpacing(6)
+        layout.addSpacing(4)
         layout.addWidget(phone_card)
 
         nav_row = QHBoxLayout()
@@ -618,8 +603,8 @@ class LoginRegisterDialog(QDialog):
     def create_register_widget(self):
         widget = QWidget()
         layout = QVBoxLayout()
-        layout.setContentsMargins(18, 12, 18, 12)
-        layout.setSpacing(14)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(12)
 
         register_input_style = """
             QLineEdit {
