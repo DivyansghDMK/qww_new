@@ -1303,6 +1303,11 @@ class ECGAnalysisWindow(QDialog):
         self.metrics_table.setRowCount(0)
         rv5_sv1      = metrics.get('RV5_SV1',      metrics.get('rv5_sv1', 'N/A'))
         rv5_plus_sv1 = metrics.get('RV5_plus_SV1', metrics.get('rv5_plus_sv1', 'N/A'))
+        if isinstance(rv5_sv1, (list, tuple)) and len(rv5_sv1) >= 2:
+            try:
+                rv5_sv1 = f"{float(rv5_sv1[0]):.3f}/{abs(float(rv5_sv1[1])):.3f}"
+            except Exception:
+                pass
         items = [
             ("HR",     metrics.get('HR_bpm',  metrics.get('heart_rate', metrics.get('HR', 'N/A'))),    "bpm"),
             ("RR",     metrics.get('RR_ms',   metrics.get('rr_interval', metrics.get('RR', 'N/A'))),   "ms"),
@@ -1742,6 +1747,11 @@ class ECGAnalysisWindow(QDialog):
         rr   = _get(raw_metrics, 'RR',  'rr_interval',  'RR_ms')
         rv5sv1  = _get(raw_metrics, 'RV5_SV1',     'rv5_sv1')
         rv5plus = _get(raw_metrics, 'RV5_plus_SV1','rv5_plus_sv1')
+        if isinstance(rv5sv1, (list, tuple)) and len(rv5sv1) >= 2:
+            try:
+                rv5sv1 = f"{float(rv5sv1[0]):.3f}/{abs(float(rv5sv1[1])):.3f}"
+            except Exception:
+                pass
         axes_s  = _get(raw_metrics, 'axes','P/QRS/T','p_qrs_t')
 
         clinical   = rpt.get('clinical_findings') or {}

@@ -53,7 +53,7 @@ def validate_rv5_sv1_signs(rv5_mv, sv1_mv):
 
 def validate_rv5_sv1_sum(rv5_mv, sv1_mv, rv5_sv1_sum):
     """
-    Validate RV5+SV1 calculation: RV5 + abs(SV1).
+    Validate RV5+SV1 calculation: RV5 - abs(SV1).
     
     Args:
         rv5_mv: RV5 amplitude in mV
@@ -64,9 +64,9 @@ def validate_rv5_sv1_sum(rv5_mv, sv1_mv, rv5_sv1_sum):
         AssertionError if calculation is incorrect
     """
     if rv5_mv is not None and sv1_mv is not None:
-        expected_sum = rv5_mv + (sv1_mv)
+        expected_sum = rv5_mv - abs(sv1_mv)
         if rv5_sv1_sum is not None:
-            diff = (rv5_sv1_sum - expected_sum)
+            diff = abs(rv5_sv1_sum - expected_sum)
             assert diff < 0.001, \
                 f"❌ VALIDATION FAILED: RV5+SV1 = {rv5_sv1_sum:.3f}, expected {expected_sum:.3f} (diff={diff:.3f})"
 

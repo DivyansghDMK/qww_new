@@ -117,15 +117,22 @@ class CloudUploader:
         
         # Doctor Review API Configuration
         self.doctor_review_enabled = os.getenv('DOCTOR_REVIEW_ENABLED', 'false').lower() == 'true'
-        self.doctor_review_api_url = os.getenv('DOCTOR_REVIEW_API_URL', '')
-        # Robustly handle if URL includes /upload-assigned
-        if self.doctor_review_api_url:
-            if self.doctor_review_api_url.endswith('/upload-assigned'):
-                self.doctor_review_api_url = self.doctor_review_api_url[:-16]
-            elif self.doctor_review_api_url.endswith('/upload-assigned/'):
-                self.doctor_review_api_url = self.doctor_review_api_url[:-17]
-                
-        self.doctor_review_api_key = os.getenv('DOCTOR_REVIEW_API_KEY', '')
+        self.doctor_review_api_url = (
+            os.getenv('DOCTOR_UPLOAD_API_URL')
+            or os.getenv('DOCTOR_REVIEW_API_URL', '')
+        ).strip()
+        self.doctor_review_api_key = (
+            os.getenv('DOCTOR_UPLOAD_API_KEY')
+            or os.getenv('DOCTOR_REVIEW_API_KEY', '')
+        ).strip()
+        self.reviewed_reports_api_url = os.getenv(
+            'REVIEWED_REPORTS_API_URL',
+            'https://6jhix49qt6.execute-api.us-east-1.amazonaws.com/api/public/reviewed-reports'
+        ).strip()
+        self.reviewed_reports_api_key = (
+            os.getenv('PUBLIC_API_KEY')
+            or os.getenv('REVIEWED_REPORTS_API_KEY', '')
+        ).strip()
         self._doctor_list_cache = None
         self._last_doctor_fetch_time = 0
         
@@ -170,8 +177,22 @@ class CloudUploader:
         self.aws_access_key = os.getenv('AWS_ACCESS_KEY_ID')
         self.aws_secret_key = os.getenv('AWS_SECRET_ACCESS_KEY')
         self.doctor_review_enabled = os.getenv('DOCTOR_REVIEW_ENABLED', 'false').lower() == 'true'
-        self.doctor_review_api_url = os.getenv('DOCTOR_REVIEW_API_URL')
-        self.doctor_review_api_key = os.getenv('DOCTOR_REVIEW_API_KEY')
+        self.doctor_review_api_url = (
+            os.getenv('DOCTOR_UPLOAD_API_URL')
+            or os.getenv('DOCTOR_REVIEW_API_URL', '')
+        ).strip()
+        self.doctor_review_api_key = (
+            os.getenv('DOCTOR_UPLOAD_API_KEY')
+            or os.getenv('DOCTOR_REVIEW_API_KEY', '')
+        ).strip()
+        self.reviewed_reports_api_url = os.getenv(
+            'REVIEWED_REPORTS_API_URL',
+            'https://6jhix49qt6.execute-api.us-east-1.amazonaws.com/api/public/reviewed-reports'
+        ).strip()
+        self.reviewed_reports_api_key = (
+            os.getenv('PUBLIC_API_KEY')
+            or os.getenv('REVIEWED_REPORTS_API_KEY', '')
+        ).strip()
 
     def get_config_snapshot(self):
         return {
@@ -547,8 +568,7 @@ class CloudUploader:
             return default_doctors
         
         try:
-            base_url = self.doctor_review_api_url.rstrip('/')
-            url = f"{base_url}/admin/doctor"
+            url = self.doctor_review_api_url.rstrip('/')
             
             print(f"🔹 Fetching doctor list from {url}")
             
@@ -564,19 +584,29 @@ class CloudUploader:
                 data = response.json()
                 doctors = []
                 
-                # Handle nested structure: {"doctors": [...]}
-                doctor_data = data
-                if isinstance(data, dict) and "doctors" in data:
-                    doctor_data = data["doctors"]
-                
+                if isinstance(data, dict):
+                    if isinstance(data.get("names"), list):
+                        doctors.extend([str(name).strip() for name in data["names"] if str(name).strip()])
+                    doctor_data = data.get("doctors", data)
+                else:
+                    doctor_data = data
+
                 if isinstance(doctor_data, list):
                     for item in doctor_data:
                         if isinstance(item, str):
-                            doctors.append(item)
+                            doctors.append(item.strip())
                         elif isinstance(item, dict):
-                            name = item.get('name') or item.get('doctorName') or item.get('username')
+                            name = (
+                                item.get('doctor_name')
+                                or item.get('name')
+                                or item.get('doctorName')
+                                or item.get('username')
+                            )
                             if name:
-                                doctors.append(name)
+                                doctors.append(str(name).strip())
+
+                doctors = [name for name in doctors if name]
+                doctors = list(dict.fromkeys(doctors))
                 
                 if doctors:
                     print(f"✅ Fetched {len(doctors)} doctors from API")
@@ -1192,9 +1222,7 @@ class CloudUploader:
     
     def send_for_doctor_review(self, file_path, doctor_name, metadata=None):
         """
-        Send ECG report for doctor review using 2-step process:
-        1. GET presigned URL from backend
-        2. PUT file content to presigned URL
+        Send ECG report for doctor review using multipart/form-data upload.
         
         Args:
             file_path (str): Path to the PDF report
@@ -1204,10 +1232,9 @@ class CloudUploader:
         Returns:
             dict: Result with status and message
         """
-        # Default base URL if not set
         base_url = self.doctor_review_api_url
         if not base_url:
-            base_url = "https://8m9fgt2fz1.execute-api.us-east-1.amazonaws.com/prod/api"
+            base_url = "https://6jhix49qt6.execute-api.us-east-1.amazonaws.com/api/doctor/upload"
             
         if not self.doctor_review_enabled and os.getenv('DOCTOR_REVIEW_ENABLED', 'true').lower() != 'true':
              # Allow it to work if enabled in env even if init didn't pick it up? 
@@ -1217,8 +1244,6 @@ class CloudUploader:
         if not os.path.exists(file_path):
             return {"status": "error", "message": f"File not found: {file_path}"}
             
-        filename = os.path.basename(file_path)
-        
         # Check if online
         if self.offline_queue and not self.offline_queue.is_online():
             queue_payload = {
@@ -1233,68 +1258,34 @@ class CloudUploader:
             }
 
         try:
-            # Step 1: Get presigned URL
-            upload_url_endpoint = f"{base_url.rstrip('/')}/upload-assigned"
-            
-            payload = {
-                "doctorName": doctor_name,
-                "patientName": metadata.get('patient_name') if metadata else "Unknown",
-                "reportType": metadata.get('report_type') if metadata else "ECG",
-                "fileName": filename
-            }
-            
-            print(f"🔹 Requesting upload URL from {upload_url_endpoint} for {doctor_name}")
-            
-            headers = {"Content-Type": "application/json"}
+            upload_url_endpoint = base_url.rstrip('/')
+            patient_name = (metadata or {}).get('patient_name') or "Unknown"
+            report_type = (metadata or {}).get('report_type') or "ECG"
+
+            print(f"🔹 Uploading report to {upload_url_endpoint} for {doctor_name}")
+
+            headers = {}
             if self.doctor_review_api_key:
-                # Use x-api-key for AWS API Gateway.
                 headers['x-api-key'] = self.doctor_review_api_key
 
-            response = requests.post(
-                upload_url_endpoint,
-                json=payload,
-                headers=headers,
-                timeout=15
-            )
-            
-            if response.status_code != 200:
-                print(f"❌ Failed to get upload URL: {response.text}")
-                return {"status": "error", "message": f"Failed to get upload URL: {response.text}"}
-                
-            response_data = response.json()
-            presigned_url = response_data.get("url") # Expecting 'url' or similar in response? 
-            # User said: Returns pre-signed S3 upload URL. 
-            # Usually it's in a field like 'url' or directly? 
-            # Let's assume it returns a JSON with the URL.
-            # If response is just string, handle that?
-            if isinstance(response_data, str):
-                 presigned_url = response_data
-            elif isinstance(response_data, dict):
-                 presigned_url = response_data.get("url") or response_data.get("uploadUrl")
-            
-            if not presigned_url:
-                 # Last ditch: maybe the body is the URL?
-                 if response.text.startswith("http"):
-                     presigned_url = response.text.strip().strip('"')
-            
-            if not presigned_url:
-                print(f"❌ No URL in response: {response.text}")
-                return {"status": "error", "message": "No upload URL received from backend"}
-                
-            print(f"🔹 Got presigned URL. Uploading file...")
-            
-            # Step 2: Upload file via PUT
             with open(file_path, 'rb') as f:
-                file_data = f.read()
-                
-            put_response = requests.put(
-                presigned_url,
-                data=file_data,
-                headers={"Content-Type": "application/pdf"},
-                timeout=60
-            )
-            
-            if put_response.status_code in [200, 201]:
+                files = {
+                    "pdfFile": (os.path.basename(file_path), f, "application/pdf")
+                }
+                data = {
+                    "doctorName": doctor_name,
+                    "patientName": patient_name,
+                    "reportType": report_type,
+                }
+                response = requests.post(
+                    upload_url_endpoint,
+                    data=data,
+                    files=files,
+                    headers=headers,
+                    timeout=60
+                )
+
+            if response.status_code in [200, 201]:
                 print(f"✅ Report uploaded successfully for review!")
                 
                 # Log success
@@ -1302,8 +1293,8 @@ class CloudUploader:
                 
                 return {"status": "success", "message": "Report sent for review successfully"}
             else:
-                print(f"❌ Upload PUT failed: {put_response.status_code} - {put_response.text}")
-                return {"status": "error", "message": f"Upload failed: {put_response.status_code}"}
+                print(f"❌ Upload failed: {response.status_code} - {response.text}")
+                return {"status": "error", "message": f"Upload failed: {response.text or response.status_code}"}
                 
         except Exception as e:
             print(f"❌ Error sending for review: {e}")

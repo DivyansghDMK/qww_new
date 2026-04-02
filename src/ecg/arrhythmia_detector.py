@@ -1,416 +1,1020 @@
 """
-arrhythmia_detector.py — Complete Merged + Optimized
-ALL original detections preserved + ALL new arrhythmias from clinical sheet.
+ECG arrhythmia and interval analysis helpers for CardioX.
+
+This module provides:
+- Pan-Tompkins style R peak detection
+- Beat-wise interval measurement
+- Rhythm and arrhythmia classification
+- Human-readable interpretation helpers
+- A backward-compatible ArrhythmiaDetector class used by the UI
 """
 
+from __future__ import annotations
+
+import math
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+
 import numpy as np
-from scipy.signal import find_peaks
-import traceback
+from scipy.signal import butter, filtfilt, find_peaks, savgol_filter
+
+
+DEFAULT_FS = 500
+MIN_SIGNAL_SECONDS = 2.0
+PRIMARY_DETECTION_LEADS = ("II", "V5")
+ORDERED_LEADS = ("I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6")
+
+
+def _ms_to_samples(ms: float, fs: float) -> int:
+    return int(ms * float(fs) / 1000.0)
+
+
+def _safe_array(signal: Optional[Sequence[float]]) -> np.ndarray:
+    if signal is None:
+        return np.array([], dtype=float)
+    arr = np.asarray(signal, dtype=float).reshape(-1)
+    if arr.size == 0:
+        return np.array([], dtype=float)
+    return np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
+
+
+def _trimmed_std(signal: np.ndarray) -> float:
+    if signal.size == 0:
+        return 0.0
+    lo, hi = np.percentile(signal, [5, 95])
+    clipped = signal[(signal >= lo) & (signal <= hi)]
+    if clipped.size == 0:
+        clipped = signal
+    return float(np.std(clipped))
+
+
+def _ensure_odd(value: int, minimum: int = 5) -> int:
+    value = max(minimum, int(value))
+    if value % 2 == 0:
+        value += 1
+    return value
+
+
+def _median_baseline(signal: np.ndarray, start: int, width: int) -> float:
+    left = max(0, start)
+    right = min(len(signal), left + max(1, width))
+    if right <= left:
+        return float(np.median(signal)) if signal.size else 0.0
+    return float(np.median(signal[left:right]))
+
+
+def _bandpass_filter(signal: np.ndarray, fs: float, low_hz: float = 5.0, high_hz: float = 15.0, order: int = 2) -> np.ndarray:
+    if signal.size < 3:
+        return signal.copy()
+    nyquist = float(fs) / 2.0
+    low = max(0.001, low_hz / nyquist)
+    high = min(0.99, high_hz / nyquist)
+    if low >= high:
+        return signal.copy()
+    b, a = butter(order, [low, high], btype="band")
+    padlen = min(signal.size - 1, max(len(a), len(b)) * 3)
+    if padlen <= 0:
+        return signal.copy()
+    return filtfilt(b, a, signal, padlen=padlen)
+
+
+def _moving_average(signal: np.ndarray, window: int) -> np.ndarray:
+    window = max(1, int(window))
+    if signal.size == 0:
+        return signal.copy()
+    kernel = np.ones(window, dtype=float) / float(window)
+    return np.convolve(signal, kernel, mode="same")
+
+
+def _signal_quality_score(signal: np.ndarray, fs: float) -> float:
+    if signal.size < int(fs * MIN_SIGNAL_SECONDS):
+        return 0.0
+    if not np.any(signal):
+        return 0.0
+    amplitude = float(np.ptp(signal))
+    noise = _trimmed_std(np.diff(signal))
+    std = float(np.std(signal))
+    if amplitude < 0.05 or std < 0.01:
+        return 0.0
+    snr = amplitude / max(noise, 1e-6)
+    return float(max(0.0, min(1.0, (snr - 1.0) / 8.0)))
+
+
+def _select_detection_lead(leads_dict: Dict[str, Sequence[float]], fs: float) -> Tuple[Optional[str], np.ndarray, float]:
+    best_name = None
+    best_signal = np.array([], dtype=float)
+    best_quality = -1.0
+    for lead_name in PRIMARY_DETECTION_LEADS:
+        signal = _safe_array(leads_dict.get(lead_name))
+        quality = _signal_quality_score(signal, fs)
+        if quality > best_quality:
+            best_name = lead_name
+            best_signal = signal
+            best_quality = quality
+    if best_signal.size == 0:
+        for lead_name, lead_signal in leads_dict.items():
+            signal = _safe_array(lead_signal)
+            quality = _signal_quality_score(signal, fs)
+            if quality > best_quality:
+                best_name = lead_name
+                best_signal = signal
+                best_quality = quality
+    return best_name, best_signal, max(0.0, best_quality)
+
+
+def detect_r_peaks_pan_tompkins(signal: Sequence[float], fs: float = DEFAULT_FS) -> List[int]:
+    signal_arr = _safe_array(signal)
+    if signal_arr.size < int(fs * MIN_SIGNAL_SECONDS) or not np.any(signal_arr):
+        return []
+
+    filtered = _bandpass_filter(signal_arr, fs, low_hz=5.0, high_hz=15.0, order=2)
+    differentiated = np.diff(filtered, prepend=filtered[0])
+    squared = differentiated ** 2
+    integration_window = _ms_to_samples(150, fs)
+    integrated = _moving_average(squared, integration_window)
+
+    candidate_distance = max(1, _ms_to_samples(120, fs))
+    candidates, _ = find_peaks(integrated, distance=candidate_distance)
+    if candidates.size == 0:
+        return []
+
+    signal_level = float(np.percentile(integrated[candidates], 75))
+    noise_level = float(np.percentile(integrated[candidates], 25))
+    threshold = noise_level + 0.25 * max(signal_level - noise_level, 1e-9)
+    refractory_samples = _ms_to_samples(200, fs)
+    refine_radius = max(1, _ms_to_samples(80, fs))
+
+    r_peaks: List[int] = []
+    for peak in candidates:
+        peak_value = float(integrated[peak])
+        if peak_value >= threshold:
+            signal_level = 0.125 * peak_value + 0.875 * signal_level
+        else:
+            noise_level = 0.125 * peak_value + 0.875 * noise_level
+        threshold = noise_level + 0.25 * max(signal_level - noise_level, 1e-9)
+        if peak_value < threshold:
+            continue
+
+        left = max(0, peak - refine_radius)
+        right = min(signal_arr.size, peak + refine_radius + 1)
+        if right <= left:
+            continue
+        refined = left + int(np.argmax(signal_arr[left:right]))
+        if r_peaks and refined - r_peaks[-1] < refractory_samples:
+            if signal_arr[refined] > signal_arr[r_peaks[-1]]:
+                r_peaks[-1] = refined
+            continue
+        r_peaks.append(refined)
+
+    return [int(idx) for idx in r_peaks]
+
+
+def _first_baseline_crossing(signal: np.ndarray, baseline: float, start: int, stop: int, step: int) -> int:
+    if signal.size == 0:
+        return max(0, start)
+    idx = start
+    last_value = signal[min(max(idx, 0), signal.size - 1)] - baseline
+    while (idx > stop if step < 0 else idx < stop):
+        idx += step
+        if idx < 0 or idx >= signal.size:
+            break
+        value = signal[idx] - baseline
+        if value == 0 or np.sign(value) != np.sign(last_value):
+            return idx
+        last_value = value
+    return min(max(idx, 0), signal.size - 1)
+
+
+def _qrs_bounds(signal: np.ndarray, r_idx: int, fs: float) -> Tuple[int, int, float]:
+    if signal.size == 0:
+        return 0, 0, 0.0
+    qrs_left = max(0, r_idx - _ms_to_samples(80, fs))
+    qrs_right = min(signal.size - 1, r_idx + _ms_to_samples(80, fs))
+    smooth_window = _ensure_odd(min(11, signal.size - (1 - signal.size % 2)))
+    smoothed = savgol_filter(signal, smooth_window, 3, mode="interp") if signal.size >= smooth_window else signal
+    slopes = np.gradient(smoothed)
+    baseline = _median_baseline(signal, r_idx - _ms_to_samples(400, fs), _ms_to_samples(100, fs))
+    local_slopes = np.abs(slopes[qrs_left:qrs_right + 1])
+    slope_threshold = max(float(np.percentile(local_slopes, 35)) if local_slopes.size else 0.0, 1e-4)
+    baseline_threshold = max(0.15 * max(float(np.ptp(signal[qrs_left:qrs_right + 1])), 0.05), 0.015)
+    amplitude_threshold = max(0.05 * max(float(np.ptp(signal[qrs_left:qrs_right + 1])), 0.1), 0.02)
+
+    q_onset = qrs_left
+    for idx in range(r_idx, qrs_left - 1, -1):
+        if abs(slopes[idx]) <= slope_threshold and abs(smoothed[idx] - baseline) <= baseline_threshold:
+            q_onset = idx
+            break
+
+    j_point = qrs_right
+    for idx in range(r_idx, qrs_right + 1):
+        if abs(slopes[idx]) <= slope_threshold and abs(smoothed[idx] - baseline) <= baseline_threshold:
+            j_point = idx
+            break
+
+    active = np.where(np.abs(smoothed[qrs_left:qrs_right + 1] - baseline) > amplitude_threshold)[0]
+    if active.size:
+        q_onset = min(q_onset, qrs_left + int(active[0]))
+        j_point = max(j_point, qrs_left + int(active[-1]))
+
+    return int(q_onset), int(j_point), baseline
+
+
+def _detect_p_wave(signal: np.ndarray, r_idx: int, baseline: float, fs: float) -> Dict[str, object]:
+    result = {
+        "p_present": False,
+        "p_peak": None,
+        "p_onset": None,
+        "p_end": None,
+        "p_duration_ms": None,
+        "p_amplitude": 0.0,
+    }
+    p_start = max(0, r_idx - _ms_to_samples(400, fs))
+    p_end = max(p_start + 1, r_idx - _ms_to_samples(50, fs))
+    if p_end - p_start < 5:
+        return result
+
+    window = signal[p_start:p_end]
+    prominence = max(0.04, 0.18 * max(float(np.ptp(window)), 0.05))
+    peaks, props = find_peaks(window, prominence=prominence)
+    if peaks.size == 0:
+        peak_rel = int(np.argmax(window))
+        if window[peak_rel] - baseline < max(0.05, 0.2 * np.ptp(window)):
+            return result
+    else:
+        prominences = props.get("prominences", np.zeros(peaks.size))
+        peak_rel = int(peaks[int(np.argmax(prominences))])
+
+    p_peak = p_start + peak_rel
+    amplitude = float(signal[p_peak] - baseline)
+    if amplitude < 0.05:
+        return result
+    boundary_threshold = max(0.02, 0.2 * abs(amplitude))
+
+    p_onset = p_peak
+    left_limit = max(p_start, p_peak - _ms_to_samples(120, fs))
+    for idx in range(p_peak, left_limit - 1, -1):
+        if abs(signal[idx] - baseline) <= boundary_threshold:
+            p_onset = idx
+            break
+
+    p_finish = p_peak
+    right_limit = min(p_end - 1, p_peak + _ms_to_samples(120, fs))
+    for idx in range(p_peak, right_limit + 1):
+        if abs(signal[idx] - baseline) <= boundary_threshold:
+            p_finish = idx
+            break
+
+    duration_ms = float((p_finish - p_onset) * 1000.0 / fs)
+    if duration_ms <= 0 or duration_ms > 220.0:
+        return result
+
+    result.update(
+        {
+            "p_present": True,
+            "p_peak": int(p_peak),
+            "p_onset": int(p_onset),
+            "p_end": int(p_finish),
+            "p_duration_ms": duration_ms,
+            "p_amplitude": amplitude,
+        }
+    )
+    return result
+
+
+def _tangent_t_end(signal: np.ndarray, r_idx: int, baseline: float, fs: float) -> Tuple[Optional[int], Optional[float]]:
+    t_start = min(signal.size - 1, r_idx + _ms_to_samples(100, fs))
+    t_stop = min(signal.size, r_idx + _ms_to_samples(600, fs))
+    if t_stop - t_start < 5:
+        return None, None
+    window = signal[t_start:t_stop]
+    peak_rel = int(np.argmax(window))
+    t_peak = t_start + peak_rel
+    downslope = signal[t_peak:t_stop]
+    if downslope.size < 3:
+        return None, None
+
+    derivative = np.gradient(downslope)
+    steepest_rel = int(np.argmin(derivative))
+    steepest_idx = t_peak + steepest_rel
+    slope = float(np.gradient(signal)[steepest_idx]) if 0 < steepest_idx < signal.size - 1 else 0.0
+
+    if abs(slope) > 1e-6:
+        intercept_idx = steepest_idx + int((baseline - signal[steepest_idx]) / slope)
+        if t_peak <= intercept_idx < t_stop:
+            return int(intercept_idx), float(signal[t_peak] - baseline)
+
+    crossing = _first_baseline_crossing(signal, baseline, t_peak, t_stop - 1, 1)
+    if crossing <= t_peak:
+        return None, None
+    return int(crossing), float(signal[t_peak] - baseline)
+
+
+def _beat_noise_flags(signal: np.ndarray, q_onset: int, j_point: int, baseline: float, fs: float) -> Tuple[bool, List[str], float]:
+    reasons: List[str] = []
+    qrs_slice = signal[max(0, q_onset):min(signal.size, j_point + 1)]
+    qrs_amplitude = float(np.ptp(qrs_slice)) if qrs_slice.size else 0.0
+    if qrs_amplitude < 0.1:
+        reasons.append("low_qrs_amplitude")
+
+    flat_start = max(0, q_onset - _ms_to_samples(80, fs))
+    flat_end = max(flat_start + 1, q_onset - _ms_to_samples(20, fs))
+    flat_std = float(np.std(signal[flat_start:flat_end])) if flat_end > flat_start else 0.0
+    if flat_std > 0.05:
+        reasons.append("noisy_baseline")
+
+    if abs(baseline) > 10:
+        reasons.append("baseline_drift")
+
+    return bool(reasons), reasons, qrs_amplitude
+
+
+def measure_beat(signal: Sequence[float], r_idx: int, fs: float = DEFAULT_FS) -> Optional[Dict[str, object]]:
+    signal_arr = _safe_array(signal)
+    if signal_arr.size == 0 or r_idx <= 0 or r_idx >= signal_arr.size:
+        return None
+
+    q_onset, j_point, baseline = _qrs_bounds(signal_arr, int(r_idx), fs)
+    qrs_ms = float((j_point - q_onset) * 1000.0 / fs)
+
+    beat = {
+        "r_peak": int(r_idx),
+        "q_onset": int(q_onset),
+        "j_point": int(j_point),
+        "baseline": baseline,
+        "qrs_ms": qrs_ms,
+        "p_present": False,
+        "p_peak": None,
+        "p_onset": None,
+        "p_end": None,
+        "p_duration_ms": None,
+        "p_amplitude": 0.0,
+        "pr_ms": None,
+        "t_end": None,
+        "t_peak": None,
+        "t_amplitude": None,
+        "qt_ms": None,
+        "st_level_mv": None,
+        "noisy": False,
+        "noise_reasons": [],
+        "qrs_amplitude": 0.0,
+    }
+
+    if qrs_ms < 40.0 or qrs_ms > 200.0:
+        beat["noisy"] = True
+        beat["noise_reasons"] = ["qrs_out_of_range"]
+        return beat
+
+    beat.update(_detect_p_wave(signal_arr, int(r_idx), baseline, fs))
+    if beat["p_present"] and beat["p_onset"] is not None:
+        pr_ms = float((int(q_onset) - int(beat["p_onset"])) * 1000.0 / fs)
+        if 80.0 <= pr_ms <= 400.0:
+            beat["pr_ms"] = pr_ms
+
+    t_end, t_amp = _tangent_t_end(signal_arr, int(r_idx), baseline, fs)
+    if t_end is not None:
+        beat["t_end"] = int(t_end)
+        beat["qt_ms"] = float((int(t_end) - int(q_onset)) * 1000.0 / fs)
+        beat["t_amplitude"] = t_amp
+
+    st_point = min(signal_arr.size - 1, int(r_idx) + _ms_to_samples(70, fs))
+    beat["st_level_mv"] = float(signal_arr[st_point] - baseline)
+
+    noisy, reasons, amplitude = _beat_noise_flags(signal_arr, int(q_onset), int(j_point), baseline, fs)
+    beat["noisy"] = noisy
+    beat["noise_reasons"] = reasons
+    beat["qrs_amplitude"] = amplitude
+    return beat
+
+
+def _median_or_none(values: Iterable[Optional[float]]) -> Optional[float]:
+    clean = [float(v) for v in values if v is not None]
+    if not clean:
+        return None
+    return float(np.median(clean))
+
+
+def _mean_or_none(values: Iterable[Optional[float]]) -> Optional[float]:
+    clean = [float(v) for v in values if v is not None]
+    if not clean:
+        return None
+    return float(np.mean(clean))
+
+
+def classify_heart_rate(hr_bpm: float, rr_intervals_ms: Sequence[float]) -> Dict[str, object]:
+    rr = np.asarray(rr_intervals_ms, dtype=float)
+    rr_last = rr[-5:] if rr.size else rr
+    rr_mean_ms = float(np.mean(rr)) if rr.size else 0.0
+    rr_variability = float(np.max(rr_last) - np.min(rr_last)) if rr_last.size else 0.0
+    is_irregular = rr_variability > 120.0
+
+    if hr_bpm < 20:
+        label = "Severe bradycardia / possible asystole"
+    elif hr_bpm < 40:
+        label = "Bradycardia - severe"
+    elif hr_bpm < 60:
+        label = "Sinus bradycardia"
+    elif hr_bpm <= 100:
+        label = "Normal rate"
+    elif hr_bpm <= 110:
+        label = "Borderline tachycardia"
+    elif hr_bpm <= 150:
+        label = "Sinus tachycardia"
+    elif hr_bpm <= 220:
+        label = "Supraventricular tachycardia (SVT) - suspect"
+    elif hr_bpm <= 300:
+        label = "Ventricular tachycardia - suspect"
+    else:
+        label = "Ventricular fibrillation - suspect"
+
+    return {
+        "label": label,
+        "heart_rate_bpm": float(hr_bpm),
+        "rr_mean_ms": rr_mean_ms,
+        "rr_variability": rr_variability,
+        "is_irregular": is_irregular,
+    }
+
+
+def is_normal_sinus_rhythm(beat_metrics: Dict[str, object]) -> Tuple[bool, List[str]]:
+    failed: List[str] = []
+    hr = float(beat_metrics.get("heart_rate_bpm") or 0.0)
+    pr_ms = beat_metrics.get("pr_ms")
+    qrs_ms = beat_metrics.get("qrs_ms")
+    rr_variability = float(beat_metrics.get("rr_variability") or 0.0)
+    p_present = bool(beat_metrics.get("p_present"))
+    p_onset = beat_metrics.get("p_onset")
+    q_onset = beat_metrics.get("q_onset")
+    p_amplitude = float(beat_metrics.get("p_amplitude_lead_ii") or beat_metrics.get("p_amplitude") or 0.0)
+
+    if not (60.0 <= hr <= 100.0):
+        failed.append("hr_ok")
+    if not p_present:
+        failed.append("p_present")
+    if p_onset is None or q_onset is None or not (int(p_onset) < int(q_onset)):
+        failed.append("p_before_qrs")
+    if pr_ms is None or not (120.0 <= float(pr_ms) <= 200.0):
+        failed.append("pr_ok")
+    if qrs_ms is None or not (float(qrs_ms) < 120.0):
+        failed.append("qrs_narrow")
+    if rr_variability >= 120.0:
+        failed.append("rr_regular")
+    if p_amplitude <= 0.05:
+        failed.append("p_axis_ok")
+
+    return (len(failed) == 0), failed
+
+
+def _pp_intervals_from_beats(beats_list: Sequence[Dict[str, object]], fs: float) -> np.ndarray:
+    p_peaks = [int(beat["p_peak"]) for beat in beats_list if beat.get("p_present") and beat.get("p_peak") is not None]
+    if len(p_peaks) < 2:
+        return np.array([], dtype=float)
+    return np.diff(np.asarray(p_peaks, dtype=float)) * 1000.0 / float(fs)
+
+
+def _detect_secondary_r(signal: np.ndarray, beat: Dict[str, object], fs: float) -> bool:
+    if signal.size == 0:
+        return False
+    r_peak = int(beat.get("r_peak") or 0)
+    j_point = int(beat.get("j_point") or r_peak)
+    search_start = max(r_peak + _ms_to_samples(20, fs), j_point - _ms_to_samples(40, fs))
+    end = min(signal.size, j_point + _ms_to_samples(80, fs))
+    baseline = float(beat.get("baseline") or 0.0)
+    segment = signal[search_start:end]
+    if segment.size < 5:
+        return False
+    peaks, props = find_peaks(segment, prominence=max(0.03, 0.15 * max(np.ptp(segment), 0.05)))
+    if peaks.size == 0:
+        return False
+    for peak_rel in peaks:
+        if segment[int(peak_rel)] > baseline + 0.05:
+            return True
+    return False
+
+
+def _terminal_s_present(signal: np.ndarray, beat: Dict[str, object], fs: float) -> bool:
+    if signal.size == 0:
+        return False
+    r_peak = int(beat.get("r_peak") or 0)
+    stop = min(signal.size, r_peak + _ms_to_samples(120, fs))
+    baseline = float(beat.get("baseline") or 0.0)
+    segment = signal[r_peak:stop]
+    return bool(segment.size and np.min(segment) < baseline - 0.05)
+
+
+def _dominant_negative_qrs(signal: np.ndarray, beat: Dict[str, object]) -> bool:
+    if signal.size == 0:
+        return False
+    start = int(beat.get("q_onset") or 0)
+    stop = min(signal.size, int(beat.get("j_point") or start + 1) + 1)
+    baseline = float(beat.get("baseline") or 0.0)
+    segment = signal[start:stop]
+    if segment.size == 0:
+        return False
+    pos = float(np.max(segment) - baseline)
+    neg = float(baseline - np.min(segment))
+    return neg > max(pos * 1.2, 0.08)
+
+
+def _broad_monophasic_r(signal: np.ndarray, beat: Dict[str, object], fs: float) -> bool:
+    if signal.size == 0:
+        return False
+    start = int(beat.get("q_onset") or 0)
+    stop = min(signal.size, int(beat.get("j_point") or start + 1) + 1)
+    baseline = float(beat.get("baseline") or 0.0)
+    segment = signal[start:stop]
+    if segment.size == 0:
+        return False
+    positive = np.max(segment) - baseline
+    negative = baseline - np.min(segment)
+    if positive < 0.1 or negative > 0.05:
+        return False
+    above = np.where(segment > baseline + 0.05 * max(positive, 0.1))[0]
+    if above.size == 0:
+        return False
+    duration_ms = float((above[-1] - above[0]) * 1000.0 / fs)
+    return duration_ms > 60.0
+
+
+def _has_septal_q(signal: np.ndarray, beat: Dict[str, object]) -> bool:
+    if signal.size == 0:
+        return False
+    q_onset = int(beat.get("q_onset") or 0)
+    r_peak = int(beat.get("r_peak") or q_onset)
+    baseline = float(beat.get("baseline") or 0.0)
+    segment = signal[q_onset:r_peak + 1]
+    return bool(segment.size and np.min(segment) < baseline - 0.03)
+
+
+def _contiguous_pairs(leads: Sequence[str]) -> List[Tuple[str, str]]:
+    pairs: List[Tuple[str, str]] = []
+    for idx in range(len(leads) - 1):
+        pairs.append((leads[idx], leads[idx + 1]))
+    return pairs
+
+
+CONTIGUOUS_LEAD_PAIRS = (
+    _contiguous_pairs(["I", "aVL", "V5", "V6"])
+    + _contiguous_pairs(["II", "III", "aVF"])
+    + _contiguous_pairs(["V1", "V2", "V3", "V4", "V5", "V6"])
+)
+
+
+def detect_arrhythmia(beats_list: Sequence[Dict[str, object]], signal_dict: Dict[str, Sequence[float]], fs: float = DEFAULT_FS) -> List[str]:
+    if not beats_list:
+        return []
+
+    arrhythmias: List[str] = []
+    clean_beats = [beat for beat in beats_list if not beat.get("noisy")]
+    reference_beats = clean_beats if clean_beats else list(beats_list)
+    rr_ms = np.asarray([float(beat["rr_ms"]) for beat in reference_beats if beat.get("rr_ms") is not None], dtype=float)
+    pr_values = [float(beat["pr_ms"]) for beat in reference_beats if beat.get("pr_ms") is not None]
+    hr = float(reference_beats[-1].get("heart_rate_bpm") or 0.0)
+    rr_variability = float(np.max(rr_ms[-5:]) - np.min(rr_ms[-5:])) if rr_ms.size else 0.0
+
+    p_absent_ratio = float(np.mean([not bool(beat.get("p_present")) for beat in reference_beats])) if reference_beats else 0.0
+    if p_absent_ratio > 0.70 and rr_variability > 120.0:
+        arrhythmias.append("Atrial fibrillation")
+
+    pp_ms = _pp_intervals_from_beats(reference_beats, fs)
+    if pp_ms.size:
+        atrial_rate = 60000.0 / float(np.mean(pp_ms))
+        ventricular_rate = hr
+        if 250.0 <= atrial_rate <= 350.0 and rr_variability <= 120.0 and ventricular_rate > 0:
+            ratio = atrial_rate / max(ventricular_rate, 1e-6)
+            if abs(ratio - 2.0) < 0.4 or abs(ratio - 4.0) < 0.6:
+                arrhythmias.append("Atrial flutter")
+
+    p_present_ratio = float(np.mean([bool(beat.get("p_present")) for beat in reference_beats])) if reference_beats else 0.0
+
+    if p_present_ratio > 0.7 and any(beat.get("p_present") and beat.get("pr_ms") is not None and float(beat["pr_ms"]) > 200.0 for beat in reference_beats):
+        arrhythmias.append("1st-degree AV block")
+
+    if len(pr_values) >= 3 and p_present_ratio > 0.7 and np.ptp(pr_values) > 40.0 and hr < 50.0 and any(beat.get("p_present") for beat in reference_beats):
+        arrhythmias.append("3rd-degree AV block")
+
+    lead_i = _safe_array(signal_dict.get("I"))
+    lead_v1 = _safe_array(signal_dict.get("V1"))
+    lead_v6 = _safe_array(signal_dict.get("V6"))
+
+    has_rbbb = False
+    has_lbbb = False
+    incomplete_rbbb = False
+    incomplete_lbbb = False
+    for beat in reference_beats:
+        qrs_ms = float(beat.get("qrs_ms") or 0.0)
+        secondary_r = _detect_secondary_r(lead_v1, beat, fs)
+        terminal_s = _terminal_s_present(lead_i, beat, fs) and _terminal_s_present(lead_v6, beat, fs)
+        v1_negative = _dominant_negative_qrs(lead_v1, beat)
+        broad_r = _broad_monophasic_r(lead_i, beat, fs) and _broad_monophasic_r(lead_v6, beat, fs)
+        no_septal_q = (not _has_septal_q(lead_i, beat)) and (not _has_septal_q(lead_v6, beat))
+
+        if qrs_ms >= 120.0 and secondary_r and terminal_s:
+            has_rbbb = True
+        elif 110.0 <= qrs_ms < 120.0 and secondary_r and terminal_s:
+            incomplete_rbbb = True
+
+        if qrs_ms >= 120.0 and v1_negative and broad_r and no_septal_q:
+            has_lbbb = True
+        elif 110.0 <= qrs_ms < 120.0 and v1_negative and broad_r and no_septal_q:
+            incomplete_lbbb = True
+
+    if has_rbbb:
+        arrhythmias.append("Right bundle branch block (RBBB)")
+    elif incomplete_rbbb:
+        arrhythmias.append("Incomplete RBBB")
+
+    if has_lbbb:
+        arrhythmias.append("Left bundle branch block (LBBB)")
+    elif incomplete_lbbb:
+        arrhythmias.append("Incomplete LBBB")
+
+    if rr_ms.size:
+        mean_rr = float(np.mean(rr_ms))
+        p_amps = [abs(float(beat.get("p_amplitude") or 0.0)) for beat in reference_beats if beat.get("p_present")]
+        mean_p_amp = float(np.mean(p_amps)) if p_amps else 0.0
+        for idx, beat in enumerate(reference_beats):
+            beat_rr = beat.get("rr_ms")
+            if beat_rr is None:
+                continue
+            qrs_ms = float(beat.get("qrs_ms") or 0.0)
+            p_present = bool(beat.get("p_present"))
+            t_amp = float(beat.get("t_amplitude") or 0.0)
+            qrs_amp = float(beat.get("qrs_amplitude") or 0.0)
+
+            if (
+                qrs_ms > 120.0
+                and not p_present
+                and qrs_amp > 0.1
+                and t_amp != 0.0
+                and np.sign(t_amp) != np.sign(qrs_amp)
+            ):
+                next_rr = reference_beats[idx + 1].get("rr_ms") if idx + 1 < len(reference_beats) else None
+                if next_rr is not None and float(next_rr) > 1.5 * mean_rr:
+                    arrhythmias.append("Premature ventricular contraction (PVC)")
+                    break
+
+            if p_present_ratio > 0.6 and p_present and float(beat_rr) < 0.8 * mean_rr and qrs_ms < 120.0 and mean_p_amp > 0:
+                if abs(abs(float(beat.get("p_amplitude") or 0.0)) - mean_p_amp) > 0.3 * mean_p_amp:
+                    arrhythmias.append("Premature atrial contraction (PAC)")
+                    break
+
+    st_levels = {}
+    for lead_name, lead_signal in signal_dict.items():
+        signal_arr = _safe_array(lead_signal)
+        if signal_arr.size == 0:
+            continue
+        per_beat = []
+        for beat in reference_beats[: min(len(reference_beats), 10)]:
+            r_peak = int(beat.get("r_peak") or 0)
+            st_point = min(signal_arr.size - 1, r_peak + _ms_to_samples(70, fs))
+            baseline = _median_baseline(signal_arr, r_peak - _ms_to_samples(400, fs), _ms_to_samples(100, fs))
+            per_beat.append(float(signal_arr[st_point] - baseline))
+        st_levels[lead_name] = float(np.mean(per_beat)) if per_beat else 0.0
+
+    elevated = {lead for lead, value in st_levels.items() if value > 0.1}
+    depressed = {lead for lead, value in st_levels.items() if value < -0.05}
+    if any(a in elevated and b in elevated for a, b in CONTIGUOUS_LEAD_PAIRS):
+        arrhythmias.append("ST elevation")
+    if any(a in depressed and b in depressed for a, b in CONTIGUOUS_LEAD_PAIRS):
+        arrhythmias.append("ST depression")
+
+    deduped: List[str] = []
+    for label in arrhythmias:
+        if label not in deduped:
+            deduped.append(label)
+    return deduped
+
+
+def _axis_from_amplitudes(lead_i_amp: float, avf_amp: float) -> float:
+    return float(np.degrees(np.arctan2(float(avf_amp), float(lead_i_amp))))
+
+
+def _median_wave_amplitude(signal: np.ndarray, beats: Sequence[Dict[str, object]], start_key: str, end_key: str, baseline_key: str = "baseline") -> float:
+    values: List[float] = []
+    for beat in beats:
+        start = beat.get(start_key)
+        end = beat.get(end_key)
+        baseline = float(beat.get(baseline_key) or 0.0)
+        if start is None or end is None:
+            continue
+        left = max(0, int(start))
+        right = min(signal.size, int(end) + 1)
+        if right <= left:
+            continue
+        segment = signal[left:right]
+        pos = float(np.max(segment) - baseline)
+        neg = float(baseline - np.min(segment))
+        values.append(pos if pos >= neg else -neg)
+    return float(np.median(values)) if values else 0.0
+
+
+def _compute_axis(signal_dict: Dict[str, Sequence[float]], beats: Sequence[Dict[str, object]], wave: str) -> float:
+    lead_i = _safe_array(signal_dict.get("I"))
+    avf = _safe_array(signal_dict.get("aVF"))
+    if lead_i.size == 0 or avf.size == 0 or not beats:
+        return 0.0
+
+    if wave == "P":
+        start_key, end_key = "p_onset", "p_end"
+    elif wave == "QRS":
+        start_key, end_key = "q_onset", "j_point"
+    else:
+        start_key, end_key = "r_peak", "t_end"
+    lead_i_amp = _median_wave_amplitude(lead_i, beats, start_key, end_key)
+    avf_amp = _median_wave_amplitude(avf, beats, start_key, end_key)
+    return _axis_from_amplitudes(lead_i_amp, avf_amp)
+
+
+def _sokolow_lyon(signal_dict: Dict[str, Sequence[float]], beats: Sequence[Dict[str, object]], fs: float) -> Tuple[float, float, float]:
+    v5 = _safe_array(signal_dict.get("V5"))
+    v1 = _safe_array(signal_dict.get("V1"))
+    if v5.size == 0 or v1.size == 0 or not beats:
+        return 0.0, 0.0, 0.0
+
+    rv5_values: List[float] = []
+    sv1_values: List[float] = []
+    for beat in beats:
+        q_onset = beat.get("q_onset")
+        j_point = beat.get("j_point")
+        if q_onset is None or j_point is None:
+            continue
+        baseline_v5 = _median_baseline(v5, int(beat["r_peak"]) - _ms_to_samples(400, fs), _ms_to_samples(100, fs))
+        baseline_v1 = _median_baseline(v1, int(beat["r_peak"]) - _ms_to_samples(400, fs), _ms_to_samples(100, fs))
+        left = max(0, int(q_onset))
+        right_v5 = min(v5.size, int(j_point) + 1)
+        right_v1 = min(v1.size, int(j_point) + 1)
+        if right_v5 > left:
+            rv5_values.append(float(np.max(v5[left:right_v5]) - baseline_v5))
+        if right_v1 > left:
+            sv1_values.append(float(baseline_v1 - np.min(v1[left:right_v1])))
+
+    rv5 = float(np.median(rv5_values)) if rv5_values else 0.0
+    sv1 = float(np.median(sv1_values)) if sv1_values else 0.0
+    return rv5, sv1, rv5 + sv1
+
+
+def _cornell_index(signal_dict: Dict[str, Sequence[float]], beats: Sequence[Dict[str, object]], fs: float) -> float:
+    avl = _safe_array(signal_dict.get("aVL"))
+    v3 = _safe_array(signal_dict.get("V3"))
+    if avl.size == 0 or v3.size == 0 or not beats:
+        return 0.0
+    ravl_values: List[float] = []
+    sv3_values: List[float] = []
+    for beat in beats:
+        q_onset = beat.get("q_onset")
+        j_point = beat.get("j_point")
+        if q_onset is None or j_point is None:
+            continue
+        left = max(0, int(q_onset))
+        right_avl = min(avl.size, int(j_point) + 1)
+        right_v3 = min(v3.size, int(j_point) + 1)
+        baseline_avl = _median_baseline(avl, int(beat["r_peak"]) - _ms_to_samples(400, fs), _ms_to_samples(100, fs))
+        baseline_v3 = _median_baseline(v3, int(beat["r_peak"]) - _ms_to_samples(400, fs), _ms_to_samples(100, fs))
+        if right_avl > left:
+            ravl_values.append(float(np.max(avl[left:right_avl]) - baseline_avl))
+        if right_v3 > left:
+            sv3_values.append(float(baseline_v3 - np.min(v3[left:right_v3])))
+    return float(np.median(ravl_values)) + float(np.median(sv3_values)) if ravl_values and sv3_values else 0.0
+
+
+def analyze_ecg(leads_dict: Dict[str, Sequence[float]], fs: float = DEFAULT_FS, patient_gender: str = "M") -> Dict[str, object]:
+    fs = float(fs or DEFAULT_FS)
+    cleaned_leads = {lead: _safe_array(sig) for lead, sig in (leads_dict or {}).items()}
+    if not cleaned_leads:
+        return {"arrhythmias": [], "reason": "No leads provided", "confidence": 0.0}
+
+    lead_lengths = [sig.size for sig in cleaned_leads.values() if sig.size]
+    if not lead_lengths or min(lead_lengths) < int(fs * MIN_SIGNAL_SECONDS):
+        return {"arrhythmias": [], "reason": "Signal too short (< 2 seconds)", "confidence": 0.0}
+
+    if all(not np.any(sig) for sig in cleaned_leads.values()):
+        return {"arrhythmias": [], "reason": "All-zero signal", "confidence": 0.0}
+
+    detection_lead_name, detection_signal, detection_quality = _select_detection_lead(cleaned_leads, fs)
+    if detection_signal.size == 0:
+        return {"arrhythmias": [], "reason": "No usable detection lead", "confidence": 0.0}
+
+    r_peaks = detect_r_peaks_pan_tompkins(detection_signal, fs)
+    if len(r_peaks) == 0:
+        return {
+            "heart_rate_bpm": 0.0,
+            "rr_ms": 0.0,
+            "pr_ms": 0.0,
+            "qrs_ms": 0.0,
+            "qt_ms": 0.0,
+            "qtc_bazett": 0.0,
+            "qtc_fridericia": 0.0,
+            "rv5_mv": 0.0,
+            "sv1_mv": 0.0,
+            "sokolow_mv": 0.0,
+            "p_axis_deg": 0.0,
+            "qrs_axis_deg": 0.0,
+            "t_axis_deg": 0.0,
+            "is_nsr": False,
+            "nsr_failed_criteria": ["no_r_peaks"],
+            "arrhythmias": [],
+            "st_levels": {},
+            "confidence": max(0.0, detection_quality * 0.5),
+            "reason": "No R peaks found",
+            "r_peaks": [],
+            "beats": [],
+        }
+
+    lead_ii = cleaned_leads.get("II", detection_signal)
+    beats: List[Dict[str, object]] = []
+    for r_peak in r_peaks:
+        beat = measure_beat(lead_ii, int(r_peak), fs)
+        if beat is not None:
+            beats.append(beat)
+
+    rr_intervals_ms = np.diff(np.asarray(r_peaks, dtype=float)) * 1000.0 / fs if len(r_peaks) >= 2 else np.array([], dtype=float)
+    heart_rate = 60000.0 / float(np.mean(rr_intervals_ms)) if rr_intervals_ms.size else 0.0
+    rate_info = classify_heart_rate(heart_rate, rr_intervals_ms)
+
+    for idx, beat in enumerate(beats):
+        beat["rr_ms"] = float(rr_intervals_ms[idx - 1]) if idx > 0 and idx - 1 < rr_intervals_ms.size else None
+        beat["heart_rate_bpm"] = heart_rate
+        beat["rr_variability"] = rate_info["rr_variability"]
+
+    clean_beats = [beat for beat in beats if not beat.get("noisy")]
+    averaging_beats = clean_beats[:10] if len(clean_beats) >= 3 else beats[:10]
+
+    pr_ms = _mean_or_none(beat.get("pr_ms") for beat in averaging_beats)
+    qrs_ms = _mean_or_none(beat.get("qrs_ms") for beat in averaging_beats)
+    qt_candidates = [float(beat["qt_ms"]) for beat in averaging_beats if beat.get("qt_ms") is not None and 200.0 <= float(beat["qt_ms"]) <= 700.0]
+    qt_for_average = qt_candidates[: min(5, len(qt_candidates))]
+    qt_ms = float(np.mean(qt_for_average)) if qt_for_average else 0.0
+    rr_sec = float(np.mean(rr_intervals_ms) / 1000.0) if rr_intervals_ms.size else 0.0
+    qtc_bazett = float(qt_ms / math.sqrt(rr_sec)) if qt_ms > 0 and rr_sec > 0 else 0.0
+    qtc_fridericia = float(qt_ms / (rr_sec ** (1.0 / 3.0))) if qt_ms > 0 and rr_sec > 0 else 0.0
+
+    st_levels: Dict[str, float] = {}
+    for lead_name, lead_signal in cleaned_leads.items():
+        per_beat: List[float] = []
+        for beat in averaging_beats:
+            r_peak = int(beat["r_peak"])
+            st_point = min(lead_signal.size - 1, r_peak + _ms_to_samples(70, fs))
+            baseline = _median_baseline(lead_signal, r_peak - _ms_to_samples(400, fs), _ms_to_samples(100, fs))
+            per_beat.append(float(lead_signal[st_point] - baseline))
+        st_levels[lead_name] = float(np.mean(per_beat)) if per_beat else 0.0
+
+    last_beat = averaging_beats[-1] if averaging_beats else {"p_present": False, "p_onset": None, "q_onset": None, "p_amplitude": 0.0}
+    nsr_input = {
+        "heart_rate_bpm": heart_rate,
+        "p_present": any(bool(beat.get("p_present")) for beat in averaging_beats),
+        "p_onset": last_beat.get("p_onset"),
+        "q_onset": last_beat.get("q_onset"),
+        "pr_ms": pr_ms,
+        "qrs_ms": qrs_ms,
+        "rr_variability": rate_info["rr_variability"],
+        "p_amplitude_lead_ii": _mean_or_none(beat.get("p_amplitude") for beat in averaging_beats if beat.get("p_present")) or 0.0,
+    }
+    is_nsr, nsr_failed = is_normal_sinus_rhythm(nsr_input)
+
+    arrhythmias = detect_arrhythmia(beats, cleaned_leads, fs=fs)
+    if rr_intervals_ms.size >= 2 and rate_info["label"] != "Normal rate" and rate_info["label"] not in arrhythmias:
+        arrhythmias.insert(0, rate_info["label"])
+
+    rv5_mv, sv1_mv, sokolow_mv = _sokolow_lyon(cleaned_leads, averaging_beats, fs)
+    cornell_mv = _cornell_index(cleaned_leads, averaging_beats, fs)
+
+    p_axis = _compute_axis(cleaned_leads, averaging_beats, "P")
+    qrs_axis = _compute_axis(cleaned_leads, averaging_beats, "QRS")
+    t_axis = _compute_axis(cleaned_leads, averaging_beats, "T")
+
+    lead_scores = [_signal_quality_score(signal, fs) for signal in cleaned_leads.values() if signal.size]
+    confidence = float(np.mean(lead_scores)) if lead_scores else 0.0
+    confidence *= 0.9 if len(clean_beats) < max(1, min(3, len(beats))) else 1.0
+    confidence = max(0.0, min(1.0, confidence))
+
+    results = {
+        "heart_rate_bpm": float(heart_rate),
+        "rr_ms": float(rate_info["rr_mean_ms"]),
+        "pr_ms": float(pr_ms or 0.0),
+        "qrs_ms": float(qrs_ms or 0.0),
+        "qt_ms": float(qt_ms),
+        "qtc_bazett": float(qtc_bazett),
+        "qtc_fridericia": float(qtc_fridericia),
+        "rv5_mv": float(rv5_mv),
+        "sv1_mv": float(sv1_mv),
+        "sokolow_mv": float(sokolow_mv),
+        "cornell_mv": float(cornell_mv),
+        "p_axis_deg": float(p_axis),
+        "qrs_axis_deg": float(qrs_axis),
+        "t_axis_deg": float(t_axis),
+        "is_nsr": bool(is_nsr),
+        "nsr_failed_criteria": nsr_failed,
+        "arrhythmias": arrhythmias,
+        "st_levels": st_levels,
+        "confidence": confidence,
+        "r_peaks": [int(idx) for idx in r_peaks],
+        "beats": beats,
+        "detection_lead": detection_lead_name,
+        "detection_quality": detection_quality,
+        "patient_gender": patient_gender,
+    }
+
+    gender = str(patient_gender or "M").strip().upper()
+    if sokolow_mv > 3.5 and "Left ventricular hypertrophy by Sokolow-Lyon" not in results["arrhythmias"]:
+        results["arrhythmias"].append("Left ventricular hypertrophy by Sokolow-Lyon")
+    if (gender.startswith("M") and cornell_mv > 2.8) or (gender.startswith("F") and cornell_mv > 2.0):
+        results["arrhythmias"].append("Left ventricular hypertrophy by Cornell")
+
+    return results
+
+
+def get_interpretation(results_dict: Dict[str, object]) -> List[str]:
+    if not results_dict:
+        return ["No ECG analysis available"]
+
+    interpretations: List[str] = []
+    hr = float(results_dict.get("heart_rate_bpm") or 0.0)
+    qrs_ms = float(results_dict.get("qrs_ms") or 0.0)
+    qtc = float(results_dict.get("qtc_bazett") or 0.0)
+    arrhythmias = list(results_dict.get("arrhythmias") or [])
+    st_levels = dict(results_dict.get("st_levels") or {})
+
+    rate_label = classify_heart_rate(hr, [float(results_dict.get("rr_ms") or 0.0)] if results_dict.get("rr_ms") else []).get("label")
+    if rate_label == "Normal rate":
+        interpretations.append("Normal heart rate")
+    else:
+        interpretations.append(rate_label)
+
+    if results_dict.get("is_nsr"):
+        interpretations.append("Normal sinus rhythm")
+    elif results_dict.get("nsr_failed_criteria"):
+        interpretations.append("Sinus rhythm criteria not fully satisfied")
+
+    if qtc > 460.0:
+        interpretations.append("Prolonged QTc interval")
+    if qrs_ms >= 120.0:
+        interpretations.append("Wide QRS complex")
+
+    for label in arrhythmias:
+        if label not in interpretations:
+            interpretations.append(label)
+
+    elevated = [lead for lead, value in st_levels.items() if float(value) > 0.1]
+    depressed = [lead for lead, value in st_levels.items() if float(value) < -0.05]
+    if len(elevated) >= 2:
+        interpretations.append(f"ST elevation in {'-'.join(sorted(elevated))}")
+    if len(depressed) >= 2:
+        interpretations.append(f"ST depression in {'-'.join(sorted(depressed))}")
+
+    return interpretations
 
 
 class ArrhythmiaDetector:
-    def __init__(self, sampling_rate=500, counts_per_mv: float = 500.0):
-        self.fs = sampling_rate
-        # Hardware scale: at wave_gain=10mm/mV and 1mV=1280 ADC counts.
-        # We convert ADC amplitudes to mV inside this detector for Philips-style thresholds.
-        self.counts_per_mv = float(counts_per_mv) if counts_per_mv else 0.0
-        # India-specific tuning
-        self.AFIB_RR_CV_THRESHOLD = 0.18
-        self.AFIB_P_ABSENT_RATIO = 0.60
-        self.AFIB_MIN_R_PEAKS = 8
-        self.PVC_BIGEMINY_RATIO = 0.45
-        # Debug helper (kept tiny/optional). We only print a few times.
-        self._flutter_debug_used = 0
+    """
+    Backward-compatible wrapper used by the PyQt application.
 
-    # ── Signal quality (Phase 1) ─────────────────────────────────────────────
+    The public methods intentionally preserve the existing signatures.
+    """
 
-    def _compute_sqi(self, signal_arr, r_peaks):
-        """Signal Quality Index — returns 0.0 (unusable) to 1.0 (clean)."""
-        sig = np.asarray(signal_arr, dtype=float)
-        if sig.size < self.fs * 2:
-            return 0.0
-        sig_ptp = float(np.ptp(sig))
-        sig_std = float(np.std(sig))
-        # Flat line check (lead-off or disconnected)
-        if sig_ptp < 0.05 or sig_std < 0.01:
-            return 0.0
-        # Clipping check — if >20% of samples are at max/min → saturated
-        max_v, min_v = float(np.max(sig)), float(np.min(sig))
-        if max_v != min_v:
-            clipped = np.mean((sig >= max_v * 0.98) | (sig <= min_v * 0.98))
-            if clipped > 0.20:
-                return 0.2
-        # High-frequency noise proxy via excessive R detections.
-        r_arr = np.asarray(r_peaks, dtype=int)
-        if r_arr.size >= 2:
-            rr_mean_sec = float(np.mean(np.diff(r_arr))) / float(self.fs)
-            if rr_mean_sec > 0:
-                expected_beats = sig.size / float(self.fs) / rr_mean_sec
-                beat_density = r_arr.size / max(expected_beats, 1.0)
-                # Too many "R peaks" = noise peaks being detected.
-                if beat_density > 3.0:
-                    return 0.3
-        return 1.0
+    def __init__(self, sampling_rate: float = DEFAULT_FS, counts_per_mv: float = 1.0):
+        self.fs = float(sampling_rate or DEFAULT_FS)
+        self.counts_per_mv = float(counts_per_mv or 1.0)
 
-    def detect_arrhythmias(self, signal, analysis,
-                           has_received_serial_data=False,
-                           min_serial_data_packets=50,
-                           lead_signals=None):
-        analysis   = analysis or {}
-        r_peaks    = np.array(analysis.get('r_peaks', []), dtype=int)
-        p_peaks    = np.array(analysis.get('p_peaks', []), dtype=int)
-        q_peaks    = np.array(analysis.get('q_peaks', []), dtype=int)
-        s_peaks    = np.array(analysis.get('s_peaks', []), dtype=int)
-        t_peaks    = np.array(analysis.get('t_peaks', []), dtype=int)
-        # Optional NeuroKit2-enhanced keys.
-        p_absent_flags = analysis.get('p_absent_flags', [])
-        t_ends = analysis.get('t_ends', [])
-        qrs_widths = analysis.get('qrs_widths', [])
-        signal_arr = np.asarray(signal, dtype=float) if signal is not None else np.array([])
-        # Convert ADC counts to mV for amplitude-based checks.
-        if signal_arr.size > 0 and self.counts_per_mv and self.counts_per_mv > 0:
+    def _normalize_signal(self, signal: Sequence[float]) -> np.ndarray:
+        signal_arr = _safe_array(signal)
+        if signal_arr.size and self.counts_per_mv not in (0.0, 1.0):
             signal_arr = signal_arr / self.counts_per_mv
+        return signal_arr
 
-        # Multi-lead signals (optional — gracefully absent)
-        _leads = lead_signals or {}
-        lead_I   = np.asarray(_leads.get('I',   []), dtype=float)
-        lead_II  = np.asarray(_leads.get('II',  []), dtype=float)
-        lead_aVF = np.asarray(_leads.get('aVF', []), dtype=float)
-        lead_V1  = np.asarray(_leads.get('V1',  []), dtype=float)
-        lead_V5  = np.asarray(_leads.get('V5',  []), dtype=float)
-        _has_multilead = (lead_I.size > 0 and lead_aVF.size > 0)
+    def detect_arrhythmias(
+        self,
+        signal,
+        analysis,
+        has_received_serial_data: bool = False,
+        min_serial_data_packets: int = 50,
+        lead_signals: Optional[Dict[str, Sequence[float]]] = None,
+    ) -> List[str]:
+        del has_received_serial_data
+        del min_serial_data_packets
 
-        # Phase 1: signal quality gate.
-        sqi = self._compute_sqi(signal_arr, r_peaks)
-        if sqi < 0.3:
-            return ["Signal quality too low — check lead connection"]
-        if sqi < 0.6:
-            # Partial quality: skip morphology‑heavy detectors (ST/T, flutter, etc.).
-            _skip_morphology = True
-        else:
-            _skip_morphology = False
-
-        # NOTE (product requirement):
-        # The user wants an India-focused subset of detections only.
-        # We intentionally DO NOT emit other labels here (they are effectively disabled).
-
-        if len(r_peaks) < 3:
-            return ["Insufficient data for arrhythmia detection."]
-
-        rr_ms        = np.diff(r_peaks) / self.fs * 1000.0
-        mean_rr      = float(np.mean(rr_ms)) if len(rr_ms) > 0 else 0.0
-        hr           = 60000.0 / mean_rr if mean_rr > 0 else 0.0
-        pr_interval  = self._estimate_pr_interval(p_peaks, q_peaks)
-        qrs_duration = self._estimate_qrs_duration(q_peaks, s_peaks)
-
-        # If NeuroKit2 provided per-beat QRS widths (ms), prefer the median.
-        try:
-            widths = [float(w) for w in (qrs_widths or []) if w is not None and float(w) > 0.0]
-            if widths:
-                qrs_duration = float(np.median(widths))
-        except Exception:
-            pass
-
-        # AF detection: if NeuroKit2 indicates "P mostly absent", AF becomes much more likely.
-        p_peaks_for_af = p_peaks
-        p_absent_ratio = None
-        try:
-            if isinstance(p_absent_flags, (list, tuple, np.ndarray)) and len(p_absent_flags) > 0:
-                absent_count = sum(1 for f in p_absent_flags if bool(f))
-                p_absent_ratio = absent_count / max(1, len(p_absent_flags))
-                if p_absent_ratio > 0.70:
-                    p_peaks_for_af = np.array([], dtype=int)
-        except Exception:
-            pass
-
-        # For other atrial rhythms, require meaningful P-wave presence.
-        # These are "P-based" rhythms; if P is mostly absent, avoid labeling flutter/sinus-arrhythmia
-        # and some atrial tachycardias.
-        p_peaks_for_atrial = p_peaks
-        if p_absent_ratio is not None and p_absent_ratio > 0.95:
-            p_peaks_for_atrial = np.array([], dtype=int)
-
-        # For junctional/nodal rhythms, the key is *P absence*.
-        # We use a stricter threshold here so nodal can still trigger when P is truly absent.
-        p_peaks_for_junctional = p_peaks
-        if p_absent_ratio is not None and p_absent_ratio > 0.55:
-            p_peaks_for_junctional = np.array([], dtype=int)
-
-        # Also evaluate AF independently, then decide which to display.
-        af_candidate = False
-        af_rvr_candidate = False
-        flutter_candidate = False
-        try:
-            af_candidate = bool(self._is_atrial_fibrillation_india(
-                signal_arr, r_peaks, p_peaks_for_af, rr_ms, qrs_duration, p_absent_ratio=p_absent_ratio
-            ))
-        except Exception:
-            af_candidate = False
-        try:
-            af_rvr_candidate = bool(self._is_afib_rvr(r_peaks, p_peaks_for_af, rr_ms, qrs_duration, hr))
-        except Exception:
-            af_rvr_candidate = False
-        if not _skip_morphology:
-            try:
-                flutter_candidate = bool(self._is_atrial_flutter(
-                    hr, qrs_duration, rr_ms, p_peaks_for_atrial, r_peaks, p_absent_ratio=p_absent_ratio
-                ))
-            except Exception:
-                flutter_candidate = False
-
-        arrhythmias = []
-
-        def _try(label, fn, *args, **kwargs):
-            try:
-                if fn is None:
-                    return
-                result = fn(*args, **kwargs)
-                if result:
-                    arrhythmias.append(result if isinstance(result, str) else label)
-            except Exception as e:
-                print(f"Error detecting {label}: {e}")
-
-        def _m(name):
-            fn = getattr(self, name, None)
-            return fn if callable(fn) else None
-
-        # Priority 1: life-threatening first (return immediately)
-        try:
-            if self._is_asystole(signal_arr, r_peaks, hr):
-                return ["Asystole (Cardiac Arrest) — EMERGENCY"]
-        except Exception:
-            pass
-        try:
-            if self._is_ventricular_fibrillation(signal_arr, r_peaks, rr_ms):
-                return ["Ventricular Fibrillation — EMERGENCY"]
-        except Exception:
-            pass
-
-        # VT (subset)
-        _try(
-            "Possible Ventricular Tachycardia",
-            _m("_is_ventricular_tachycardia"),
-            rr_ms,
-            qrs_duration,
-        )
-
-        # Priority 2: AFib / Flutter
-        if af_candidate:
-            arrhythmias.append("Atrial Fibrillation Detected")
-        elif af_rvr_candidate:
-            arrhythmias.append("Atrial Fibrillation 2 (with RVR)")
-        elif flutter_candidate:
-            arrhythmias.append("Possible Atrial Flutter")
-
-        # PVCs & ectopics / patterns
-        # If we already have an atrial candidate (AFib/Flutter), avoid letting PVC/ectopic
-        # logic overwrite it in live noisy conditions.
-        if not (af_candidate or af_rvr_candidate or flutter_candidate):
-            _try("Ventricular Ectopics Detected",
-                 _m("_is_ventricular_ectopics"), signal_arr, r_peaks, qrs_duration, p_peaks, rr_ms)
-        for label in self._classify_pvcs(signal_arr, r_peaks, rr_ms, qrs_duration, p_peaks, q_peaks, s_peaks):
-            arrhythmias.append(label)
-
-        # Bigeminy / Trigeminy / Run
-        try:
-            if self._is_bigeminy(rr_ms, qrs_duration, signal_arr, r_peaks):
-                arrhythmias.append("Bigeminy")
-        except Exception as e:
-            print(f"Error in bigeminy detection: {e}")
-        _try("Trigeminy", _m("_is_trigeminy"), rr_ms, qrs_duration, signal_arr, r_peaks)
-        _try("Run of PVCs (>=3 consecutive)",
-             _m("_is_run_of_pvcs"), signal_arr, r_peaks, rr_ms, qrs_duration)
-
-        # AV Blocks (Phase 2: Wenckebach-aware)
-        try:
-            pr_sequence = self._compute_pr_sequence(p_peaks, r_peaks)
-            if self._is_wenckebach(pr_sequence, r_peaks, rr_ms):
-                arrhythmias.append("Second-Degree AV Block (Type I — Wenckebach)")
-            else:
-                av = self._is_av_block(pr_interval, p_peaks, r_peaks, rr_ms, hr)
-                if av:
-                    arrhythmias.append(av)
-        except Exception as e:
-            print(f"Error in AV block: {e}")
-        _try("High AV-Block",
-             _m("_is_high_av_block"), pr_interval, p_peaks, r_peaks, rr_ms, hr)
-
-        # Bundle branch blocks (RBBB/LBBB only)
-        _try("Left Bundle Branch Block (LBBB)",
-             _m("_is_left_bundle_branch_block"), qrs_duration, pr_interval, rr_ms, signal_arr, q_peaks, r_peaks)
-        _try("Right Bundle Branch Block (RBBB)",
-             _m("_is_right_bundle_branch_block"), qrs_duration, pr_interval, rr_ms, signal_arr, r_peaks)
-
-        # Morphology detections — only on reasonably clean signal
-        if not _skip_morphology:
-            _try("ST Change Detected",
-                 _m("_is_st_change"), signal_arr, q_peaks, s_peaks, p_peaks)
-            _try("T-Wave Inversion Detected",
-                 _m("_is_t_wave_inversion"), signal_arr, t_peaks, r_peaks)
-            _try("QTc Prolongation",
-                 _m("_is_qtc_prolonged"), q_peaks, t_peaks, rr_ms)
-
-        # Multi-lead detections (only when lead data provided and morphology allowed)
-        if _has_multilead and not _skip_morphology:
-            _try("Left Anterior Fascicular Block (LAFB)",
-                 _m("_is_lafb"), qrs_duration, lead_I, lead_aVF, r_peaks, s_peaks)
-            _try("Left Posterior Fascicular Block (LPFB)",
-                 _m("_is_lpfb"), qrs_duration, lead_I, lead_aVF, r_peaks)
-            _try("WPW Syndrome",
-                 _m("_is_wpw_multilead"), pr_interval, qrs_duration, lead_I, lead_V1, r_peaks)
-            _try("Right Ventricular Hypertrophy",
-                 _m("_is_rvh"), lead_V1, lead_V5, r_peaks, qrs_duration)
-
-        # SVT (subset)
-        _try("Supraventricular Tachycardia (SVT)",
-             _m("_is_supraventricular_tachycardia"), hr, qrs_duration, rr_ms, p_peaks, r_peaks)
-        _try("Paroxysmal Atrial Tachycardia (PAT)",
-             _m("_is_pat"), hr, qrs_duration, rr_ms, p_peaks, r_peaks)
-
-        # Bradycardia (subset)
-        if not arrhythmias:
-            try:
-                if self._is_bradycardia(rr_ms):
-                    arrhythmias.append("Sinus Bradycardia")
-            except Exception as e:
-                print(f"Error in bradycardia detection: {e}")
-
-        if not arrhythmias and self._is_normal_sinus_rhythm(rr_ms):
-            return ["Normal Sinus Rhythm"]
-
-        # India-focused priority order:
-        # AFib > PVCs/Bigeminy > AV Blocks > RBBB/LBBB > Bradycardia > SVT/VT
-        if not arrhythmias:
-            return ["Unspecified Irregular Rhythm"]
-
-        def _rank(label: str) -> int:
-            s = str(label or "")
-            if "Atrial Fibrillation" in s:
-                return 0
-            if "Atrial Flutter" in s:
-                return 1
-            if ("PVC" in s) or ("Ventricular Ectopics" in s) or ("Bigeminy" in s) or ("Trigeminy" in s) or ("Run of PVCs" in s):
-                return 1
-            if "AV Block" in s:
-                return 2
-            if "WPW" in s:
-                return 2
-            if ("Bundle Branch Block" in s) or ("(LBBB)" in s) or ("(RBBB)" in s) or ("LBBB" in s) or ("RBBB" in s):
-                return 3
-            if "LAFB" in s or "Left Anterior Fascicular" in s:
-                return 3
-            if "LPFB" in s or "Left Posterior Fascicular" in s:
-                return 3
-            if "Sinus Bradycardia" in s:
-                return 4
-            if ("SVT" in s) or ("Tachycardia" in s):
-                return 5
-            if "Ventricular Tachycardia" in s:
-                return 5
-            if "Right Ventricular Hypertrophy" in s:
-                return 13
-            if "QTc Prolongation" in s:
-                return 14
-            if "ST Change" in s:
-                return 15
-            if "T-Wave Inversion" in s:
-                return 15
-            return 99
-
-        arrhythmias_sorted = sorted(arrhythmias, key=_rank)
-
-        # Phase 5: return up to top‑3 labels across different tiers.
-        def _pick_top_n(sorted_labels, n=3):
-            tiers_seen = set()
-            picked = []
-            for lab in sorted_labels:
-                tier = _rank(lab) // 3
-                if tier not in tiers_seen:
-                    picked.append(lab)
-                    tiers_seen.add(tier)
-                if len(picked) >= n:
-                    break
-            return picked or sorted_labels[:1]
-
-        return _pick_top_n(arrhythmias_sorted, n=3)
-
-    def _is_atrial_fibrillation_india(self, signal, r_peaks, p_peaks, rr_intervals, qrs_duration, p_absent_ratio=None):
-        """AFib detection tuned for Indian cohorts and live monitor windows."""
-        if len(r_peaks) < self.AFIB_MIN_R_PEAKS:
-            return False
-
-        rr = np.asarray(rr_intervals, dtype=float)
-        if len(rr) < 2:
-            rr = np.diff(r_peaks) / self.fs * 1000.0
-        if len(rr) < 2:
-            return False
-
-        mean_rr = float(np.mean(rr))
-        if mean_rr <= 0:
-            return False
-        rr_cv = float(np.std(rr) / mean_rr)
-        if rr_cv < self.AFIB_RR_CV_THRESHOLD:
-            # Exception: if NeuroKit2 strongly reports P-wave absence, AFib can still
-            # trigger even when RR irregularity looks modest on short windows.
-            if not (p_absent_ratio is not None and p_absent_ratio >= (self.AFIB_P_ABSENT_RATIO + 0.05)):
-                return False
-
-        # Use NK2 per-beat P-absence when available; but tolerate occasional P detection
-        # failures (common on live monitors).
-        if p_absent_ratio is not None:
-            # If P-absence ratio is too low, still allow AFib when RR irregularity is strong.
-            if p_absent_ratio < (self.AFIB_P_ABSENT_RATIO - 0.10):
-                if rr_cv < 0.28:
-                    return False
-        else:
-            # Fallback on sparse P detections (fewer P peaks favors AF).
-            p_ratio = float(len(np.asarray(p_peaks, dtype=int))) / float(max(1, len(r_peaks)))
-            if p_ratio > 0.45:
-                return False
-
-        # Typical AFib has narrow QRS unless aberrancy; keep relaxed upper bound.
-        if qrs_duration is not None and qrs_duration > 130:
-            return False
-        return True
-
-    # ── Adaptive windowing (Phase 3) ─────────────────────────────────────────
-
-    def _adaptive_window(self, rr_ms, min_beats=8, fallback_sec=6.0):
-        """Returns window_size in seconds that captures at least min_beats."""
-        rr = np.asarray(rr_ms, dtype=float)
-        if rr.size < 2:
-            return float(fallback_sec)
-        mean_rr_sec = float(np.mean(rr)) / 1000.0
-        required = mean_rr_sec * float(min_beats)
-        return float(max(required, fallback_sec))
-
-    def detect_arrhythmias_with_probabilities(self, signal, analysis, window_size=2.0, step_size=None):
-        """
-        Build a simple AFib vs Atrial Flutter probability heatmap.
-
-        Returns a dict where each key maps to a list of (window_center_time_sec, probability).
-        ExpandedLeadView overlays this as a background heatmap and extracts high-probability events.
-        """
+        primary_signal = self._normalize_signal(signal)
         analysis = analysis or {}
-        signal_arr = np.asarray(signal, dtype=float) if signal is not None else np.array([])
+        lead_signals = dict(lead_signals or {})
+        if "II" not in lead_signals and primary_signal.size:
+            lead_signals["II"] = primary_signal
 
-        r_peaks = np.asarray(analysis.get("r_peaks", []), dtype=int)
-        p_peaks = np.asarray(analysis.get("p_peaks", []), dtype=int)
-        p_absent_flags = analysis.get("p_absent_flags", [])
-        qrs_widths = analysis.get("qrs_widths", [])
+        results = analyze_ecg(lead_signals, fs=self.fs)
+        arrhythmias = list(results.get("arrhythmias") or [])
 
-        # If we can't time windows, return an empty heatmap.
-        if r_peaks.size < 3:
-            return {
-                "Normal Sinus Rhythm": [],
-                "Atrial Fibrillation": [],
-                "Atrial Flutter": [],
-            }
+        if not arrhythmias:
+            if results.get("is_nsr"):
+                return ["Normal Sinus Rhythm"]
+            hr = float(results.get("heart_rate_bpm") or 0.0)
+            rr_ms = float(results.get("rr_ms") or 0.0)
+            rate_label = classify_heart_rate(hr, [rr_ms] if rr_ms else []).get("label")
+            return [rate_label] if rate_label else ["Unspecified Irregular Rhythm"]
 
-        # Basic timing for windows.
-        start_t = float(r_peaks[0]) / float(self.fs)
-        end_t = float(r_peaks[-1]) / float(self.fs)
-        if end_t <= start_t:
+        return arrhythmias
+
+    def detect_arrhythmias_with_probabilities(self, signal, analysis, window_size: float = 2.0, step_size: Optional[float] = None) -> Dict[str, List[Tuple[float, float]]]:
+        signal_arr = self._normalize_signal(signal)
+        analysis = analysis or {}
+        r_peaks = np.asarray(analysis.get("r_peaks") or detect_r_peaks_pan_tompkins(signal_arr, self.fs), dtype=int)
+        if r_peaks.size < 2:
             return {
                 "Normal Sinus Rhythm": [],
                 "Atrial Fibrillation": [],
@@ -418,999 +1022,41 @@ class ArrhythmiaDetector:
             }
 
         if step_size is None:
-            # Use the current/soon‑to‑be adaptive window size as a natural step.
-            step_size = float(window_size) if window_size else 2.0
-        step_size = float(step_size) if step_size else float(window_size or 2.0)
+            step_size = float(window_size)
+        window_size = float(window_size or 2.0)
+        step_size = float(step_size or window_size)
 
-        # Phase 3: adapt the analysis window length based on RR.
-        if window_size is None or float(window_size) < 2.0:
-            rr_quick = np.diff(r_peaks) / float(self.fs) * 1000.0
-            window_size = self._adaptive_window(rr_quick)
-        else:
-            window_size = float(window_size)
-
-        num_windows = int(np.floor((end_t - start_t) / step_size)) + 1
-        if num_windows <= 0:
-            num_windows = 1
-
-        # P absent ratio: used as a differentiator between AFib vs flutter.
-        p_absent_ratio = None
-        try:
-            if isinstance(p_absent_flags, (list, tuple, np.ndarray)) and len(p_absent_flags) > 0:
-                absent_count = sum(1 for f in p_absent_flags if bool(f))
-                p_absent_ratio = float(absent_count) / float(max(1, len(p_absent_flags)))
-        except Exception:
-            p_absent_ratio = None
-
-        # Prefer a median QRS width if provided.
-        qrs_duration = None
-        try:
-            widths = [float(w) for w in (qrs_widths or []) if w is not None and float(w) > 0.0]
-            if widths:
-                qrs_duration = float(np.median(widths))
-        except Exception:
-            qrs_duration = None
-
-        # Precompute for speed.
-        p_peaks_sec = p_peaks.astype(float) / float(self.fs)
-        r_peaks_sec = r_peaks.astype(float) / float(self.fs)
-
-        out = {
+        start_t = float(r_peaks[0]) / self.fs
+        end_t = float(r_peaks[-1]) / self.fs
+        centers = np.arange(start_t, end_t + 1e-9, step_size)
+        output = {
             "Normal Sinus Rhythm": [],
             "Atrial Fibrillation": [],
             "Atrial Flutter": [],
         }
 
-        def _clamp01(x):
-            try:
-                return float(max(0.0, min(1.0, x)))
-            except Exception:
-                return 0.0
-
-        for w in range(num_windows):
-            center_t = start_t + w * step_size
-            half = window_size / 2.0
-            t0 = center_t - half
-            t1 = center_t + half
-
-            # Select peaks that fall inside this window.
-            r_win_mask = (r_peaks_sec >= t0) & (r_peaks_sec <= t1)
-            r_win = r_peaks[r_win_mask]
-            p_win_mask = (p_peaks_sec >= t0) & (p_peaks_sec <= t1)
-            p_win = p_peaks[p_win_mask]
-
-            if r_win.size >= 3:
-                rr_ms_win = np.diff(r_win) / float(self.fs) * 1000.0
-                mean_rr_win = float(np.mean(rr_ms_win)) if rr_ms_win.size else 0.0
-                rr_cv_win = float(np.std(rr_ms_win) / mean_rr_win) if mean_rr_win > 0 else 0.0
-
-                hr_win = 60000.0 / mean_rr_win if mean_rr_win > 0 else 0.0
-            else:
-                rr_ms_win = np.array([])
-                rr_cv_win = 0.0
-                hr_win = 0.0
-
-            # AFib probability: irregular rhythm + often higher P-absence.
-            p_abs_score = 0.5
-            if p_absent_ratio is not None:
-                # High absent ratio -> higher AFib likelihood.
-                p_abs_score = _clamp01((p_absent_ratio - 0.65) / 0.25)
-
-            # Continuous heuristic.
-            rr_score_af = _clamp01((rr_cv_win - 0.15) / 0.25)  # 0 when rr_cv <= 0.15
-            prob_af = rr_score_af * (0.55 + 0.45 * p_abs_score)
-
-            # Hard boost if criteria pass.
-            try:
-                if self._is_atrial_fibrillation(
-                    signal_arr,
-                    r_win,
-                    p_win,
-                    rr_ms_win,
-                    qrs_duration,
-                    p_absent_ratio=p_absent_ratio,
-                ):
-                    prob_af = max(prob_af, 0.85)
-            except Exception:
-                pass
-
-            # Flutter probability: relatively regular + 2:1-ish behavior + not-extreme P absence.
-            p_to_r = 0.0
-            if r_win.size > 0:
-                p_to_r = float(p_win.size) / float(max(1, r_win.size))
-
-            p_abs_flutter_penalty = 1.0
-            if p_absent_ratio is not None:
-                # If P is *too* absent, flutter detection is unreliable -> penalize.
-                p_abs_flutter_penalty = _clamp01(1.0 - (p_absent_ratio - 0.75) / 0.25)
-            rr_score_fl = _clamp01((0.32 - rr_cv_win) / 0.18)
-            p_to_r_score = _clamp01((p_to_r - 0.25) / 0.40)  # prefers >= ~0.5
-
-            prob_fl = 0.15 + 0.85 * rr_score_fl * p_to_r_score * p_abs_flutter_penalty
-
-            try:
-                # Use the same detector criteria as a hard boost.
-                # Note: these internal methods use HR + QRS too.
-                if self._is_atrial_flutter(
-                    hr_win if hr_win > 0 else None,
-                    qrs_duration,
-                    rr_ms_win if rr_ms_win.size else np.diff(r_win) / float(self.fs) * 1000.0,
-                    p_win,
-                    r_win,
-                    p_absent_ratio=p_absent_ratio,
-                ):
-                    prob_fl = max(prob_fl, 0.85)
-            except Exception:
-                pass
-
-            # Normal probability is what's left (only between AFib/Flutter).
-            prob_norm = _clamp01(1.0 - max(prob_af, prob_fl))
-
-            out["Normal Sinus Rhythm"].append((center_t, prob_norm))
-            out["Atrial Fibrillation"].append((center_t, prob_af))
-            out["Atrial Flutter"].append((center_t, prob_fl))
-
-        return out
-
-    # ── Utilities ──────────────────────────────────────────────────────────
-
-    # Phase 2: per‑beat PR tracking
-
-    def _compute_pr_sequence(self, p_peaks, r_peaks):
-        """Returns list of (beat_index, pr_ms) — one per beat where P found."""
-        p_arr = np.asarray(p_peaks, dtype=int)
-        r_arr = np.asarray(r_peaks, dtype=int)
-        sequence = []
-        if p_arr.size == 0 or r_arr.size == 0:
-            return sequence
-        for i, r in enumerate(r_arr):
-            # Find P peak immediately before this R within a 300 ms window.
-            win = int(0.30 * self.fs)
-            candidates = p_arr[(p_arr < r) & (p_arr > r - win)]
-            if candidates.size:
-                pr_ms = (r - candidates[-1]) / self.fs * 1000.0
-                if 80.0 <= pr_ms <= 350.0:
-                    sequence.append((i, pr_ms))
-        return sequence
-
-    def _estimate_pr_interval(self, p_peaks, q_peaks):
-        """Legacy mean PR estimate (kept for existing logic)."""
-        p_arr = np.asarray(p_peaks, dtype=int)
-        q_arr = np.asarray(q_peaks, dtype=int)
-        if len(p_arr) == 0 or len(q_arr) == 0:
-            return None
-        intervals = []
-        for p in p_arr:
-            q_after = q_arr[q_arr > p]
-            if len(q_after):
-                v = (q_after[0] - p) / self.fs * 1000.0
-                if v < 400:
-                    intervals.append(v)
-        return float(np.mean(intervals)) if intervals else None
-
-    def _estimate_qrs_duration(self, q_peaks, s_peaks):
-        q_arr = np.asarray(q_peaks, dtype=int)
-        s_arr = np.asarray(s_peaks, dtype=int)
-        if len(q_arr) == 0 or len(s_arr) == 0:
-            return None
-        durations = []
-        for q in q_arr:
-            s_after = s_arr[s_arr > q]
-            if len(s_after):
-                v = (s_after[0] - q) / self.fs * 1000.0
-                if v < 200:
-                    durations.append(v)
-        return float(np.mean(durations)) if durations else None
-
-    def _rr_cv(self, rr_ms):
-        if len(rr_ms) < 2:
-            return 0.0
-        m = float(np.mean(rr_ms))
-        return float(np.std(rr_ms) / m) if m > 0 else 0.0
-
-    def _is_wenckebach(self, pr_sequence, r_peaks, rr_ms):
-        """Detects Second‑degree AV block type I (Wenckebach)."""
-        if len(pr_sequence) < 4:
-            return False
-        pr_values = [pr for _, pr in pr_sequence]
-        # Look for runs of ≥3 beats with progressively lengthening PR.
-        for i in range(len(pr_values) - 2):
-            window = pr_values[i:i + 3]
-            if window[1] > window[0] + 10.0 and window[2] > window[1] + 5.0:
-                # Check for a pause (dropped beat) after this run.
-                beat_indices = [idx for idx, _ in pr_sequence]
-                if i + 3 < len(beat_indices):
-                    next_idx = beat_indices[i + 3]
-                    if next_idx > beat_indices[i + 2] + 1:
-                        return True
-                # Or check for a clearly long RR right after the run.
-                rr = np.asarray(rr_ms, dtype=float)
-                if rr.size > i + 2:
-                    if rr[i + 2] > float(np.mean(rr)) * 1.4:
-                        return True
-        return False
-
-    # ── Multi-lead helpers (Phase 4) ────────────────────────────────────────
-
-    def _is_lafb(self, qrs_duration, lead_I, lead_aVF, r_peaks, s_peaks):
-        """
-        Left anterior fascicular block:
-        - Left axis deviation: tall R in I, deep S in aVF.
-        - QRS < 120 ms (not a full bundle branch block).
-        """
-        if qrs_duration is not None and qrs_duration >= 120:
-            return False
-        if lead_I.size == 0 or lead_aVF.size == 0:
-            return False
-        r_arr = np.asarray(r_peaks, dtype=int)
-        if r_arr.size < 3:
-            return False
-
-        r_amps_I   = [float(lead_I[r])   for r in r_arr if r < lead_I.size]
-        r_amps_aVF = [float(lead_aVF[r]) for r in r_arr if r < lead_aVF.size]
-
-        # S wave in aVF: trough after each R
-        s_amps_aVF = []
-        for r in r_arr[:6]:
-            window_end = min(lead_aVF.size, r + int(0.08 * self.fs))
-            if window_end > r:
-                s_amps_aVF.append(float(np.min(lead_aVF[r:window_end])))
-
-        if len(r_amps_I) < 3 or len(s_amps_aVF) < 3:
-            return False
-
-        mean_R_I   = float(np.mean(r_amps_I))
-        mean_R_aVF = float(np.mean(r_amps_aVF)) if r_amps_aVF else 0.0
-        mean_S_aVF = float(np.mean(s_amps_aVF))
-
-        return (
-            mean_R_I > 0.0 and
-            mean_S_aVF < 0.0 and
-            abs(mean_S_aVF) > abs(mean_R_aVF) * 1.2
-        )
-
-    def _is_lpfb(self, qrs_duration, lead_I, lead_aVF, r_peaks):
-        """
-        Left posterior fascicular block:
-        - Right axis deviation: deep S in I, tall R in aVF.
-        - QRS < 120 ms.
-        """
-        if qrs_duration is not None and qrs_duration >= 120:
-            return False
-        if lead_I.size == 0 or lead_aVF.size == 0:
-            return False
-        r_arr = np.asarray(r_peaks, dtype=int)
-        if r_arr.size < 3:
-            return False
-
-        r_amps_aVF = [float(lead_aVF[r]) for r in r_arr if r < lead_aVF.size]
-
-        # S wave in lead I: trough after each R
-        s_amps_I = []
-        for r in r_arr[:6]:
-            window_end = min(lead_I.size, r + int(0.08 * self.fs))
-            if window_end > r:
-                s_amps_I.append(float(np.min(lead_I[r:window_end])))
-
-        if len(r_amps_aVF) < 3 or len(s_amps_I) < 3:
-            return False
-
-        mean_R_aVF = float(np.mean(r_amps_aVF))
-        mean_S_I   = float(np.mean(s_amps_I))
-
-        return (
-            mean_R_aVF > 0.0 and
-            mean_S_I < 0.0 and
-            abs(mean_S_I) > mean_R_aVF * 1.2
-        )
-
-    def _is_wpw_multilead(self, pr_interval, qrs_duration, lead_I, lead_V1, r_peaks):
-        """
-        WPW: short PR + wide QRS + delta wave slurring in V1 or lead I.
-        Delta wave = slow initial upstroke before the main R deflection.
-        """
-        if pr_interval is None or qrs_duration is None:
-            return False
-        if not (pr_interval < 120 and qrs_duration > 110):
-            return False
-
-        delta_found = 0
-        r_arr = np.asarray(r_peaks, dtype=int)
-        if r_arr.size == 0:
-            return False
-
-        for lead in (lead_V1, lead_I):
-            if lead.size == 0:
+        for center in centers:
+            left = int(max(0, (center - window_size / 2.0) * self.fs))
+            right = int(min(signal_arr.size, (center + window_size / 2.0) * self.fs))
+            if right - left < int(self.fs):
                 continue
-            for r in r_arr[:6]:
-                onset = max(0, r - int(0.06 * self.fs))   # 60 ms before R
-                seg = lead[onset:r]
-                if seg.size < 6:
-                    continue
-                diffs = np.diff(seg.astype(float))
-                if diffs.size < 4:
-                    continue
-                peak_slope = float(np.max(np.abs(diffs)))
-                if peak_slope <= 0.0:
-                    continue
-                first_half_slope = float(np.mean(np.abs(diffs[: diffs.size // 2])))
-                if 0.0 < first_half_slope < peak_slope * 0.45:
-                    delta_found += 1
-                    break
+            window_signal = signal_arr[left:right]
+            results = analyze_ecg({"II": window_signal}, fs=self.fs)
+            arrhythmias = set(results.get("arrhythmias") or [])
+            output["Atrial Fibrillation"].append((float(center), 0.9 if "Atrial fibrillation" in arrhythmias else 0.1))
+            output["Atrial Flutter"].append((float(center), 0.85 if "Atrial flutter" in arrhythmias else 0.1))
+            output["Normal Sinus Rhythm"].append((float(center), 0.8 if results.get("is_nsr") else 0.2))
 
-        return delta_found >= 1
+        return output
 
-    def _is_rvh(self, lead_V1, lead_V5, r_peaks, qrs_duration):
-        """
-        Right ventricular hypertrophy: dominant R in V1 (R > S).
-        """
-        if lead_V1.size == 0:
-            return False
-        r_arr = np.asarray(r_peaks, dtype=int)
-        if r_arr.size < 3:
-            return False
 
-        r_amps_V1 = [float(lead_V1[r]) for r in r_arr if r < lead_V1.size]
-        s_amps_V1 = []
-        for r in r_arr[:6]:
-            end = min(lead_V1.size, r + int(0.08 * self.fs))
-            if end > r:
-                s_amps_V1.append(float(np.min(lead_V1[r:end])))
-
-        if len(r_amps_V1) < 3 or len(s_amps_V1) < 3:
-            return False
-
-        mean_R_V1 = float(np.mean(r_amps_V1))
-        mean_S_V1 = float(np.mean(s_amps_V1))
-
-        return mean_R_V1 > 0.0 and mean_R_V1 > abs(mean_S_V1)
-
-    # ── Original preserved detections ──────────────────────────────────────
-
-    def _is_normal_sinus_rhythm(self, rr_intervals):
-        rr = np.asarray(rr_intervals, dtype=float)
-        if len(rr) < 3: return False
-        mean_rr = float(np.mean(rr))
-        if mean_rr <= 0:
-            return False
-        rr_std = float(np.std(rr))
-        rr_cv = rr_std / mean_rr
-        return 60 <= 60000.0/mean_rr <= 100 and rr_std < 60 and rr_cv < 0.08
-
-    def _is_asystole(self, signal, r_peaks, heart_rate, min_data_packets=50):
-        sig = np.asarray(signal, dtype=float)
-        if len(sig) == 0 or len(sig)/self.fs < 2.0: return False
-        amp = float(np.ptp(sig)); max_abs = float(np.max(np.abs(sig)))
-        # Thresholds were historically written in ADC counts; we now run on mV.
-        # Convert the original constants using counts_per_mv.
-        cpmv = self.counts_per_mv if self.counts_per_mv else 1.0
-        amp_threshold = 10.0 / cpmv
-        flat_amp = (50.0 / cpmv) if max_abs > amp_threshold else (0.05 / cpmv)
-        flat_std = (20.0 / cpmv) if max_abs > amp_threshold else (0.02 / cpmv)
-        if len(r_peaks) == 0:
-            return amp < flat_amp or (amp < flat_amp*5 and float(np.std(sig)) < flat_std)
-        if len(r_peaks) <= 2:
-            return amp < flat_amp*5 and float(np.std(sig)) < flat_std*6
-        if heart_rate is not None and heart_rate < 20:
-            return amp < flat_amp*10 and float(np.std(sig)) < flat_std*5
-        dur = len(sig)/self.fs
-        if dur > 3 and (len(r_peaks)/dur)*60 < 20 and amp < flat_amp*12:
-            return True
-        return False
-
-    def _is_atrial_fibrillation(self, signal, r_peaks, p_peaks, rr_intervals, qrs_duration, p_absent_ratio=None):
-        if len(r_peaks) < 8: return False
-        rr = np.asarray(rr_intervals, dtype=float)
-        if len(rr) < 2: rr = np.diff(r_peaks)/self.fs*1000.0
-        if len(rr) < 2: return False
-        mean_rr = float(np.mean(rr))
-        if mean_rr <= 0: return False
-        rr_cv = float(np.std(rr)/mean_rr)
-        p_arr = np.asarray(p_peaks, dtype=int)
-        p_ratio = float(len(p_arr)) / max(len(r_peaks), 1)
-        # Make AF harder to trigger in sinus arrhythmia:
-        # - Require stronger RR irregularity
-        # - If P is "mostly absent", allow AF; otherwise avoid false positives
-        if qrs_duration is not None and qrs_duration > 120:
-            return False
-
-        # If P absent ratio is known, use it.
-        if p_absent_ratio is not None:
-            if p_absent_ratio < 0.65:
-                return False
-
-        # Base irregularity requirement, relaxed when P is very likely absent.
-        # (Some AF episodes appear "more regular" over short windows, especially with pauses
-        # or rate-limited conduction; when P is strongly absent we allow a lower rr_cv.)
-        min_rr_cv = 0.22
-        if p_absent_ratio is not None:
-            if p_absent_ratio >= 0.92:
-                min_rr_cv = 0.15
-            elif p_absent_ratio >= 0.85:
-                min_rr_cv = 0.18
-        else:
-            # If we cannot compute p_absent_ratio, still allow AF when P detection is sparse.
-            # This avoids flutter stealing AF when rr_cv is borderline.
-            if p_ratio <= 0.35:
-                min_rr_cv = 0.18
-
-        if rr_cv < min_rr_cv:
-            return False
-
-        # If we have no P peaks, still require high RR irregularity.
-        if len(p_arr) == 0:
-            return rr_cv >= max(min_rr_cv, 0.20)
-
-        # If P exists but is sparse, require high RR irregularity.
-        if p_ratio < 0.55:
-            return rr_cv >= max(min_rr_cv, 0.22)
-
-        # Otherwise: only call AF if P timing is highly inconsistent.
-        if len(p_arr) >= 3:
-            p_iv = np.diff(p_arr) / self.fs * 1000.0
-            if len(p_iv) > 1 and float(np.mean(p_iv)) > 0:
-                p_cv = float(np.std(p_iv) / np.mean(p_iv))
-                return p_cv > 0.15
-
-        return False
-
-    def _is_afib_rvr(self, r_peaks, p_peaks, rr_ms, qrs_duration, hr):
-        if len(rr_ms) < 4: return False
-        return self._rr_cv(rr_ms) > 0.10 and hr > 110 and len(p_peaks) < len(r_peaks)*0.5
-
-    def _is_ventricular_tachycardia(self, rr_intervals, qrs_duration):
-        rr = np.asarray(rr_intervals, dtype=float)
-        if len(rr) < 5 or qrs_duration is None or qrs_duration <= 120: return False
-        mean_rr = float(np.mean(rr))
-        if mean_rr <= 0: return False
-        return 60000.0/mean_rr > 120 and float(np.std(rr)) < 80
-
-    def _is_ventricular_fibrillation(self, signal, r_peaks, rr_intervals):
-        if signal is None or len(signal) < int(self.fs * 3): return False
-        sig = np.asarray(signal, dtype=float)
-        sig_d = sig - float(np.mean(sig))
-        ptp = float(np.ptp(sig_d))
-        if ptp <= 0:
-            return False
-        sig_norm = sig_d / ptp
-        rr  = np.asarray(rr_intervals, dtype=float)
-        if len(rr) < 3 and len(r_peaks) >= 3: rr = np.diff(r_peaks)/self.fs*1000.0
-        if len(r_peaks) >= 5:
-            return False
-        if len(rr) >= 3:
-            mean_rr = float(np.mean(rr))
-            if mean_rr > 0 and float(np.std(rr)/mean_rr) > 0.3:
-                if float(np.std(sig_norm)) > 0.15: return True
-        dur = len(sig)/self.fs
-        if dur >= 2.0 and len(r_peaks) >= 3:
-            crr = np.diff(r_peaks)/self.fs*1000.0
-            if len(crr) >= 2:
-                m = float(np.mean(crr))
-                if m > 0 and float(np.std(crr)/m) > 0.25 and float(np.std(sig_norm)) > 0.13: return True
-        if dur >= 3.0 and len(r_peaks) < 5:
-            if float(np.std(sig_norm)) > 0.14 and float(np.mean(np.abs(sig_norm))) > 0.05: return True
-        if len(sig) >= 1000:
-            ma = float(np.mean(np.abs(sig_norm)))
-            if ma > 0 and float(np.std(sig_norm))/ma > 1.0:
-                crr2 = np.diff(r_peaks)/self.fs*1000.0 if len(r_peaks) >= 3 else np.array([])
-                if len(r_peaks) < 8 or (len(crr2)>=3 and float(np.mean(crr2))>0 and float(np.std(crr2)/np.mean(crr2))>0.2): return True
-        return False
-
-    def _is_bradycardia(self, rr_intervals):
-        rr = np.asarray(rr_intervals, dtype=float)
-        return len(rr) >= 3 and 60000.0/float(np.mean(rr)) < 60
-
-    def _is_tachycardia(self, rr_intervals):
-        rr = np.asarray(rr_intervals, dtype=float)
-        return len(rr) >= 3 and 60000.0/float(np.mean(rr)) >= 100
-
-    def _is_ventricular_ectopics(self, signal, r_peaks, qrs_duration, p_peaks, rr_intervals):
-        if len(r_peaks) < 5: return False
-        rr_ms = np.asarray(rr_intervals, dtype=float)
-        if len(rr_ms) == 0: rr_ms = np.diff(r_peaks)/self.fs*1000.0
-        if len(rr_ms) < 2: return False
-        mean_rr = float(np.mean(rr_ms))
-        if mean_rr <= 0: return False
-        if qrs_duration is not None and qrs_duration > 120:
-            prem = int(np.sum(rr_ms < 0.85*mean_rr))
-            comp = sum(1 for i in range(len(rr_ms)-1) if rr_ms[i]<0.85*mean_rr and rr_ms[i+1]>1.15*mean_rr)
-            if prem >= 1 and comp >= 1: return True
-            if prem >= 2: return True
-        rr_sec = np.diff(r_peaks)/self.fs
-        if len(rr_sec) < 2: return False
-        mean_s = float(np.mean(rr_sec))
-        p_arr  = np.asarray(p_peaks, dtype=int)
-        for i in range(len(rr_sec)):
-            if rr_sec[i] < 0.8*mean_s and i+1 < len(rr_sec) and rr_sec[i+1] > 1.2*mean_s:
-                pr = r_peaks[i+1] if i+1 < len(r_peaks) else None
-                if pr is not None:
-                    if not any(120 <= (pr-p)/self.fs*1000 <= 200 for p in p_arr): return True
-        return False
-
-    def _is_bigeminy(self, rr_intervals, qrs_duration, signal, r_peaks):
-        try:
-            rr = np.asarray(rr_intervals, dtype=float)
-            if len(rr) < 4 or len(r_peaks) < 5: return False
-            if float(np.max(rr)) < 10: rr = rr*1000.0
-            mean_rr = float(np.mean(rr))
-            if mean_rr <= 0: return False
-            sh, lg = 0.75*mean_rr, 1.03*mean_rr
-            alt = sum(1 for i in range(len(rr)-1)
-                      if (bool(rr[i]<sh) and bool(rr[i+1]>lg)) or (bool(rr[i]>lg) and bool(rr[i+1]<sh)))
-            min_alt = max(2, int(len(rr)*0.25))
-            if alt < min_alt: return False
-            short_ivs = [float(v) for v in rr if float(v) < sh]
-            consistent = True
-            if len(short_ivs) >= 2:
-                cm = float(np.mean(short_ivs))
-                consistent = (float(np.std(short_ivs)/cm) <= 0.25) if cm > 0 else False
-            has_wide = qrs_duration is not None and qrs_duration > 120
-            if alt >= min_alt:
-                if has_wide: return True
-                if alt >= max(2, int(len(rr)*0.3)):
-                    if consistent: return True
-                    if alt >= max(2, int(len(rr)*0.5)): return True
-                    if alt >= 3: return True
-            return False
-        except Exception as e:
-            print(f"Error in bigeminy: {e}")
-            return False
-
-    def _is_asynchronous_75_bpm(self, heart_rate, rr_intervals, p_peaks, r_peaks):
-        try:
-            if heart_rate is None: return False
-            rr = np.asarray(rr_intervals, dtype=float)
-            if len(rr) < 3: return False
-            if float(np.max(rr)) < 10: rr = rr*1000.0
-            mean_rr = float(np.mean(rr)); std_rr = float(np.std(rr))
-            if mean_rr <= 0: return False
-            cv = std_rr/mean_rr
-            if 70 <= heart_rate <= 80:
-                if cv < 0.005 or cv > 0.25 or std_rr < 5 or std_rr > 300: return False
-                p_c = len(p_peaks) if p_peaks is not None else 0
-                r_c = len(r_peaks) if r_peaks is not None else 0
-                if r_c > 0 and p_c < r_c*0.05: return False
-                return True
-            if not (60 <= heart_rate <= 90) or not (0.03 <= cv <= 0.15 and 30 <= std_rr <= 250): return False
-            p_c = len(p_peaks) if p_peaks is not None else 0
-            r_c = len(r_peaks) if r_peaks is not None else 0
-            if r_c > 0 and p_c < r_c*0.2: return False
-            for i in range(len(rr)-1):
-                if abs(float(rr[i+1])-float(rr[i])) > 200: return False
-            return True
-        except Exception: return False
-
-    def _is_left_bundle_branch_block(self, qrs_duration, pr_interval, rr_intervals, signal, q_peaks, r_peaks):
-        if qrs_duration is None or qrs_duration < 130: return False
-        if pr_interval is not None and pr_interval > 220: return False
-        rr = np.asarray(rr_intervals, dtype=float)
-        if len(rr) < 3: return False
-        rr_ms = rr
-        mean_rr = float(np.mean(rr_ms))
-        if mean_rr <= 0 or float(np.std(rr_ms)/mean_rr) > 0.15: return False
-        q_arr = np.asarray(q_peaks, dtype=int); r_arr = np.asarray(r_peaks, dtype=int)
-        if len(r_arr) == 0 or len(q_arr) > len(r_arr)*0.6: return False
-        sig = np.asarray(signal, dtype=float); notched = total = 0
-        for r in r_arr[:min(6,len(r_arr))]:
-            st = max(0,r-int(0.02*self.fs)); en = min(len(sig),r+int(0.08*self.fs))
-            if en-st < 5: continue
-            seg = sig[st:en]-sig[st:en].min()
-            try: pks,_ = find_peaks(seg, distance=max(2,int(0.01*self.fs)))
-            except: continue
-            if len(pks) >= 2: notched += 1
-            total += 1
-        return total > 0 and notched/total >= 0.3
-
-    def _is_right_bundle_branch_block(self, qrs_duration, pr_interval, rr_intervals, signal, r_peaks):
-        if qrs_duration is None or qrs_duration < 120: return False
-        if pr_interval is not None and pr_interval > 220: return False
-        rr = np.asarray(rr_intervals, dtype=float)
-        if len(rr) < 3: return False
-        rr_ms = rr
-        mean_rr = float(np.mean(rr_ms))
-        if mean_rr <= 0 or float(np.std(rr_ms)/mean_rr) > 0.18: return False
-        r_arr = np.asarray(r_peaks, dtype=int)
-        if len(r_arr) < 3: return False
-        sig = np.asarray(signal, dtype=float); ds = checked = 0
-        for r in r_arr[:min(6,len(r_arr))]:
-            st = max(0,r-int(0.015*self.fs)); en = min(len(sig),r+int(0.09*self.fs))
-            if en-st < 6: continue
-            seg = sig[st:en]-float(np.mean(sig[st:en]))
-            fpv = float(np.max(seg))
-            if fpv <= 0: continue
-            try: pks,_ = find_peaks(seg, distance=max(2,int(0.008*self.fs)))
-            except: continue
-            for i in range(len(pks)-1):
-                d = (pks[i+1]-pks[i])/self.fs*1000.0
-                if 15 <= d <= 70 and seg[pks[i+1]]/fpv >= 0.3: ds += 1; break
-            checked += 1
-        return checked > 0 and ds/checked >= 0.3
-
-    def _is_left_anterior_fascicular_block(self, qrs_duration, heart_rate, signal, r_peaks, s_peaks):
-        if qrs_duration is None or qrs_duration > 130: return False
-        if heart_rate is not None and not (45 <= heart_rate <= 120): return False
-        r_arr = np.asarray(r_peaks, dtype=int); s_arr = np.asarray(s_peaks, dtype=int)
-        n = min(len(r_arr),len(s_arr),6)
-        if n < 3: return False
-        sig = np.asarray(signal, dtype=float)
-        r_a = [abs(float(sig[r_arr[i]])) for i in range(n) if r_arr[i]<len(sig)]
-        s_a = [abs(float(sig[s_arr[i]])) for i in range(n) if s_arr[i]<len(sig)]
-        if len(r_a) < 3 or len(s_a) < 3: return False
-        avg_r,avg_s = float(np.mean(r_a)),float(np.mean(s_a))
-        if avg_r<=0 or avg_s<=0 or avg_s/avg_r < 1.6: return False
-        sl=ch=0
-        for i in range(n):
-            if r_arr[i]>=len(sig) or s_arr[i]>=len(sig): continue
-            ch+=1
-            seg = sig[min(r_arr[i],s_arr[i]):min(len(sig),s_arr[i]+int(0.04*self.fs))]
-            if len(seg)<5: continue
-            diff = np.diff(seg); thr = 0.2*float(np.max(np.abs(seg))) if float(np.max(np.abs(seg)))>0 else 0.05
-            if thr>0 and float(np.mean(np.abs(diff)<thr))>0.6: sl+=1
-        return ch>0 and sl/ch >= 0.4
-
-    def _is_left_posterior_fascicular_block(self, qrs_duration, heart_rate, signal, r_peaks, s_peaks):
-        if qrs_duration is None or qrs_duration > 130: return False
-        if heart_rate is not None and not (45 <= heart_rate <= 120): return False
-        r_arr = np.asarray(r_peaks, dtype=int); s_arr = np.asarray(s_peaks, dtype=int)
-        n = min(len(r_arr),len(s_arr),6)
-        if n < 3: return False
-        sig = np.asarray(signal, dtype=float)
-        r_a = [abs(float(sig[r_arr[i]])) for i in range(n) if r_arr[i]<len(sig)]
-        s_a = [abs(float(sig[s_arr[i]])) for i in range(n) if s_arr[i]<len(sig)]
-        if len(r_a)<3 or len(s_a)<3: return False
-        avg_r,avg_s = float(np.mean(r_a)),float(np.mean(s_a))
-        if avg_r<=0 or avg_s<=0 or avg_r/avg_s < 1.6: return False
-        pt=insp=0
-        for i in range(n):
-            if s_arr[i]>=len(sig): continue
-            insp+=1
-            seg = sig[s_arr[i]:min(len(sig),s_arr[i]+int(0.05*self.fs))]
-            if len(seg)<4: continue
-            if float(np.mean(np.diff(seg)>0))>0.6: pt+=1
-        return insp>0 and pt/insp >= 0.4
-
-    def _is_junctional_rhythm(self, heart_rate, qrs_duration, pr_interval, rr_intervals, p_peaks, r_peaks, p_absent_ratio=None):
-        if heart_rate is None or qrs_duration is None: return False
-        if not (40 <= heart_rate <= 100) or qrs_duration > 120: return False
-        rr = np.asarray(rr_intervals, dtype=float)
-        if len(rr) < 3 or float(np.std(rr)) >= 120: return False
-        p_arr = np.asarray(p_peaks, dtype=int); r_arr = np.asarray(r_peaks, dtype=int)
-        r_c = max(len(r_arr), len(rr)+1, 1)
-        # Primary criterion: P mostly absent (supports nodal/junctional).
-        if p_absent_ratio is not None and p_absent_ratio >= 0.55:
-            return True
-        # Fallback: if PR is short (or P count is low).
-        return len(p_arr)/r_c < 0.4 or (pr_interval is not None and pr_interval <= 120)
-
-    def _is_atrial_flutter(self, heart_rate, qrs_duration, rr_intervals, p_peaks, r_peaks, p_absent_ratio=None):
-        if heart_rate is None or qrs_duration is None: return False
-        debug = (80.0 <= float(heart_rate) <= 100.0 and self._flutter_debug_used < 3)
-        # Keep HR flexible (flutter can be 2:1/3:1 conduction and appear slow).
-        # We avoid mislabeling sinus using P-missingness / P-to-R ratio constraints below.
-        if not (45 <= heart_rate <= 220) or qrs_duration > 120:
-            return False
-        rr = np.asarray(rr_intervals, dtype=float)
-        if len(rr) < 3: return False
-        mean_rr = float(np.mean(rr))
-        if mean_rr <= 0: return False
-        rr_cv = float(np.std(rr) / mean_rr)
-        # Flutter is relatively regular in the conducted ventricular response.
-        if rr_cv > 0.30:
-            if debug:
-                self._flutter_debug_used += 1
-                print(f"[FlutterDebug] HR={heart_rate:.1f} rr_cv={rr_cv:.3f} -> fail rr_cv>0.30")
-            return False
-        p_arr = np.asarray(p_peaks, dtype=int)
-        r_arr = np.asarray(r_peaks, dtype=int)
-        if len(r_arr) == 0: return False
-        if len(r_arr) < 6:  # need enough beats to see flutter pattern
-            return False
-
-        p_to_r = float(len(p_arr)) / float(max(len(r_arr), 1))
-        min_p_needed = max(2, int(len(r_arr) * 0.10))
-
-        # If we detected no P peaks, decide using P-absence ratio only.
-        if len(p_arr) == 0:
-            if p_absent_ratio is None:
-                return False
-            # P is mostly absent but not "AFib-like".
-            return (0.35 <= p_absent_ratio <= 0.85)
-
-        # Core differentiation vs AFib/sinus:
-        # - If p_absent_ratio is very high -> AFib-like (avoid flutter).
-        # - If p_absent_ratio is low (P usually present) -> require higher P-to-R evidence.
-        if p_absent_ratio is not None:
-            if p_absent_ratio > 0.85:
-                return False
-            if p_absent_ratio < 0.45 and p_to_r < 1.05:
-                if debug:
-                    self._flutter_debug_used += 1
-                    print(f"[FlutterDebug] HR={heart_rate:.1f} p_abs_ratio={p_absent_ratio:.3f} p_to_r={p_to_r:.3f} -> fail (p_abs<0.45 and p_to_r<1.05)")
-                return False
-        else:
-            # If NK didn't provide p_absent_flags, still require some P-to-R support.
-            if p_to_r < 0.75:
-                return False
-
-        # With 2:1 flutter, P detection may be incomplete; be a bit tolerant.
-        if len(p_arr) < min_p_needed:
-            if debug:
-                self._flutter_debug_used += 1
-                print(f"[FlutterDebug] HR={heart_rate:.1f} len(P)={len(p_arr)} < min_p_needed={min_p_needed} -> fail")
-            return False
-
-        ok = p_to_r >= 0.65
-        if debug and not ok:
-            self._flutter_debug_used += 1
-            print(f"[FlutterDebug] HR={heart_rate:.1f} p_to_r={p_to_r:.3f} -> fail p_to_r<0.65")
-        return ok
-
-    def _is_av_block(self, pr_interval, p_peaks, r_peaks, rr_intervals, heart_rate):
-        p_arr = np.asarray(p_peaks, dtype=int); r_arr = np.asarray(r_peaks, dtype=int)
-        if len(p_arr) < 2 or len(r_arr) < 2: return None
-        if pr_interval is not None and pr_interval > 200: return "First-Degree AV Block"
-        p_c,r_c = len(p_arr),len(r_arr)
-        if p_c > r_c*1.2:
-            dropped = (p_c-r_c)/max(p_c,1)
-            if dropped > 0.5 and len(p_arr)>=3 and len(r_arr)>=3:
-                p_iv = np.diff(p_arr)/self.fs*1000.0
-                r_iv = np.asarray(rr_intervals,dtype=float)
-                if len(r_iv)==0: r_iv = np.diff(r_arr)/self.fs*1000.0
-                p_reg = bool(float(np.std(p_iv))<100) if len(p_iv)>0 else False
-                r_reg = bool(float(np.std(r_iv))<100) if len(r_iv)>0 else False
-                if p_reg and r_reg and heart_rate is not None and heart_rate < 60:
-                    return "Third-Degree AV Block (Complete Heart Block)"
-            if dropped > 0.2:
-                if pr_interval is not None:
-                    return ("Second-Degree AV Block (Type I - Wenckebach)"
-                            if pr_interval > 180 else "Second-Degree AV Block (Type II)")
-                return "Second-Degree AV Block"
-        return None
-
-    def _is_high_av_block(self, pr_interval, p_peaks, r_peaks, rr_intervals, heart_rate):
-        p_arr = np.asarray(p_peaks, dtype=int); r_arr = np.asarray(r_peaks, dtype=int)
-        if len(p_arr)<3 or len(r_arr)<2: return False
-        p_c,r_c = len(p_arr),len(r_arr)
-        if p_c <= r_c*1.1: return False
-        dropped = (p_c-r_c)/max(p_c,1)
-        if dropped > 0.5 and len(p_arr)>=3 and len(r_arr)>=3:
-            p_iv = np.diff(p_arr)/self.fs*1000.0
-            r_iv = np.asarray(rr_intervals,dtype=float)
-            if len(r_iv)==0: r_iv = np.diff(r_arr)/self.fs*1000.0
-            p_reg = bool(float(np.std(p_iv))<100) if len(p_iv)>0 else False
-            r_reg = bool(float(np.std(r_iv))<100) if len(r_iv)>0 else False
-            if p_reg and r_reg:
-                if heart_rate is not None and heart_rate < 60: return True
-                if len(p_iv)>0 and len(r_iv)>0:
-                    pr = 60000.0/float(np.mean(p_iv)) if float(np.mean(p_iv))>0 else 0
-                    rr2 = 60000.0/float(np.mean(r_iv)) if float(np.mean(r_iv))>0 else 0
-                    if abs(pr-rr2)>20: return True
-        if dropped>0.25 and pr_interval is not None and pr_interval<=250: return True
-        if dropped>0.3: return True
-        return False
-
-    def _is_wpw_syndrome(self, pr_interval, qrs_duration, signal, p_peaks, q_peaks, r_peaks):
-        # Deprecated single-lead WPW check; use _is_wpw_multilead instead.
-        return False
-
-    def _is_atrial_tachycardia(self, heart_rate, qrs_duration, rr_intervals, p_peaks, r_peaks):
-        if heart_rate is None or qrs_duration is None: return False
-        if heart_rate < 100 or qrs_duration > 120: return False
-        rr = np.asarray(rr_intervals, dtype=float)
-        if len(rr) < 3: return False
-        mean_rr = float(np.mean(rr))
-        is_reg = float(np.std(rr))<120 or (mean_rr>0 and float(np.std(rr)/mean_rr)<0.1)
-        if not is_reg: return False
-        if heart_rate > 150: return True
-        return len(np.asarray(p_peaks, dtype=int)) > 0
-
-    def _is_supraventricular_tachycardia(self, heart_rate, qrs_duration, rr_intervals, p_peaks, r_peaks):
-        if heart_rate is None or qrs_duration is None: return False
-        if heart_rate < 150 or qrs_duration > 120: return False
-        rr = np.asarray(rr_intervals, dtype=float)
-        if len(rr) < 3: return False
-        mean_rr = float(np.mean(rr))
-        is_reg = float(np.std(rr))<120 or (mean_rr>0 and float(np.std(rr)/mean_rr)<0.1)
-        return is_reg
-
-    # ── New detections ──────────────────────────────────────────────────────
-
-    def _is_poly_vtach(self, signal, r_peaks, rr_ms, qrs_duration):
-        if len(rr_ms)<4 or qrs_duration is None: return False
-        hr = 60000.0/float(np.mean(rr_ms)); cv = self._rr_cv(rr_ms)
-        if hr<100 or qrs_duration<120 or cv<0.12: return False
-        sig = np.asarray(signal,dtype=float); r_arr = np.asarray(r_peaks,dtype=int)
-        win = int(self.fs*0.1)
-        amps = [float(np.ptp(sig[max(0,p-win):min(len(sig),p+win)])) for p in r_arr if p-win>=0]
-        if len(amps)<4: return False
-        m = float(np.mean(amps))
-        return float(np.std(amps)/m)>0.30 if m>0 else False
-
-    def _is_torsade_de_pointes(self, signal, r_peaks, rr_ms, qrs_duration):
-        if len(rr_ms)<6 or qrs_duration is None: return False
-        hr = 60000.0/float(np.mean(rr_ms))
-        if hr<150 or qrs_duration<120: return False
-        sig = np.asarray(signal,dtype=float); r_arr = np.asarray(r_peaks,dtype=int)
-        win = int(self.fs*0.12)
-        amps = [float(np.ptp(sig[max(0,p-win):min(len(sig),p+win)])) for p in r_arr if p-win>=0]
-        if len(amps)<6: return False
-        amp_arr = np.array(amps); m = float(np.mean(amp_arr))
-        amp_cv = float(np.std(amp_arr)/m) if m>0 else 0
-        env_peaks,_ = find_peaks(amp_arr, distance=3)
-        return amp_cv>0.35 and len(env_peaks)>=2
-
-    def _is_pvc_r_on_t(self, signal, r_peaks, rr_ms, qrs_duration, side='LV'):
-        if len(rr_ms)<4 or qrs_duration is None: return False
-        mean_rr = float(np.mean(rr_ms)); qt_est = mean_rr*0.42
-        return any(rr < qt_est*0.95 and rr < mean_rr*0.80 for rr in rr_ms)
-
-    def _classify_pvcs(self, signal, r_peaks, rr_ms, qrs_duration, p_peaks, q_peaks, s_peaks):
-        results = []
-        if len(rr_ms)<4 or qrs_duration is None or qrs_duration<100: return results
-        mean_rr = float(np.mean(rr_ms)); r_arr = np.asarray(r_peaks,dtype=int)
-        sig = np.asarray(signal,dtype=float); win = int(self.fs*0.06)
-        ectopic_idx = [i+1 for i,rr in enumerate(rr_ms) if rr < mean_rr*0.82]
-        if not ectopic_idx: return results
-        morphs=[]; early=0
-        for idx in ectopic_idx:
-            if idx>=len(r_arr): continue
-            pos=r_arr[idx]; sl=sig[max(0,pos-win):min(len(sig),pos+win)]
-            if len(sl)<4: continue
-            morphs.append('LV' if float(np.max(sl))>abs(float(np.min(sl)))*1.2 else 'RV')
-            if idx-1<len(rr_ms) and rr_ms[idx-1]<mean_rr*0.70: early+=1
-        if not morphs: return results
-        n_morphs=len(set(morphs)); freq=len(ectopic_idx)/max(len(rr_ms),1)
-        lv=morphs.count('LV'); rv=morphs.count('RV')
-        if n_morphs>=2:
-            results.append("Frequent Multi-focal PVCs" if freq>0.2 else "Multi-focal PVCs")
-        elif lv>=rv:
-            results.append("PVC1 LV Early" if early>0 else "PVC1 Left Ventricle")
-        else:
-            results.append("PVC2 RV Early" if early>0 else "PVC2 Right Ventricle")
-        return results
-
-    def _is_trigeminy(self, rr_ms, qrs_duration, signal, r_peaks):
-        if len(rr_ms)<6: return False
-        thirds = list(range(2,len(rr_ms),3))
-        if not thirds: return False
-        other = [i for i in range(len(rr_ms)) if i not in thirds]
-        if not other: return False
-        mo = float(np.mean([rr_ms[i] for i in other]))
-        if mo <= 0: return False
-        return sum(1 for i in thirds if rr_ms[i]<mo*0.80)/len(thirds) > 0.60
-
-    def _is_run_of_pvcs(self, signal, r_peaks, rr_ms, qrs_duration):
-        if len(rr_ms)<3 or qrs_duration is None or qrs_duration<100: return False
-        mean_rr = float(np.mean(rr_ms)); consec=mx=0
-        for rr in rr_ms:
-            if rr<mean_rr*0.82: consec+=1; mx=max(mx,consec)
-            else: consec=0
-        return mx>=3
-
-    def _is_pat(self, heart_rate, qrs_duration, rr_ms, p_peaks, r_peaks):
-        if heart_rate is None or len(rr_ms)<4: return False
-        # PAT is a narrow, often regular SV tachy. In practice your P/QRS
-        # delineation can be imperfect, so relax slightly.
-        return (130 <= heart_rate <= 250 and self._rr_cv(rr_ms) < 0.15
-                and (qrs_duration is None or qrs_duration < 130))
-
-    def _is_pac(self, signal, r_peaks, rr_ms, qrs_duration, p_peaks):
-        if len(rr_ms)<4: return False
-        if not (qrs_duration is None or qrs_duration<120): return False
-        mean_rr = float(np.mean(rr_ms)); n_prem = sum(1 for rr in rr_ms if rr<mean_rr*0.85)
-        p_arr = np.asarray(p_peaks,dtype=int)
-        return n_prem>=1 and n_prem<len(rr_ms)*0.30 and len(p_arr)>=len(r_peaks)*0.5
-
-    def _is_pnc(self, signal, r_peaks, rr_ms, qrs_duration, p_peaks, pr_ms):
-        if len(rr_ms)<4: return False
-        narrow = qrs_duration is None or qrs_duration<120
-        short_pr = pr_ms is not None and pr_ms<120
-        p_arr = np.asarray(p_peaks,dtype=int)
-        absent_p = len(p_arr)<len(r_peaks)*0.6
-        mean_rr = float(np.mean(rr_ms))
-        n_prem = sum(1 for rr in rr_ms if rr<mean_rr*0.88)
-        return narrow and (short_pr or absent_p) and n_prem>=1
-
-    def _is_sinus_arrhythmia(self, rr_ms, hr, p_peaks, r_peaks):
-        if len(rr_ms)<4 or hr is None: return False
-        cv = self._rr_cv(rr_ms); p_arr = np.asarray(p_peaks,dtype=int)
-        return 50<=hr<=110 and 0.10<=cv<=0.25 and len(p_arr)>=len(r_peaks)*0.7
-
-    def _is_missed_beat(self, r_peaks, rr_ms, hr):
-        if len(rr_ms)<4: return None
-        mean_rr = float(np.mean(rr_ms))
-        # Detect a "pause" as one interval substantially longer than the mean.
-        # NeuroKit2/our R detector may slightly shift rr, so we use a tolerant multiplier.
-        pause_mult = 1.6
-        for rr in rr_ms:
-            if rr > mean_rr * pause_mult:
-                # HR is derived from mean_rr, so these ranges correspond to expected
-                # nominal rates for the pause pattern you want to see.
-                if 60 <= hr <= 105:
-                    return "Missed Beat at ~80 BPM (SA Block / Sinus Pause)"
-                if 95 <= hr <= 150:
-                    return "Missed Beat at ~120 BPM (SA Block / Sinus Pause)"
-                return "Sinus Pause / Missed Beat"
-        return None
-
-    def _compute_hrv(self, rr_ms):
-        rr = np.asarray(rr_ms, dtype=float)
-        if rr.size < 3:
-            return {"sdnn_ms": 0.0, "rmssd_ms": 0.0, "pnn50_pct": 0.0}
-        diffs = np.diff(rr)
-        sdnn = float(np.std(rr))
-        rmssd = float(np.sqrt(np.mean(diffs ** 2))) if diffs.size else 0.0
-        pnn50 = float(np.mean(np.abs(diffs) > 50.0) * 100.0) if diffs.size else 0.0
-        return {"sdnn_ms": sdnn, "rmssd_ms": rmssd, "pnn50_pct": pnn50}
-
-    def _is_qtc_prolonged(self, q_peaks, t_peaks, rr_ms):
-        q_arr = np.asarray(q_peaks, dtype=int)
-        t_arr = np.asarray(t_peaks, dtype=int)
-        rr = np.asarray(rr_ms, dtype=float)
-        if q_arr.size == 0 or t_arr.size == 0 or rr.size == 0:
-            return False
-        qt_vals = []
-        for q in q_arr:
-            t_after = t_arr[t_arr > q]
-            if t_after.size:
-                qt_ms = (t_after[0] - q) / self.fs * 1000.0
-                if 200 <= qt_ms <= 700:
-                    qt_vals.append(qt_ms)
-        if not qt_vals:
-            return False
-        qt = float(np.mean(qt_vals))
-        rr_mean = float(np.mean(rr))
-        if rr_mean <= 0:
-            return False
-        qtc = qt / np.sqrt(rr_mean / 1000.0)
-        return qtc > 460.0
-
-    def _is_st_change(self, signal, q_peaks, s_peaks, p_peaks):
-        sig = np.asarray(signal, dtype=float)
-        s_arr = np.asarray(s_peaks, dtype=int)
-        p_arr = np.asarray(p_peaks, dtype=int)
-        if sig.size == 0 or s_arr.size == 0 or p_arr.size == 0:
-            return False
-        offsets = []
-        j_shift = int(0.08 * self.fs)
-        for s in s_arr[:min(10, len(s_arr))]:
-            j_idx = s + j_shift
-            if j_idx >= len(sig):
-                continue
-            base_idx = p_arr[p_arr < s]
-            if base_idx.size == 0:
-                continue
-            b = base_idx[-1]
-            b0, b1 = max(0, b - int(0.04 * self.fs)), min(len(sig), b)
-            if b1 - b0 < 3:
-                continue
-            baseline = float(np.mean(sig[b0:b1]))
-            offsets.append(float(sig[j_idx] - baseline))
-        if not offsets:
-            return False
-        st_mean = float(np.mean(offsets))
-        # Convert ST thresholds from ADC counts to mV.
-        cpmv = self.counts_per_mv if self.counts_per_mv else 1.0
-        return st_mean < (-80.0 / cpmv) or st_mean > (120.0 / cpmv)
-
-    def _is_t_wave_inversion(self, signal, t_peaks, r_peaks):
-        sig = np.asarray(signal, dtype=float)
-        t_arr = np.asarray(t_peaks, dtype=int)
-        r_arr = np.asarray(r_peaks, dtype=int)
-        if sig.size == 0 or t_arr.size == 0 or r_arr.size == 0:
-            return False
-        inv = 0
-        total = 0
-        for t in t_arr[:min(12, len(t_arr))]:
-            r_before = r_arr[r_arr < t]
-            if r_before.size == 0 or t >= len(sig):
-                continue
-            r_idx = r_before[-1]
-            r_amp = float(sig[r_idx])
-            t_amp = float(sig[t])
-            if abs(r_amp) < 1e-6:
-                continue
-            total += 1
-            if np.sign(t_amp) != np.sign(r_amp):
-                inv += 1
-        return total >= 3 and inv / total >= 0.5
+__all__ = [
+    "ArrhythmiaDetector",
+    "analyze_ecg",
+    "classify_heart_rate",
+    "detect_arrhythmia",
+    "detect_r_peaks_pan_tompkins",
+    "get_interpretation",
+    "is_normal_sinus_rhythm",
+    "measure_beat",
+]

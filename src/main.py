@@ -23,12 +23,13 @@ else:
 
 from PyQt5.QtWidgets import (
     QApplication, QDialog, QLabel, QLineEdit, QPushButton, QVBoxLayout, QHBoxLayout, 
-    QMessageBox, QStackedWidget, QWidget, QInputDialog, QSizePolicy
+    QMessageBox, QStackedWidget, QWidget, QInputDialog, QSizePolicy, QFrame
 )
 from PyQt5.QtCore import Qt
 from utils.crash_logger import get_crash_logger
 from utils.session_recorder import SessionRecorder
 from PyQt5.QtGui import QFont, QPixmap, QIntValidator
+from utils.ecg_auth_api import get_ecg_auth_api
 
 # Import core modules  
 try:
@@ -226,22 +227,23 @@ class LoginRegisterDialog(QDialog):
         main_layout.addStretch(1)
         # Title (outside glass) - logo style
         title = QLabel("CardioX by Deckmount")
-        title.setFont(QFont("Arial", 52, QFont.Black))
+        title.setFont(QFont("Arial", 44, QFont.Black))
         title.setStyleSheet("""
-            color: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #ff6600, stop:1 #ffb347);
-            letter-spacing: 4px;
-            margin-bottom: 0px;        
+            color: #fff6ee;
+            letter-spacing: 2px;
+            margin-bottom: 0px;
             padding-top: 0px;
             padding-bottom: 0px;
             font-weight: 900;
             border-radius: 18px;
+            text-shadow: 0 0 24px rgba(255, 120, 24, 0.35);
         """)
         title.setAlignment(Qt.AlignHCenter)
         main_layout.addWidget(title)
         # Tagline (outside glass)
         tagline = QLabel("Built to Detect. Designed to Last.")
-        tagline.setFont(QFont("Arial", 18, QFont.Bold))
-        tagline.setStyleSheet("color: #ff6600; margin-bottom: 18px; margin-top: 0px; background: rgba(255,255,255,0.1);")
+        tagline.setFont(QFont("Arial", 16, QFont.Bold))
+        tagline.setStyleSheet("color: rgba(255, 184, 120, 0.92); margin-bottom: 24px; margin-top: 2px; background: transparent;")
         tagline.setAlignment(Qt.AlignHCenter)
         main_layout.addWidget(tagline)
         # --- Glass effect container in center ---
@@ -251,13 +253,15 @@ class LoginRegisterDialog(QDialog):
         glass.setObjectName("Glass")
         glass.setStyleSheet("""
             QWidget#Glass {
-
-                background: rgba(255,255,255,0.18);
-                border-radius: 24px;
-                border: 2px solid rgba(255,255,255,0.35);zx
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(15, 15, 15, 0.74),
+                    stop:0.5 rgba(26, 18, 18, 0.70),
+                    stop:1 rgba(18, 18, 18, 0.78));
+                border-radius: 34px;
+                border: 1px solid rgba(255,255,255,0.18);
             }
         """)
-        glass.setMinimumSize(600, 520)
+        glass.setMinimumSize(860, 620)
         # Create stacked widget and login/register widgets BEFORE using stacked_col
         self.stacked = QStackedWidget(glass)
         self.login_widget = self.create_login_widget()
@@ -265,15 +269,21 @@ class LoginRegisterDialog(QDialog):
         self.stacked.addWidget(self.login_widget)
         self.stacked.addWidget(self.register_widget)
         glass_layout = QHBoxLayout(glass)
-        glass_layout.setContentsMargins(32, 32, 32, 32)
+        glass_layout.setContentsMargins(38, 34, 38, 34)
+        glass_layout.setSpacing(34)
         # ECG image inside glass, left side (larger)
         ecg_img = QLabel()
         ecg_pix = QPixmap(resource_path('assets/v1.png'))
         if not ecg_pix.isNull():
-            ecg_img.setPixmap(ecg_pix.scaled(400, 600, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            ecg_img.setPixmap(ecg_pix.scaled(400, 540, Qt.KeepAspectRatio, Qt.SmoothTransformation))
             ecg_img.setAlignment(Qt.AlignVCenter | Qt.AlignHCenter)
             ecg_img.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-            ecg_img.setStyleSheet("margin: 0px 32px 0px 0px; border-radius: 24px; background: transparent;")
+            ecg_img.setStyleSheet("""
+                margin: 0px 8px 0px 0px;
+                border-radius: 28px;
+                background: rgba(255,255,255,0.02);
+                border: 1px solid rgba(255,255,255,0.07);
+            """)
         # Wrap image in a layout to center vertically
         img_col = QVBoxLayout()
         img_col.addStretch(1)
@@ -282,39 +292,36 @@ class LoginRegisterDialog(QDialog):
         glass_layout.addLayout(img_col, 2)
         # Login/Register stacked widget (vertical)
         stacked_col = QVBoxLayout()
-        stacked_col.addStretch(1)
-        stacked_col.addWidget(self.stacked, 2)
+        stacked_col.setSpacing(14)
+        stacked_col.addWidget(self.stacked, 1)
         # Add sign up/login prompt below
         signup_row = QHBoxLayout()
         signup_row.addStretch(1)
         signup_lbl = QLabel("Don't have an account?")
-        signup_lbl.setStyleSheet("color: #fff; font-size: 15px;")
+        signup_lbl.setStyleSheet("color: rgba(255,255,255,0.82); font-size: 14px;")
         signup_btn = QPushButton("Sign up")
-        signup_btn.setStyleSheet("color: #ff6600; background: transparent; border: none; font-size: 15px; font-weight: bold; text-decoration: underline;")
+        signup_btn.setStyleSheet("color: #ff8d2b; background: transparent; border: none; font-size: 14px; font-weight: bold; text-decoration: underline;")
         signup_btn.clicked.connect(lambda: self.stacked.setCurrentIndex(1))
         signup_row.addWidget(signup_lbl)
         signup_row.addWidget(signup_btn)
         signup_row.addStretch(1)
-        stacked_col.addSpacing(10)
         stacked_col.addLayout(signup_row)
         # Add login prompt to register widget
         login_row = QHBoxLayout()
         
         login_row.addStretch(1)
         login_lbl = QLabel("Already have an account?")
-        login_lbl.setStyleSheet("color: #fff; font-size: 15px;")
+        login_lbl.setStyleSheet("color: rgba(255,255,255,0.82); font-size: 14px;")
         login_btn = QPushButton("Login")
-        login_btn.setStyleSheet("color: #ff6600; background: transparent; border: none; font-size: 15px; font-weight: bold; text-decoration: underline;")
+        login_btn.setStyleSheet("color: #ff8d2b; background: transparent; border: none; font-size: 14px; font-weight: bold; text-decoration: underline;")
         login_btn.clicked.connect(lambda: self.stacked.setCurrentIndex(0))
         login_row.addWidget(login_lbl)
         login_row.addWidget(login_btn)
         login_row.addStretch(1)
         # Insert login_row at the bottom of the register widget
-        self.register_widget.layout().addSpacing(10)
+        self.register_widget.layout().addSpacing(12)
         self.register_widget.layout().addLayout(login_row)
-        stacked_col.addStretch(1)
         glass_layout.addLayout(stacked_col, 3)
-        glass_layout.setSpacing(0)
         row.addWidget(glass, 1)
         row.addStretch(1)
         main_layout.addLayout(row)
@@ -353,49 +360,209 @@ class LoginRegisterDialog(QDialog):
     def create_login_widget(self):
         widget = QWidget()
         layout = QVBoxLayout()
+        layout.setContentsMargins(18, 12, 18, 12)
+        layout.setSpacing(16)
+
+        input_style = """
+            QLineEdit {
+                border: 1px solid rgba(255, 156, 64, 0.85);
+                border-radius: 14px;
+                padding: 12px 14px;
+                font-size: 15px;
+                background: rgba(255,255,255,0.92);
+                color: #1f1f1f;
+                selection-background-color: #ff8a1f;
+            }
+            QLineEdit:focus {
+                border: 2px solid #ff8a1f;
+                background: rgba(255,255,255,0.98);
+            }
+        """
+        otp_input_style = """
+            QLineEdit {
+                border: 1px solid rgba(75, 190, 134, 0.78);
+                border-radius: 14px;
+                padding: 12px 14px;
+                font-size: 15px;
+                background: rgba(255,255,255,0.92);
+                color: #1f1f1f;
+            }
+            QLineEdit:focus {
+                border: 2px solid #2fa66f;
+                background: rgba(255,255,255,0.98);
+            }
+        """
+        primary_button_style = """
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #ff7a12, stop:1 #ff950f);
+                color: white;
+                border-radius: 14px;
+                padding: 12px 0;
+                font-size: 16px;
+                font-weight: bold;
+                border: none;
+            }
+            QPushButton:hover { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #ff8a26, stop:1 #ffab31); }
+            QPushButton:pressed { background: #e96a00; }
+        """
+        secondary_button_style = """
+            QPushButton {
+                background: rgba(58,58,58,0.62);
+                color: #ffbe63;
+                border: 1px solid rgba(255, 179, 71, 0.42);
+                border-radius: 14px;
+                padding: 11px 14px;
+                font-size: 14px;
+                font-weight: bold;
+            }
+            QPushButton:hover { background: rgba(88,88,88,0.78); }
+            QPushButton:pressed { background: rgba(108,108,108,0.92); }
+        """
+
+        section_title = QLabel("Sign in to continue")
+        section_title.setStyleSheet("color: white; font-size: 30px; font-weight: bold;")
+
+        password_header = QLabel("ACCOUNT LOGIN")
+        password_header.setStyleSheet("color: #ffb347; font-size: 12px; font-weight: bold; letter-spacing: 1px;")
+
         self.login_email = QLineEdit()
         self.login_email.setPlaceholderText("Full Name")
+        self.login_email.setMinimumHeight(44)
 
         password_row = QHBoxLayout()
+        password_row.setSpacing(10)
         self.login_password = QLineEdit()
         self.login_password.setPlaceholderText("Password")
         self.login_password.setEchoMode(QLineEdit.Password)
+        self.login_password.setMinimumHeight(44)
         password_row.addWidget(self.login_password)
-        
-        # Add eye toggle button
-        self.login_eye_btn = QPushButton("👁")
-        self.login_eye_btn.setFixedSize(36, 36)
-        self.login_eye_btn.setStyleSheet("background: #ff6600; color: white; border-radius: 8px; font-size: 16px;")
+
+        self.login_eye_btn = QPushButton("View")
+        self.login_eye_btn.setFixedSize(72, 46)
+        self.login_eye_btn.setStyleSheet("""
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #ff7a12, stop:1 #ff950f);
+            color: white;
+            border-radius: 14px;
+            font-size: 13px;
+            font-weight: bold;
+            border: none;
+        """)
         self.login_eye_btn.clicked.connect(lambda: self.toggle_password_visibility(self.login_password, self.login_eye_btn))
         password_row.addWidget(self.login_eye_btn)
 
         login_btn = QPushButton("Login")
         login_btn.setObjectName("LoginBtn")
-        login_btn.setStyleSheet("background: #ff6600; color: white; border-radius: 10px; padding: 8px 0; font-size: 16px; font-weight: bold;")
+        login_btn.setMinimumHeight(46)
+        login_btn.setStyleSheet(primary_button_style)
         login_btn.clicked.connect(self.handle_login)
-        phone_btn = QPushButton("Login with Phone Number")
+
+        phone_btn = QPushButton("Send OTP")
         phone_btn.setObjectName("SignUpBtn")
-        phone_btn.setStyleSheet("background: #ff6600; color: white; border-radius: 10px; padding: 8px 0; font-size: 16px; font-weight: bold;")
+        phone_btn.setMinimumHeight(44)
+        phone_btn.setMinimumWidth(132)
+        phone_btn.setStyleSheet(secondary_button_style)
         phone_btn.clicked.connect(self.handle_phone_login)
 
-        for w in [self.login_email, self.login_password, login_btn, phone_btn]:
+        self.login_phone = QLineEdit()
+        self.login_phone.setPlaceholderText("+91 XXXXXXXXXX")
+        self.login_phone.setMinimumHeight(44)
+        self.login_phone.setMaxLength(10)
+        self.login_phone.setValidator(QIntValidator(0, 2147483647, self))
+
+        phone_row = QHBoxLayout()
+        phone_row.setSpacing(10)
+        phone_row.addWidget(self.login_phone, 3)
+        phone_row.addWidget(phone_btn, 1)
+
+        self.login_otp = QLineEdit()
+        self.login_otp.setPlaceholderText("Enter 4-digit OTP")
+        self.login_otp.setMaxLength(4)
+        self.login_otp.setMinimumHeight(44)
+        self.login_otp.setValidator(QIntValidator(0, 9999, self))
+
+        self.verify_otp_btn = QPushButton("Verify OTP")
+        self.verify_otp_btn.setMinimumHeight(44)
+        self.verify_otp_btn.setMinimumWidth(132)
+        self.verify_otp_btn.setEnabled(False)
+        self.verify_otp_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #1f704f, stop:1 #2fa66f);
+                color: white;
+                border-radius: 14px;
+                padding: 11px 14px;
+                font-size: 14px;
+                font-weight: bold;
+                border: none;
+            }
+            QPushButton:hover { background: #2a9b67; }
+            QPushButton:pressed { background: #1f7b52; }
+            QPushButton:disabled {
+                background: rgba(35, 139, 92, 0.30);
+                color: rgba(255,255,255,0.65);
+            }
+        """)
+        self.verify_otp_btn.clicked.connect(self.verify_phone_otp)
+
+        otp_row = QHBoxLayout()
+        otp_row.setSpacing(10)
+        otp_row.addWidget(self.login_otp, 3)
+        otp_row.addWidget(self.verify_otp_btn, 1)
+
+        phone_card = QWidget()
+        phone_card.setStyleSheet("""
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                stop:0 rgba(255,255,255,0.08),
+                stop:1 rgba(255,255,255,0.04));
+            border: 1px solid rgba(255,255,255,0.14);
+            border-radius: 20px;
+        """)
+        phone_card_layout = QVBoxLayout(phone_card)
+        phone_card_layout.setContentsMargins(18, 16, 18, 16)
+        phone_card_layout.setSpacing(12)
+        phone_card_title = QLabel("Register with Phone")
+        phone_card_title.setStyleSheet("""
+            color: white;
+            font-size: 18px;
+            font-weight: bold;
+            padding-bottom: 6px;
+            border-bottom: 1px solid rgba(255,255,255,0.12);
+        """)
+        phone_card_layout.addWidget(phone_card_title)
+        phone_card_layout.addLayout(phone_row)
+        phone_card_layout.addLayout(otp_row)
+
+        for w in [self.login_email, self.login_password, self.login_phone, self.login_otp, login_btn, phone_btn, self.verify_otp_btn]:
             w.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
-        self.login_email.setStyleSheet("border: 2px solid #ff6600; border-radius: 8px; padding: 6px 10px; font-size: 15px; background: #f7f7f7; color: #222;")
-        self.login_password.setStyleSheet("border: 2px solid #ff6600; border-radius: 8px; padding: 6px 10px; font-size: 15px; background: #f7f7f7; color: #222;")
+        self.login_email.setStyleSheet(input_style)
+        self.login_password.setStyleSheet(input_style)
+        self.login_phone.setStyleSheet(input_style)
+        self.login_otp.setStyleSheet(otp_input_style)
 
-         # Add Enter key functionality to both fields
+        divider = QFrame()
+        divider.setFrameShape(QFrame.HLine)
+        divider.setStyleSheet("background: rgba(255,255,255,0.10); max-height: 1px; min-height: 1px; border: none;")
+
         self.login_email.returnPressed.connect(self.handle_login)
         self.login_password.returnPressed.connect(self.handle_login)
-        
+        self.login_phone.returnPressed.connect(self.handle_phone_login)
+        self.login_otp.returnPressed.connect(self.verify_phone_otp)
+        self.login_otp.textChanged.connect(self._update_verify_otp_button)
+
+        layout.addWidget(section_title)
+        layout.addSpacing(4)
+        layout.addWidget(password_header)
         layout.addWidget(self.login_email)
         layout.addLayout(password_row)
         layout.addWidget(login_btn)
-        layout.addWidget(phone_btn)
-        # Add nav links under phone_btn
+        layout.addSpacing(6)
+        layout.addWidget(divider)
+        layout.addSpacing(6)
+        layout.addWidget(phone_card)
+
         nav_row = QHBoxLayout()
-        # Navigation modules - using simple placeholder classes
-        # (Original nav modules were moved to clutter directory)
+        nav_row.setSpacing(10)
+
         class NavHome(QWidget):
             def __init__(self): super().__init__(); self.setWindowTitle("Home")
         class NavAbout(QWidget):
@@ -403,7 +570,8 @@ class LoginRegisterDialog(QDialog):
         class NavBlog(QWidget):
             def __init__(self): super().__init__(); self.setWindowTitle("Blog")
         class NavPricing(QWidget):
-            def __init__(self): super().__init__(); self.setWindowTitle("Pricing")                                      
+            def __init__(self): super().__init__(); self.setWindowTitle("Pricing")
+
         nav_links = [
             ("Home", NavHome),
             ("About us", NavAbout),
@@ -412,23 +580,34 @@ class LoginRegisterDialog(QDialog):
         ]
         self.nav_stack = QStackedWidget()
         self.nav_pages = {}
+
         def show_nav_page(page_name):
             self.nav_stack.setCurrentWidget(self.nav_pages[page_name])
             self.nav_stack.setVisible(True)
+
+        nav_row.addStretch(1)
         for text, NavClass in nav_links:
             nav_btn = QPushButton(text)
-            nav_btn.setStyleSheet("color: #ff6600; background: transparent; border: none; font-size: 15px; font-weight: bold; text-decoration: underline;")
+            nav_btn.setStyleSheet("""
+                color: #ff9a3b;
+                background: transparent;
+                border: none;
+                font-size: 14px;
+                font-weight: bold;
+                padding: 4px 8px;
+            """)
             page = NavClass()
             self.nav_stack.addWidget(page)
             self.nav_pages[text] = page
             if text == "Pricing":
-                # Pricing dialog - using simple fallback
                 def show_pricing_dialog():
                     QMessageBox.information(self, "Pricing", "Pricing information not available.")
                 nav_btn.clicked.connect(lambda checked, p=self: show_pricing_dialog())
             else:
                 nav_btn.clicked.connect(lambda checked, t=text: show_nav_page(t))
             nav_row.addWidget(nav_btn)
+        nav_row.addStretch(1)
+
         layout.addLayout(nav_row)
         layout.addWidget(self.nav_stack)
         self.nav_stack.setVisible(False)
@@ -439,6 +618,23 @@ class LoginRegisterDialog(QDialog):
     def create_register_widget(self):
         widget = QWidget()
         layout = QVBoxLayout()
+        layout.setContentsMargins(18, 12, 18, 12)
+        layout.setSpacing(14)
+
+        register_input_style = """
+            QLineEdit {
+                border: 1px solid rgba(255, 156, 64, 0.82);
+                border-radius: 14px;
+                padding: 11px 14px;
+                font-size: 15px;
+                background: rgba(255,255,255,0.92);
+                color: #1f1f1f;
+            }
+            QLineEdit:focus {
+                border: 2px solid #ff8a1f;
+                background: rgba(255,255,255,0.98);
+            }
+        """
         self.reg_serial = QLineEdit()
         self.reg_serial.setPlaceholderText("Machine Serial ID")
         self.reg_name = QLineEdit()
@@ -465,29 +661,53 @@ class LoginRegisterDialog(QDialog):
         
         for w in [self.reg_serial, self.reg_name, self.reg_age, self.reg_gender, self.reg_address, self.reg_phone, self.reg_password, self.reg_confirm]:
             w.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            w.setMinimumHeight(44)
         
-        # Apply dashboard color coding
         for w in [self.reg_serial, self.reg_name, self.reg_age, self.reg_gender, self.reg_address, self.reg_phone, self.reg_password, self.reg_confirm]:
-            w.setStyleSheet("border: 2px solid #ff6600; border-radius: 8px; padding: 6px 10px; font-size: 15px; background: #f7f7f7; color: #222;")
+            w.setStyleSheet(register_input_style)
         
-        register_btn.setStyleSheet("background: #ff6600; color: white; border-radius: 10px; padding: 8px 0; font-size: 16px; font-weight: bold;")
-        register_btn.setMinimumHeight(36)
+        register_btn.setStyleSheet("""
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #ff7a12, stop:1 #ff950f);
+            color: white;
+            border-radius: 14px;
+            padding: 11px 0;
+            font-size: 16px;
+            font-weight: bold;
+            border: none;
+        """)
+        register_btn.setMinimumHeight(46)
         
         # Create password field with eye toggle
         password_row = QHBoxLayout()
+        password_row.setSpacing(10)
         password_row.addWidget(self.reg_password)
-        self.password_eye_btn = QPushButton("👁")
-        self.password_eye_btn.setFixedSize(36, 36)
-        self.password_eye_btn.setStyleSheet("background: #ff6600; color: white; border-radius: 8px; font-size: 16px;")
+        self.password_eye_btn = QPushButton("View")
+        self.password_eye_btn.setFixedSize(72, 46)
+        self.password_eye_btn.setStyleSheet("""
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #ff7a12, stop:1 #ff950f);
+            color: white;
+            border-radius: 14px;
+            font-size: 13px;
+            font-weight: bold;
+            border: none;
+        """)
         self.password_eye_btn.clicked.connect(lambda: self.toggle_password_visibility(self.reg_password, self.password_eye_btn))
         password_row.addWidget(self.password_eye_btn)
         
         # Create confirm password field with eye toggle
         confirm_row = QHBoxLayout()
+        confirm_row.setSpacing(10)
         confirm_row.addWidget(self.reg_confirm)
-        self.confirm_eye_btn = QPushButton("👁")
-        self.confirm_eye_btn.setFixedSize(36, 36)
-        self.confirm_eye_btn.setStyleSheet("background: #ff6600; color: white; border-radius: 8px; font-size: 16px;")
+        self.confirm_eye_btn = QPushButton("View")
+        self.confirm_eye_btn.setFixedSize(72, 46)
+        self.confirm_eye_btn.setStyleSheet("""
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #ff7a12, stop:1 #ff950f);
+            color: white;
+            border-radius: 14px;
+            font-size: 13px;
+            font-weight: bold;
+            border: none;
+        """)
         self.confirm_eye_btn.clicked.connect(lambda: self.toggle_password_visibility(self.reg_confirm, self.confirm_eye_btn))
         confirm_row.addWidget(self.confirm_eye_btn)
         
@@ -536,71 +756,97 @@ class LoginRegisterDialog(QDialog):
         else:
             QMessageBox.warning(self, "Error", "Invalid credentials. Please check your full name and password.")
 
+    def _upsert_phone_login_user(self, phone: str, token: str):
+        from datetime import datetime
+
+        users = load_users()
+        user_key = phone
+        user_record = None
+
+        for username, record in users.items():
+            if str(record.get('phone', '')).strip() == phone:
+                user_key = username
+                user_record = record
+                break
+
+        if not isinstance(user_record, dict):
+            user_record = {}
+
+        if not user_record.get('signup_date'):
+            user_record['signup_date'] = datetime.now().strftime("%Y-%m-%d")
+
+        user_record['phone'] = phone
+        user_record['contact'] = phone
+        user_record['auth_provider'] = 'ecg_otp_backend'
+        user_record['jwt_token'] = token
+        user_record['last_phone_login_at'] = datetime.now().isoformat()
+
+        users[user_key] = user_record
+        save_users(users)
+        return user_key, user_record
+
+    def _get_inline_phone_number(self) -> str:
+        auth_api = get_ecg_auth_api()
+        raw_phone = self.login_phone.text().strip() if hasattr(self, "login_phone") else ""
+        return auth_api.normalize_phone(raw_phone)
+
+    def _update_verify_otp_button(self):
+        otp = self.login_otp.text().strip() if hasattr(self, "login_otp") else ""
+        if hasattr(self, "verify_otp_btn"):
+            self.verify_otp_btn.setEnabled(len(otp) == 4 and otp.isdigit())
+
     def handle_phone_login(self):
-        # Create a custom input dialog so we can enforce numeric-only input
-        dlg = QInputDialog(self)
-        dlg.setWindowTitle("Login with Phone Number")
-        dlg.setLabelText("Enter your phone number:")
-        dlg.setInputMode(QInputDialog.TextInput)
+        auth_api = get_ecg_auth_api()
+        normalized_phone = self._get_inline_phone_number()
+        if len(normalized_phone) != 10:
+            QMessageBox.warning(self, "Invalid Phone Number", "Phone number must be exactly 10 digits.")
+            return
 
-        # Apply an integer validator to restrict input to digits only
-        line_edit = dlg.findChild(QLineEdit)
-        if line_edit is not None:
-            # Limit to 10-digit phone numbers:
-            # QIntValidator uses 32-bit ints, so max must be <= 2147483647.
-            # We also cap length to 10 characters to enforce 10 digits.
-            line_edit.setValidator(QIntValidator(0, 2147483647, self))
-            line_edit.setMaxLength(10)
+        try:
+            auth_api.send_otp(normalized_phone)
+            QMessageBox.information(self, "OTP Sent", f"OTP sent successfully to +91 {normalized_phone}.")
+        except Exception as e:
+            logger.error(f"OTP send failed for {normalized_phone}: {e}")
+            QMessageBox.warning(self, "OTP Failed", f"Could not send OTP: {e}")
+            return
 
-        if dlg.exec_() == QDialog.Accepted:
-            phone = dlg.textValue().strip()
-        
-            # Extra safety: ensure only digits are accepted and length is <= 10
-            if not phone.isdigit():
-                QMessageBox.warning(self, "Invalid Input", "Please enter digits only for the phone number.")
-                return
-            if len(phone) > 10:
-                QMessageBox.warning(self, "Invalid Phone Number", "Phone number must be at most 10 digits.")
-                return
+    def verify_phone_otp(self):
+        normalized_phone = self._get_inline_phone_number()
+        if len(normalized_phone) != 10:
+            QMessageBox.warning(self, "Invalid Phone Number", "Phone number must be exactly 10 digits.")
+            return
 
-            # Check if this is a new phone number (not in users)
-            users = load_users()
-            is_new_user = True
-            user_record = None
-            
-            # Check if phone number exists in users
-            for username, record in users.items():
-                if str(record.get('phone', '')) == str(phone):
-                    is_new_user = False
-                    user_record = record
-                    self.username = username
-                    break
-            
-            # If new user, create a record with signup date
-            if is_new_user:
-                from datetime import datetime
-                user_record = {
-                    'phone': phone,
-                    'contact': phone,
-                    'signup_date': datetime.now().strftime("%Y-%m-%d")
-                }
-                # Save new user to users.json
-                users[phone] = user_record
-                save_users(users)
-                self.username = phone
-                QMessageBox.information(self, "Phone Login", f"New user registered with phone: {phone}")
-            else:
-                # Existing user - check if signup_date exists, if not add it
-                if 'signup_date' not in user_record or not user_record.get('signup_date'):
-                    from datetime import datetime
-                    user_record['signup_date'] = datetime.now().strftime("%Y-%m-%d")
-                    users[self.username] = user_record
-                    save_users(users)
-                QMessageBox.information(self, "Phone Login", f"Logged in with phone: {phone}")
-            
+        otp = self.login_otp.text().strip() if hasattr(self, "login_otp") else ""
+        if len(otp) != 4 or not otp.isdigit():
+            QMessageBox.warning(self, "OTP Required", "OTP must be exactly 4 digits.")
+            return
+
+        auth_api = get_ecg_auth_api()
+        try:
+            verify_result = auth_api.verify_otp(normalized_phone, otp)
+            token = verify_result.get('token', '')
+            if not token:
+                raise ValueError("JWT token missing from verify OTP response.")
+
+            try:
+                from utils.backend_api import get_backend_api
+                get_backend_api().set_token(token)
+            except Exception as token_error:
+                logger.warning(f"Could not propagate JWT token to backend API helper: {token_error}")
+
+            username, user_record = self._upsert_phone_login_user(normalized_phone, token)
             self.result = True
+            self.username = username
             self.user_details = user_record
+            QMessageBox.information(self, "Phone Login", f"OTP verified for {normalized_phone}.")
             self.accept()
+        except Exception as e:
+            logger.error(f"OTP verification failed for {normalized_phone}: {e}")
+            error_text = str(e).lower()
+            if "otp" in error_text or "invalid" in error_text or "incorrect" in error_text:
+                QMessageBox.warning(self, "Incorrect OTP", "Incorrect OTP. Please enter the 4-digit OTP again.")
+            else:
+                QMessageBox.warning(self, "Verification Failed", f"Could not verify OTP: {e}")
 
     def handle_register(self):
         serial_id = self.reg_serial.text()
@@ -665,10 +911,10 @@ class LoginRegisterDialog(QDialog):
         """Toggle password visibility between hidden and visible"""
         if password_field.echoMode() == QLineEdit.Password:
             password_field.setEchoMode(QLineEdit.Normal)
-            eye_button.setText("🔒")
+            eye_button.setText("Hide")
         else:
             password_field.setEchoMode(QLineEdit.Password)
-            eye_button.setText("👁")
+            eye_button.setText("View")
 
     def _show_nav_window(self, NavClass, text):
         nav_win = NavClass()

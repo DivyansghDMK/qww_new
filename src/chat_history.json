@@ -1,0 +1,20 @@
+{
+  "default": [
+    {
+      "question": "ecg lead",
+      "answer": "There are 12 standard ECG leads, which can be grouped into three categories: \n\n1. **Bipolar Limb Leads (I, II, III)**: These leads record the electrical activity of the heart from the limbs. Lead I records the difference between the left and right arm electrodes. Lead II records the difference between the left leg and right arm electrodes. Lead III records the difference between the left leg and left arm electrodes.\n\n2. **Unipolar Limb Leads (aVL, aVR, aVF)**: These leads record the electrical activity of the heart from the limbs, but with a different reference point. aVL records the difference between the left arm and a reference point at the left leg. aVR records the difference between the right arm and a reference point at the left leg. aVF records the difference between the left leg and a reference point at the right arm.\n\n3. **Precordial Leads (V1-V6)**: These leads record the electrical activity of the heart from the chest. They are also known as the chest leads. Each precordial lead records the electrical activity of the heart from a different location on the chest.\n\nDo you have a specific question about ECG leads?"
+    },
+    {
+      "question": "ecg waveform",
+      "answer": "The ECG waveform is composed of several key components:\n\n1. **P wave**: Represents atrial depolarization, typically upright in leads II, III, and aVF, and inverted in lead aVR.\n2. **PR interval**: The time from the beginning of the P wave to the start of the QRS complex, representing the time for the electrical impulse to travel from the atria to the ventricles.\n3. **QRS complex**: Represents ventricular depolarization, typically a broad, slurred complex with a duration of 0.08-0.12 seconds.\n4. **ST segment**: The period between the end of the QRS complex and the beginning of the T wave, representing the time for ventricular repolarization.\n5. **T wave**: Represents ventricular repolarization, typically upright in most leads.\n\nWaveform morphology can provide clues to various cardiac conditions, such as:\n\n- **Tall, peaked T waves**: May indicate hyperkalemia.\n- **Low, flat T waves**: May indicate hypokalemia.\n- **ST elevation**: Can indicate myocardial infarction, pericarditis, or other conditions.\n- **ST depression**: Can indicate ischemia, ventricular hypertrophy, or other conditions.\n\nPlease provide more information or context about the ECG waveform you are referring to, such as the lead(s) and any notable features."
+    },
+    {
+      "question": "ecg waveform",
+      "answer": "The ECG waveform is composed of several key components:\n\n1. **P wave**: Represents atrial depolarization, usually upright in lead II, III, and aVF, and inverted in lead aVR.\n2. **PR interval**: The time from the beginning of the P wave to the start of the QRS complex, representing the time for the electrical impulse to travel from the atria to the ventricles (normal: 120-200 ms).\n3. **QRS complex**: Represents ventricular depolarization, usually a wide, upright complex in most leads.\n4. **ST segment**: The period between the end of the QRS complex and the start of the T wave, representing ventricular repolarization (normal: 0.08-0.12 seconds).\n5. **T wave**: Represents ventricular repolarization, usually upright in most leads.\n\nWaveform morphology can provide clues to various cardiac conditions, such as:\n\n- **Tall, peaked T waves**: Hyperkalemia\n- **Flat, inverted T waves**: Ischemia or myocardial infarction\n- **Wide QRS complex**: Ventricular arrhythmias or bundle branch block\n\nPlease provide more information or a specific ECG tracing for further analysis."
+    },
+    {
+      "question": "kya haal h ecg ke",
+      "answer": "Main aapki ECG ke baare mein madad kar sakta hoon. Kya aapke paas ECG ka print ya image hai jo main dekh sakoon? Ya phir aapke paas kya specific sawal hai jo main samajh sakoon?"
+    }
+  ]
+}

@@ -1867,6 +1867,11 @@ class Dashboard(QWidget):
                     pqt  = m.get("P_QRS_T_mm", ["--", "--", "--"])
                     qtcF = None
                     rv5s = m.get("RV5_SV1_mV", ["--", "--"])
+                    if isinstance(rv5s, (list, tuple)) and len(rv5s) >= 2:
+                        try:
+                            rv5s = [f"{float(rv5s[0]):.3f}", f"{float(rv5s[1]):.3f}"]
+                        except Exception:
+                            pass
 
                     # Build vertical stacks (label top, value bottom) to match top metrics layout
                     metrics = [
@@ -1878,7 +1883,7 @@ class Dashboard(QWidget):
                         ("ST", f"{st} mV"),
                         ("RR", f"{rr} ms"),
                         ("RV5+SV1", f"{rv5p} mV"),
-                        ("P/QRS/T", f"{pqt[0]}/{pqt[1]}/{pqt[2]} mm"),
+                        ("P/QRS/T", f"{pqt[0]}/{pqt[1]}/{pqt[2]}°"),
                         ("RV5/SV1", f"{rv5s[0]}/{rv5s[1]} mV"),
                     ]
 
@@ -1982,9 +1987,9 @@ class Dashboard(QWidget):
                             sv1 = wave_amps.get('sv1', 0.0)
                             
                             # Convert to display format
-                            rv5_sv1_sum = f"{(rv5 + sv1):.3f}" if (rv5 + sv1) > 0 else '--'
+                            rv5_sv1_sum = f"{(rv5 - abs(sv1)):.3f}" if (rv5 - abs(sv1)) > 0 else '--'
                             p_qrs_t = f"{p_amp:.2f}/{qrs_amp:.2f}/{t_amp:.2f}" if (p_amp + qrs_amp + t_amp) > 0 else '--/--/--'
-                            rv5_sv1 = f"{rv5:.2f}/{sv1:.2f}" if (rv5 + sv1) > 0 else '--/--'
+                            rv5_sv1 = f"{rv5:.2f}/{sv1:.2f}" if (rv5 - abs(sv1)) > 0 else '--/--'
                 except Exception as e:
                     print(f"Error calculating wave amplitudes for dashboard: {e}")
             
@@ -1997,7 +2002,7 @@ class Dashboard(QWidget):
                 ("QTc", f"{qtc} ms" if qtc != '--' else '--'),
                 ("RR", f"{rr} ms" if rr != '--' else '--'),
                 ("RV5+SV1", f"{rv5_sv1_sum} mV"),
-                ("P/QRS/T", f"{p_qrs_t} mm"),
+                ("P/QRS/T", f"{p_qrs_t}°"),
                 ("RV5/SV1", f"{rv5_sv1} mV"),
             ]
             

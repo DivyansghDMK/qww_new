@@ -251,7 +251,7 @@ def _draw_header(ax, frozen, patient, PW, fmt):
     x += 35.0 if is_portrait else (5*5+2*5)
     rv5 = float(frozen.get('rv5', 0.0) or 0.0)
     sv1 = float(frozen.get('sv1', 0.0) or 0.0)
-    idx_val = rv5 + abs(sv1)   # Sokolow-Lyon index: RV5 + |SV1|
+    idx_val = rv5 - abs(sv1)
     idx_str = f"{idx_val:.3f} mV" + (" *" if idx_val >= 3.5 else "")
     p_ax = frozen.get('p_axis','--')
     q_ax = frozen.get('QRS_axis','--')
@@ -259,7 +259,7 @@ def _draw_header(ax, frozen, patient, PW, fmt):
 
     _t(ax, f"QTc : {frozen.get('QTc',0)} ms",            x, yb,       9, bold=True)
     _t(ax, f"QTcF: {frozen.get('QTcF',0)} ms",           x, yb+lh,    9, bold=True)
-    _t(ax, f"RV5/SV1: {rv5:+.3f}/{sv1:+.3f} mV",        x, yb+lh*2,  9, bold=True)
+    _t(ax, f"RV5/SV1: {rv5:.3f}/{sv1:.3f} mV",          x, yb+lh*2,  9, bold=True)
     _t(ax, f"RV5+SV1: {idx_str}",                        x, yb+lh*3,  9, bold=True)
     _t(ax, f"P/QRS/T: {p_ax}/{q_ax}/{t_ax}\u00b0",       x, yb+lh*4,  9, bold=True)
 

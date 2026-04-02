@@ -691,6 +691,7 @@ ADC_PER_BOX_CONFIG = {
     'V6': 6400.0,
     '-aVR': 6400.0,  # For Cabrera sequence
 }
+REPORT_WAVEFORM_ADC_DIVISOR = 1083.3333333333333
 
 def create_reportlab_ecg_drawing_with_real_data(lead_name, ecg_data, width=460, height=45, wave_gain_mm_mv=None, sampling_rate=500.0, settings_manager=None):
     """
@@ -799,7 +800,7 @@ def create_reportlab_ecg_drawing_with_real_data(lead_name, ecg_data, width=460, 
     # ORIGINAL WORKING APPROACH: Simple amplitude normalization like ecg_report_generator.py
     med_abs = np.nanmedian(np.abs(ecg_array)) if len(ecg_array) else 0.0
     if med_abs > 20.0:  # Use 20.0 threshold like ecg_report_generator.py
-        ecg_mv = ecg_array / 1000.0  # Simple division by 1000
+        ecg_mv = ecg_array / REPORT_WAVEFORM_ADC_DIVISOR
     else:
         ecg_mv = ecg_array  # Already in mV
     
@@ -3382,18 +3383,32 @@ def generate_4_3_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
                          fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(p_qrs_label)
 
-    # Get RV5 and SV1 amplitudes
-    rv5_amp = data.get('rv5', 0.0)
-    sv1_amp = data.get('sv1', 0.0)
-    
-    print(f" Report Generator - Received RV5/SV1 from data:")
-    print(f"   rv5: {rv5_amp}, sv1: {sv1_amp}")
+    # Get RV5 and SV1 amplitudes from the actual raw ECG graph whenever available.
+    rv5_amp = None
+    sv1_amp = None
+    used_live_measurement = False
+
+    if ecg_test_page is not None:
+        try:
+            from .metrics.intervals import calculate_rv5_sv1_from_test_page
+            rv5_calc, sv1_calc = calculate_rv5_sv1_from_test_page(ecg_test_page)
+            if rv5_calc is not None and rv5_calc > 0:
+                rv5_amp = float(rv5_calc)
+                used_live_measurement = True
+            if sv1_calc is not None and sv1_calc != 0.0:
+                sv1_amp = float(sv1_calc)
+                used_live_measurement = True
+        except Exception as e:
+            print(f" Error getting live RV5/SV1 measurement: {e}")
+
+    print(" Report Generator - Final RV5/SV1 source values:")
+    print(f"   rv5: {rv5_amp}, sv1: {sv1_amp}, source={'live_raw_ecg' if used_live_measurement else 'lead_data_unavailable'}")
     
     # If missing/zero, compute from V5 and V1 of last 10 seconds (GE/Hospital Standard)
     # CRITICAL: Use RAW ECG data, not display-filtered signals
     # Measurements must be from median beat, relative to TP baseline (isoelectric segment before P-wave)
     # NOTE: sv1_amp can be negative (SV1 is negative by definition), so check for == 0.0, not <= 0
-    if (rv5_amp<=0 or sv1_amp==0.0) and ecg_test_page is not None and hasattr(ecg_test_page,'data'):
+    if False:
         try:
             from scipy.signal import butter, filtfilt, find_peaks
             fs = float(computed_sampling_rate)
@@ -3485,26 +3500,27 @@ def generate_4_3_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
     # CRITICAL: calculate_wave_amplitudes() now returns values in mV (converted from ADC counts)
     # No additional conversion needed - use values directly
     # GE Standard ranges: RV5 typically 0.5-3.0 mV, SV1 typically -0.5 to -2.0 mV
-    rv5_mv = rv5_amp if rv5_amp > 0 else 0.0
-    sv1_mv = sv1_amp if sv1_amp != 0.0 else 0.0  # SV1 is negative (preserved from calculation)
+    rv5_mv = float(rv5_amp) if rv5_amp is not None and rv5_amp > 0 else None
+    sv1_mv = float(sv1_amp) if sv1_amp is not None and sv1_amp != 0.0 else None
     
-    print(f"   Converted to mV: RV5={rv5_mv:.3f}, SV1={sv1_mv:.3f}")
+    print(f"   Converted to mV: RV5={rv5_mv if rv5_mv is not None else '--'}, SV1={sv1_mv if sv1_mv is not None else '--'}")
     
     # SECOND COLUMN - RV5/SV1 (ABOVE ECG GRAPH - shifted further up)
     # Display SV1 as negative mV (GE/Hospital standard)
     # Use 3 decimal places for precision (not rounded to integers)
-    rv5_sv_label = String(240, 515, f"RV5/SV1  : {rv5_mv:.3f} mV/{sv1_mv:.3f} mV",  # Shifted down by 20 points total
+    rv5_text = f"{rv5_mv:.3f} mV" if rv5_mv is not None else "--"
+    sv1_text = f"{sv1_mv:.3f} mV" if sv1_mv is not None else "--"
+    rv5_sv_label = String(240, 515, f"RV5/SV1  : {rv5_text}/{sv1_text}",
                           fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(rv5_sv_label)
 
-    # Calculate RV5+SV1 = RV5 + abs(SV1) (GE/Philips standard)
-    # CRITICAL: Calculate from unrounded values to avoid rounding errors
-    # SV1 is negative, so RV5+SV1 = RV5 + (SV1) for Sokolow-Lyon index
-    rv5_sv1_sum = rv5_mv + (sv1_mv)  # RV5 + (SV1) as per GE/Philips standard
+    # Calculate RV5+SV1 from displayed magnitudes: RV5 - SV1_magnitude.
+    rv5_sv1_sum = (rv5_mv - abs(sv1_mv)) if rv5_mv is not None and sv1_mv is not None else None
     
     # SECOND COLUMN - RV5+SV1 (ABOVE ECG GRAPH - shifted further up)
     # Use 3 decimal places for precision
-    rv5_sv1_sum_label = String(240, 495, f"RV5+SV1 : {rv5_sv1_sum:.3f} mV",  # Shifted down by 20 points total
+    rv5_sv1_sum_text = f"{rv5_sv1_sum:.3f} mV" if rv5_sv1_sum is not None else "--"
+    rv5_sv1_sum_label = String(240, 495, f"RV5+SV1 : {rv5_sv1_sum_text}",  # Shifted down by 20 points total
                                fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(rv5_sv1_sum_label)
 
@@ -3850,9 +3866,12 @@ def generate_4_3_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
                 "QTc_ms": QTc,
                 "ST_ms": ST,
                 "RR_ms": RR,
-                "RV5_plus_SV1_mV": round(rv5_sv1_sum, 3),
+                "RV5_plus_SV1_mV": round(rv5_sv1_sum, 3) if rv5_sv1_sum is not None else None,
                 "P_QRS_T_mm": [p_mm, qrs_mm, t_mm],
-                "RV5_SV1_mV": [round(rv5_mv, 3), round(sv1_mv, 3)],
+                "RV5_SV1_mV": [
+                    round(rv5_mv, 3) if rv5_mv is not None else None,
+                    round(sv1_mv, 3) if sv1_mv is not None else None,
+                ],
                 "QTCF": round(qtcf_val, 1) if 'qtcf_val' in locals() and qtcf_val and qtcf_val > 0 else None,
             }
         }
@@ -3887,10 +3906,13 @@ def generate_4_3_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
             "QTc_ms": QTc,
             "ST_ms": ST,
             "RR_ms": RR,
-            "RV5_plus_SV1_mV": round(rv5_sv1_sum, 3),
+            "RV5_plus_SV1_mV": round(rv5_sv1_sum, 3) if rv5_sv1_sum is not None else None,
             "P_QRS_T_mm": [p_mm, qrs_mm, t_mm],
             "QTCF": round(qtcf_val, 1) if 'qtcf_val' in locals() and qtcf_val and qtcf_val > 0 else None,
-            "RV5_SV1_mV": [round(rv5_mv, 3), round(sv1_mv, 3)]
+            "RV5_SV1_mV": [
+                round(rv5_mv, 3) if rv5_mv is not None else None,
+                round(sv1_mv, 3) if sv1_mv is not None else None,
+            ]
         }
 
         metrics_list = []

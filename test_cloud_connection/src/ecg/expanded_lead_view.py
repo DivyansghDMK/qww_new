@@ -577,33 +577,8 @@ class ExpandedLeadView(QDialog):
     # Mouse wheel event for amplification
 
     def wheelEvent(self, event):
-        """Handle mouse wheel scrolling for amplification"""
-        try:
-            # Get scroll direction
-            delta = event.angleDelta().y()
-            
-            # Calculate amplification change
-            if delta > 0:
-                # Scroll up = amplify (zoom in)
-                self.amplification *= 1.1
-            else:
-                # Scroll down = deamplify (zoom out)
-                self.amplification /= 1.1
-            
-            # Clamp amplification to limits
-            self.amplification = max(self.min_amplification, 
-                                    min(self.max_amplification, self.amplification))
-            
-            # Update the plot
-            self.update_plot()
-            
-            # Update amplification display if it exists
-            if hasattr(self, 'amp_label'):
-                self.amp_label.setText(f"{self.amplification:.2f}x")
-            
-            event.accept()
-        except Exception as e:
-            print(f"Error in wheel event: {e}")
+        """Mouse-wheel zoom is disabled in the analysis view."""
+        event.ignore()
     
     def create_ecg_plot(self, parent_layout):
         """Create the ECG plot area"""
@@ -641,7 +616,7 @@ class ExpandedLeadView(QDialog):
         control_layout.setContentsMargins(10, 5, 10, 5)
         control_layout.setSpacing(10)
 
-        # Zoom (time) controls
+        # Zoom controls removed.
         zoom_title = QLabel("Zoom:")
         zoom_title.setStyleSheet("""
             color: #2c3e50; 
@@ -709,6 +684,10 @@ class ExpandedLeadView(QDialog):
         """)
         zoom_in_btn.clicked.connect(self.zoom_in_time)
         control_layout.addWidget(zoom_in_btn)
+        zoom_title.hide()
+        zoom_out_btn.hide()
+        self.zoom_label.hide()
+        zoom_in_btn.hide()
         
         # Amplification label
         amp_title = QLabel("Amplification:")
@@ -812,6 +791,7 @@ class ExpandedLeadView(QDialog):
             border: none;
         """)
         control_layout.addWidget(info_label)
+        info_label.hide()
 
         # Toggles (display-only UX)
         self.clean_view_toggle = QCheckBox("Clean display")
@@ -1121,7 +1101,7 @@ class ExpandedLeadView(QDialog):
                             kernel_size = 3
                             kernel = np.ones(kernel_size) / kernel_size
                             scaled = np.convolve(scaled, kernel, mode='same')
-                    self.ax.plot(time, scaled, color='#000080', linewidth=0.7, label='ECG Signal', antialiased=True)  # Dark Navy Blue
+                    self.ax.plot(time, scaled, color='#000000', linewidth=0.5, label='ECG Signal', antialiased=True)
                 else:
                     # Plot only valid segments
                     time_valid = time[valid_mask]
@@ -1137,7 +1117,7 @@ class ExpandedLeadView(QDialog):
                                 kernel_size = 3
                                 kernel = np.ones(kernel_size) / kernel_size
                                 scaled_valid = np.convolve(scaled_valid, kernel, mode='same')
-                        self.ax.plot(time_valid, scaled_valid, color='#000080', linewidth=0.7, label='ECG Signal', antialiased=True)  # Dark Navy Blue
+                        self.ax.plot(time_valid, scaled_valid, color='#000000', linewidth=0.5, label='ECG Signal', antialiased=True)
             else:
                 print(f"All data is NaN in expanded view initialization for lead {self.lead_name}")
         
@@ -1950,7 +1930,7 @@ class ExpandedLeadView(QDialog):
                     # Plot only valid points
                     if np.all(valid_mask):
                         # All data is valid - plot normally with anti-aliasing
-                        self.ax.plot(time, display_adc, color='#000080', linewidth=0.7, label='ECG Signal', zorder=1, alpha=waveform_alpha, antialiased=True)  # Dark Navy Blue
+                        self.ax.plot(time, display_adc, color='#000000', linewidth=0.5, label='ECG Signal', zorder=1, alpha=waveform_alpha, antialiased=True)
                     else:
                         # Some NaN values - plot segments
                         time_valid = time[valid_mask]
@@ -1959,7 +1939,7 @@ class ExpandedLeadView(QDialog):
                             # Apply smoothing to valid segment without edge
                             # artifacts at the segment tail.
                             scaled_valid = self._smooth_display_signal(scaled_valid, sigma=0.5)
-                            self.ax.plot(time_valid, scaled_valid, color='#000080', linewidth=0.7, label='ECG Signal', zorder=1, alpha=waveform_alpha, antialiased=True)  # Dark Navy Blue
+                            self.ax.plot(time_valid, scaled_valid, color='#000000', linewidth=0.5, label='ECG Signal', zorder=1, alpha=waveform_alpha, antialiased=True)
                 else:
                     print(f" All data is NaN in expanded view for lead {self.lead_name}")
             else:
@@ -1992,7 +1972,7 @@ class ExpandedLeadView(QDialog):
 
             # Remove explicit X-axis label ("Time (seconds)") to match dashboard style
             self.ax.set_ylabel('Amplitude (ADC)', fontsize=14, fontweight='bold', color='#34495e')
-            amp_text = f" (Zoom: {self.amplification:.2f}x)" if self.amplification != 1.0 else ""
+            amp_text = ""
             self.ax.set_title(
                 f'Lead {self.lead_name} - Live PQRST Analysis{amp_text}',
                 fontsize=18,

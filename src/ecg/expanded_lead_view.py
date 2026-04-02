@@ -459,6 +459,10 @@ class ExpandedLeadView(QDialog):
         # Track the rendered history window so display stabilization can reset
         # when the user jumps to a different portion of the recording.
         self._last_window_bounds = None
+        self._last_history_slider_update_time = 0.0
+        self._last_button_state_update_time = 0.0
+        self.ecg_line = None
+        self._quality_text_artist = None
         
         # Live data update
         self.timer = QTimer()
@@ -1132,6 +1136,8 @@ class ExpandedLeadView(QDialog):
             time = time[:min_len]
             scaled = scaled[:min_len]
         
+        self.ecg_line, = self.ax.plot([], [], color='#000080', linewidth=0.7, label='ECG Signal', antialiased=True)
+
         if len(scaled) > 0:
             # Ensure we have valid (non-NaN) data
             valid_mask = ~np.isnan(scaled)
@@ -1147,7 +1153,7 @@ class ExpandedLeadView(QDialog):
                             kernel_size = 3
                             kernel = np.ones(kernel_size) / kernel_size
                             scaled = np.convolve(scaled, kernel, mode='same')
-                    self.ax.plot(time, scaled, color='#000080', linewidth=0.7, label='ECG Signal', antialiased=True)  # Dark Navy Blue
+                    self.ecg_line.set_data(time, scaled)
                 else:
                     # Plot only valid segments
                     time_valid = time[valid_mask]
@@ -1163,7 +1169,7 @@ class ExpandedLeadView(QDialog):
                                 kernel_size = 3
                                 kernel = np.ones(kernel_size) / kernel_size
                                 scaled_valid = np.convolve(scaled_valid, kernel, mode='same')
-                        self.ax.plot(time_valid, scaled_valid, color='#000080', linewidth=0.7, label='ECG Signal', antialiased=True)  # Dark Navy Blue
+                        self.ecg_line.set_data(time_valid, scaled_valid)
             else:
                 print(f"All data is NaN in expanded view initialization for lead {self.lead_name}")
         
@@ -1204,6 +1210,18 @@ class ExpandedLeadView(QDialog):
 
         if hasattr(self, 'canvas'):
             self.canvas.draw_idle()
+
+    def _can_use_fast_live_path(self):
+        try:
+            return (
+                self.is_live and
+                not self.show_respiration and
+                not self.show_markers and
+                not self.show_median_overlay and
+                not bool(getattr(self, "arrhythmia_events", None))
+            )
+        except Exception:
+            return False
     
     def create_metrics_panel(self, parent_layout):
         """Create the metrics panel"""
@@ -1295,7 +1313,7 @@ class ExpandedLeadView(QDialog):
     def start_live_mode(self):
         """Start live data updates"""
         self.is_live = True
-        self.timer.start(100)  # Update every 100ms
+        self.timer.start(50)  # Faster refresh for smoother live feel
 
     def resizeEvent(self, event):
         """Respond to window resizing by scaling fonts and components."""
@@ -1387,12 +1405,15 @@ class ExpandedLeadView(QDialog):
                         if current_time - self._last_analysis_time >= 0.5:  # Analyze every 500ms
                             self.analyze_ecg()
                             self._last_analysis_time = current_time
-                        
-                        self.update_history_slider()
+
+                        if current_time - self._last_history_slider_update_time >= 0.25:
+                            self.update_history_slider()
+                            self._last_history_slider_update_time = current_time
 
                         # Update button states to reflect parent's status
-                        if hasattr(self, 'expanded_start_btn'):
+                        if hasattr(self, 'expanded_start_btn') and current_time - self._last_button_state_update_time >= 0.25:
                             self.update_button_states()
+                            self._last_button_state_update_time = current_time
 
         except Exception as e:
             print(f"Error updating live data: {e}")
@@ -1821,8 +1842,7 @@ class ExpandedLeadView(QDialog):
             time = np.arange(len(display_adc), dtype=float) / fs + (start_idx / fs)
 
             ylim_low, ylim_high = (-4096.0, 0.0) if str(self.lead_name).upper() == 'AVR' else (0.0, 4096.0)
-
-            self.ax.clear()
+            fast_live_path = self._can_use_fast_live_path() and self.ecg_line is not None
 
             # Heatmap overlay intentionally disabled per user request.
 
@@ -1835,6 +1855,8 @@ class ExpandedLeadView(QDialog):
             # Only plot if we have valid data
             waveform_alpha = 1.0
             quality_text = None
+            plot_x = np.array([])
+            plot_y = np.array([])
             if len(display_adc) > 0:
                 # Remove NaN values for plotting (replace with interpolation or skip)
                 valid_mask = ~np.isnan(display_adc)
@@ -1855,8 +1877,8 @@ class ExpandedLeadView(QDialog):
                     
                     # Plot only valid points
                     if np.all(valid_mask):
-                        # All data is valid - plot normally with anti-aliasing
-                        self.ax.plot(time, display_adc, color='#000080', linewidth=0.7, label='ECG Signal', zorder=1, alpha=waveform_alpha, antialiased=True)  # Dark Navy Blue
+                        plot_x = time
+                        plot_y = display_adc
                     else:
                         # Some NaN values - plot segments
                         time_valid = time[valid_mask]
@@ -1865,11 +1887,61 @@ class ExpandedLeadView(QDialog):
                             # Apply smoothing to valid segment without edge
                             # artifacts at the segment tail.
                             scaled_valid = self._smooth_display_signal(scaled_valid, sigma=0.5)
-                            self.ax.plot(time_valid, scaled_valid, color='#000080', linewidth=0.7, label='ECG Signal', zorder=1, alpha=waveform_alpha, antialiased=True)  # Dark Navy Blue
+                            plot_x = time_valid
+                            plot_y = scaled_valid
                 else:
                     print(f" All data is NaN in expanded view for lead {self.lead_name}")
             else:
                 print(f" No data to plot in expanded view for lead {self.lead_name}: len={len(display_adc)}")
+
+            if fast_live_path:
+                self.ecg_line.set_alpha(waveform_alpha)
+                self.ecg_line.set_data(plot_x, plot_y)
+                self.ax.set_ylabel('Amplitude (ADC)', fontsize=14, fontweight='bold', color='#34495e')
+                amp_text = f" (Zoom: {self.amplification:.2f}x)" if self.amplification != 1.0 else ""
+                self.ax.set_title(
+                    f'Lead {self.lead_name} - Live PQRST Analysis{amp_text}',
+                    fontsize=18,
+                    fontweight='bold',
+                    color='#2c3e50'
+                )
+                if len(time) > 0:
+                    self.ax.set_xlim(time[0], time[-1])
+                else:
+                    self.ax.set_xlim(0, 1)
+                self.ax.set_ylim(ylim_low, ylim_high)
+                self.ax.grid(True, which='both', linestyle='--', linewidth=0.5, color='#bdc3c7')
+                self.ax.spines['top'].set_visible(False)
+                self.ax.spines['right'].set_visible(False)
+                if self._quality_text_artist is not None:
+                    try:
+                        self._quality_text_artist.remove()
+                    except Exception:
+                        pass
+                    self._quality_text_artist = None
+                if quality_text and len(time) > 0:
+                    try:
+                        self._quality_text_artist = self.ax.text(
+                            time[0], ylim_high * 0.9, quality_text, color="#7f8c8d", fontsize=9, va="top"
+                        )
+                    except Exception:
+                        self._quality_text_artist = None
+                self.canvas.draw_idle()
+                return
+
+            self.ax.clear()
+
+            if len(plot_x) > 0 and len(plot_y) > 0:
+                self.ax.plot(
+                    plot_x,
+                    plot_y,
+                    color='#000080',
+                    linewidth=0.7,
+                    label='ECG Signal',
+                    zorder=1,
+                    alpha=waveform_alpha,
+                    antialiased=True,
+                )
             
             # Overlay vertical markers at detected arrhythmia event times within the visible window
             if hasattr(self, "arrhythmia_events") and self.arrhythmia_events:
@@ -2055,6 +2127,12 @@ class ExpandedLeadView(QDialog):
                 except Exception:
                     pass
 
+            try:
+                if len(getattr(self.ax, "lines", [])) > 0:
+                    self.ecg_line = self.ax.lines[0]
+            except Exception:
+                pass
+
             self.canvas.draw_idle()
         except Exception as e:
             print(f"Error updating plot: {e}")
@@ -2174,7 +2252,7 @@ class ExpandedLeadView(QDialog):
         arrhythmia_frame = QFrame()
         # Keep this compact so it matches the interpretation-only UI.
         # (Graph code and plot rendering are not touched.)
-        arrhythmia_frame.setFixedHeight(70)
+        arrhythmia_frame.setFixedHeight(118)
         arrhythmia_frame.setStyleSheet("""
             QFrame {
                 background: white;
@@ -2182,14 +2260,17 @@ class ExpandedLeadView(QDialog):
                 border: 1px solid #e0e0e0;
             }
         """)
-        arrhythmia_layout = QHBoxLayout(arrhythmia_frame)
+        arrhythmia_layout = QVBoxLayout(arrhythmia_frame)
         arrhythmia_layout.setContentsMargins(15, 10, 15, 10)
-        arrhythmia_layout.setSpacing(15)
+        arrhythmia_layout.setSpacing(6)
+
+        top_row = QHBoxLayout()
+        top_row.setSpacing(15)
         
         title = QLabel("Arrhythmia Interpretation:")
         title.setFont(QFont("Segoe UI", 13, QFont.Bold))
         title.setStyleSheet("color: #2c3e50; border: none; background: transparent;")
-        arrhythmia_layout.addWidget(title)
+        top_row.addWidget(title)
         
         # QLabel style to match the second screenshot (no boxed QTextEdit).
         self.arrhythmia_list = QLabel("Analyzing...")
@@ -2197,7 +2278,16 @@ class ExpandedLeadView(QDialog):
         self.arrhythmia_list.setStyleSheet("color: #34495e; border: none; background: transparent;")
         self.arrhythmia_list.setWordWrap(True)
         self.arrhythmia_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        arrhythmia_layout.addWidget(self.arrhythmia_list, 1)
+        top_row.addWidget(self.arrhythmia_list, 1)
+        arrhythmia_layout.addLayout(top_row)
+
+        self.rhythm_reason_label = QLabel("Decision summary will appear here.")
+        self.rhythm_reason_label.setFont(QFont("Segoe UI", 9))
+        self.rhythm_reason_label.setStyleSheet("color: #5d6d7e; border: none; background: transparent;")
+        self.rhythm_reason_label.setWordWrap(True)
+        self.rhythm_reason_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self.rhythm_reason_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        arrhythmia_layout.addWidget(self.rhythm_reason_label, 1)
         
         parent_layout.addWidget(arrhythmia_frame)
     
@@ -2273,6 +2363,8 @@ class ExpandedLeadView(QDialog):
 
             # Analyze signal for PQRST waves using the filtered signal
             analysis = self.analyzer.analyze_signal(filtered_signal)
+            self._last_analysis = analysis
+            self._last_filtered_signal = filtered_signal
             self.calculate_metrics(analysis)
             
             # Check if serial data has actually started flowing (not just initial state)
@@ -2314,6 +2406,7 @@ class ExpandedLeadView(QDialog):
             )
             print(f" Arrhythmia detection result for {self.lead_name}: {arrhythmias}")
             self.update_arrhythmia_display(arrhythmias)
+            self.update_rhythm_reasoning(analysis, filtered_signal, arrhythmias)
             
             # Heatmap intentionally disabled.
             self.heatmap_overlay = None
@@ -2373,8 +2466,11 @@ class ExpandedLeadView(QDialog):
 
             if fallback_labels:
                 self.update_arrhythmia_display(fallback_labels)
+                self.update_rhythm_reasoning({}, np.asarray(self.ecg_data, dtype=float), fallback_labels)
             elif hasattr(self, 'arrhythmia_list'):
                 self.arrhythmia_list.setText(f"Analysis error: {str(e)[:80]}")
+                if hasattr(self, 'rhythm_reason_label'):
+                    self.rhythm_reason_label.setText("Detailed rhythm reasoning unavailable due to analysis error.")
     
     def calculate_metrics(self, analysis):
         """Calculate ECG metrics from analysis results
@@ -2735,6 +2831,69 @@ class ExpandedLeadView(QDialog):
                         best = m
                         break
 
+            analysis_for_override = getattr(self, "_last_analysis", {})
+            strong_nsr = self._strong_nsr_evidence(analysis_for_override)
+            stable_sinus_metrics = self._sinus_metrics_stable(analysis_for_override)
+            parent_live_nsr = self._parent_live_rhythm_is_stable_nsr()
+            rhythm_critical_labels = {
+                "Asystole (Cardiac Arrest)",
+                "Ventricular Fibrillation Detected",
+                "Torsade de Pointes",
+                "Polymorphic Ventricular Tachycardia",
+                "Possible Ventricular Tachycardia",
+                "Run of PVCs (>=3 consecutive)",
+                "Frequent Multi-focal PVCs",
+                "Ventricular Ectopics Detected",
+                "Missed Beat at ~80 BPM (SA Block / Sinus Pause)",
+                "Missed Beat at ~120 BPM (SA Block / Sinus Pause)",
+                "Sinus Pause / Missed Beat",
+                "Atrial Fibrillation 2 (with RVR)",
+                "Atrial Fibrillation Detected",
+                "Trigeminy",
+                "Bigeminy",
+                "Possible Atrial Flutter",
+                "Supraventricular Tachycardia (SVT)",
+                "Paroxysmal Atrial Tachycardia (PAT)",
+                "Atrial Tachycardia",
+                "Junctional Tachycardia",
+                "Possible Junctional Rhythm",
+                "Nodal PNC (Premature Junctional Contraction)",
+                "Second-Degree AV Block (Type I - Wenckebach)",
+                "Second-Degree AV Block (Type II)",
+                "Second-Degree AV Block",
+                "Third-Degree AV Block (Complete Heart Block)",
+                "First-Degree AV Block",
+                "Sinus Tachycardia",
+                "Sinus Bradycardia",
+                "Sinus Arrhythmia",
+            }
+            secondary_non_rhythm_labels = {
+                "Right Ventricular Hypertrophy",
+                "ST Change Detected",
+                "T-Wave Inversion Detected",
+                "Right Bundle Branch Block (RBBB)",
+                "Left Bundle Branch Block (LBBB)",
+            }
+
+            if strong_nsr and stable_sinus_metrics:
+                if best is None or best not in rhythm_critical_labels or best in secondary_non_rhythm_labels:
+                    best = "Normal Sinus Rhythm"
+
+            hard_stop_labels = {
+                "Asystole (Cardiac Arrest)",
+                "Ventricular Fibrillation Detected",
+                "Torsade de Pointes",
+                "Polymorphic Ventricular Tachycardia",
+                "Possible Ventricular Tachycardia",
+                "Run of PVCs (>=3 consecutive)",
+                "Frequent Multi-focal PVCs",
+                "Atrial Fibrillation 2 (with RVR)",
+                "Atrial Fibrillation Detected",
+            }
+            if parent_live_nsr and stable_sinus_metrics:
+                if best is None or best not in hard_stop_labels:
+                    best = "Normal Sinus Rhythm"
+
             if best is not None:
                 # Rhythm hold (anti-flicker): keep AF stable if it appears intermittently.
                 # Many real-world windows will alternate between AF and flutter depending on
@@ -2794,6 +2953,305 @@ class ExpandedLeadView(QDialog):
         self.arrhythmia_list.setStyleSheet(
             f"color: {color}; border: none; background: transparent;"
         )
+
+    def _get_metric_card_value(self, metric_name, default=0):
+        try:
+            card = self.metrics_cards.get(metric_name)
+            if card is None:
+                return default
+            return getattr(card, "value", default)
+        except Exception:
+            return default
+
+    def _has_consistent_p_before_qrs(self, p_peaks, r_peaks):
+        try:
+            p_arr = np.asarray(p_peaks or [], dtype=int)
+            r_arr = np.asarray(r_peaks or [], dtype=int)
+            pr_ms = self._get_metric_card_value('pr_interval', 0)
+            p_dur_ms = self._get_metric_card_value('p_duration', 0)
+            rr_ms_card = self._get_metric_card_value('rr_interval', 0)
+
+            def _metric_fallback():
+                try:
+                    return (
+                        bool(pr_ms and 120 <= pr_ms <= 220) and
+                        bool(p_dur_ms and p_dur_ms >= 60) and
+                        bool(rr_ms_card and 450 <= rr_ms_card <= 1300)
+                    )
+                except Exception:
+                    return False
+
+            if len(r_arr) == 0:
+                return _metric_fallback()
+            if len(p_arr) == 0:
+                return _metric_fallback()
+            matched = 0
+            checked = 0
+            for r_idx in r_arr[: min(8, len(r_arr))]:
+                min_pr_samples = max(1, int(0.08 * self.sampling_rate))
+                max_pr_samples = max(min_pr_samples + 1, int(0.30 * self.sampling_rate))
+                candidates = p_arr[
+                    (p_arr < r_idx) &
+                    ((r_idx - p_arr) >= min_pr_samples) &
+                    ((r_idx - p_arr) <= max_pr_samples)
+                ]
+                checked += 1
+                if len(candidates) > 0:
+                    matched += 1
+            if checked == 0:
+                return _metric_fallback()
+            if (matched / checked) >= 0.6:
+                return True
+            return _metric_fallback()
+        except Exception:
+            return False
+
+    def _rr_is_regular(self, r_peaks):
+        try:
+            r_arr = np.asarray(r_peaks or [], dtype=int)
+            if len(r_arr) < 4:
+                rr_ms_card = self._get_metric_card_value('rr_interval', 0)
+                return bool(rr_ms_card and rr_ms_card > 0)
+            rr_ms = np.diff(r_arr) / float(self.sampling_rate) * 1000.0
+            mean_rr = float(np.mean(rr_ms))
+            if mean_rr <= 0:
+                return False
+            cv = float(np.std(rr_ms) / mean_rr)
+            if cv <= 0.18:
+                return True
+            successive_diff = np.abs(np.diff(rr_ms))
+            if successive_diff.size == 0:
+                return cv <= 0.18
+            return float(np.median(successive_diff)) <= 120.0
+        except Exception:
+            return False
+
+    def _last_five_rr_are_regular(self, r_peaks):
+        try:
+            r_arr = np.asarray(r_peaks or [], dtype=int)
+            if len(r_arr) < 6:
+                return self._rr_is_regular(r_arr)
+            rr_ms = np.diff(r_arr) / float(self.sampling_rate) * 1000.0
+            if len(rr_ms) < 5:
+                return self._rr_is_regular(r_arr)
+            last_five = np.asarray(rr_ms[-5:], dtype=float)
+            median_rr = float(np.median(last_five))
+            if median_rr <= 0:
+                return False
+            max_dev = float(np.max(np.abs(last_five - median_rr)))
+            cv = float(np.std(last_five) / median_rr)
+            return max_dev <= 80.0 and cv <= 0.08
+        except Exception:
+            return False
+
+    def _sinus_metrics_stable(self, analysis):
+        try:
+            analysis = analysis or {}
+            r_peaks = analysis.get('r_peaks', [])
+            rr_ms = self._get_metric_card_value('rr_interval', 0)
+            pr_ms = self._get_metric_card_value('pr_interval', 0)
+            qrs_ms = self._get_metric_card_value('qrs_duration', 0)
+            qt_ms = self._get_metric_card_value('qt_interval', 0)
+            qtc_ms = self._get_metric_card_value('qtc_interval', 0)
+            p_ms = self._get_metric_card_value('p_duration', 0)
+            heart_rate = int(round(60000.0 / rr_ms)) if rr_ms and rr_ms > 0 else 0
+
+            core_checks = [
+                55 <= heart_rate <= 105 if heart_rate else False,
+                120 <= pr_ms <= 220 if pr_ms else False,
+                60 <= qrs_ms < 120 if qrs_ms else False,
+                60 <= p_ms <= 140 if p_ms else True,
+                self._last_five_rr_are_regular(r_peaks),
+            ]
+            optional_checks = []
+            if qt_ms:
+                optional_checks.append(260 <= qt_ms <= 460)
+            if qtc_ms:
+                optional_checks.append(320 <= qtc_ms <= 460)
+
+            return all(core_checks) and all(optional_checks)
+        except Exception:
+            return False
+
+    def _get_parent_live_rhythm_labels(self):
+        try:
+            parent = getattr(self, "_parent", None)
+            bpm_ctrl = getattr(parent, "_bpm_ctrl", None) if parent is not None else None
+            store = getattr(bpm_ctrl, "store", None) if bpm_ctrl is not None else None
+            if store is None:
+                return []
+            labels = store.get_arrhythmias()
+            if not isinstance(labels, list):
+                return []
+            return [str(label).strip() for label in labels if str(label).strip()]
+        except Exception:
+            return []
+
+    def _parent_live_rhythm_is_stable_nsr(self):
+        try:
+            labels = self._get_parent_live_rhythm_labels()
+            return any("Normal Sinus Rhythm" in label for label in labels)
+        except Exception:
+            return False
+
+    def _strong_nsr_evidence(self, analysis):
+        try:
+            analysis = analysis or {}
+            r_peaks = analysis.get('r_peaks', [])
+            p_peaks = analysis.get('p_peaks', [])
+            p_duration = self._get_metric_card_value('p_duration', 0)
+            rr_ms = self._get_metric_card_value('rr_interval', 0)
+            pr_ms = self._get_metric_card_value('pr_interval', 0)
+            qrs_ms = self._get_metric_card_value('qrs_duration', 0)
+            heart_rate = int(round(60000.0 / rr_ms)) if rr_ms and rr_ms > 0 else 0
+            p_present = bool(len(p_peaks or []) > 0 or (p_duration and p_duration >= 60))
+            p_before_qrs = self._has_consistent_p_before_qrs(p_peaks, r_peaks)
+            rr_regular = self._last_five_rr_are_regular(r_peaks)
+            return all([
+                55 <= heart_rate <= 105 if heart_rate else False,
+                p_present,
+                p_before_qrs,
+                120 <= pr_ms <= 220 if pr_ms else False,
+                qrs_ms < 120 if qrs_ms else False,
+                rr_regular,
+                self._sinus_metrics_stable(analysis),
+            ])
+        except Exception:
+            return False
+
+    def _detect_split_r_pattern(self, signal, r_peaks):
+        try:
+            sig = np.asarray(signal, dtype=float)
+            r_arr = np.asarray(r_peaks or [], dtype=int)
+            if len(sig) == 0 or len(r_arr) < 2:
+                return False
+            hits = 0
+            checked = 0
+            for r_idx in r_arr[: min(6, len(r_arr))]:
+                start = max(0, r_idx - int(0.015 * self.sampling_rate))
+                end = min(len(sig), r_idx + int(0.09 * self.sampling_rate))
+                seg = sig[start:end]
+                if len(seg) < 6:
+                    continue
+                seg = seg - float(np.mean(seg))
+                try:
+                    peaks, _ = find_peaks(seg, distance=max(2, int(0.008 * self.sampling_rate)))
+                except Exception:
+                    continue
+                checked += 1
+                if len(peaks) >= 2:
+                    for i in range(len(peaks) - 1):
+                        delta_ms = (peaks[i + 1] - peaks[i]) / float(self.sampling_rate) * 1000.0
+                        if 15 <= delta_ms <= 70:
+                            hits += 1
+                            break
+            return checked > 0 and (hits / checked) >= 0.3
+        except Exception:
+            return False
+
+    def _detect_notched_r_pattern(self, signal, r_peaks):
+        try:
+            sig = np.asarray(signal, dtype=float)
+            r_arr = np.asarray(r_peaks or [], dtype=int)
+            if len(sig) == 0 or len(r_arr) < 2:
+                return False
+            hits = 0
+            checked = 0
+            for r_idx in r_arr[: min(6, len(r_arr))]:
+                start = max(0, r_idx - int(0.02 * self.sampling_rate))
+                end = min(len(sig), r_idx + int(0.08 * self.sampling_rate))
+                seg = sig[start:end]
+                if len(seg) < 6:
+                    continue
+                seg = seg - float(np.min(seg))
+                try:
+                    peaks, _ = find_peaks(seg, distance=max(2, int(0.01 * self.sampling_rate)))
+                except Exception:
+                    continue
+                checked += 1
+                if len(peaks) >= 2:
+                    hits += 1
+            return checked > 0 and (hits / checked) >= 0.3
+        except Exception:
+            return False
+
+    def update_rhythm_reasoning(self, analysis, signal, arrhythmias):
+        if not hasattr(self, 'rhythm_reason_label'):
+            return
+        try:
+            analysis = analysis or {}
+            r_peaks = analysis.get('r_peaks', [])
+            p_peaks = analysis.get('p_peaks', [])
+            q_peaks = analysis.get('q_peaks', [])
+
+            rr_ms = self._get_metric_card_value('rr_interval', 0)
+            pr_ms = self._get_metric_card_value('pr_interval', 0)
+            qrs_ms = self._get_metric_card_value('qrs_duration', 0)
+            p_duration = self._get_metric_card_value('p_duration', 0)
+            heart_rate = int(round(60000.0 / rr_ms)) if rr_ms and rr_ms > 0 else 0
+
+            p_present = bool(len(p_peaks or []) > 0 or (p_duration and p_duration >= 60))
+            p_before_qrs = self._has_consistent_p_before_qrs(p_peaks, r_peaks)
+            rr_regular = self._rr_is_regular(r_peaks)
+
+            nsr_checks = [
+                ("Rate", 60 <= heart_rate <= 100, f"{heart_rate} bpm" if heart_rate else "--"),
+                ("P visible", p_present, "yes" if p_present else "no"),
+                ("P→QRS", p_before_qrs, "1:1" if p_before_qrs else "not consistent"),
+                ("PR", 120 <= pr_ms <= 200 if pr_ms else False, f"{pr_ms} ms" if pr_ms else "--"),
+                ("QRS", qrs_ms < 120 if qrs_ms else False, f"{qrs_ms} ms" if qrs_ms else "--"),
+                ("RR", rr_regular, "regular" if rr_regular else "irregular"),
+            ]
+            nsr_ok = all(flag for _label, flag, _detail in nsr_checks)
+            passed = [f"{label} {detail}" for label, flag, detail in nsr_checks if flag]
+            failed = [f"{label} {detail}" for label, flag, detail in nsr_checks if not flag]
+
+            arr_text = " | ".join(str(a) for a in (arrhythmias or []))
+            has_rbbb = "RBBB" in arr_text or "Right Bundle Branch Block" in arr_text
+            has_lbbb = "LBBB" in arr_text or "Left Bundle Branch Block" in arr_text
+            split_r = self._detect_split_r_pattern(signal, r_peaks)
+            notched_r = self._detect_notched_r_pattern(signal, r_peaks)
+            q_absent = len(q_peaks or []) == 0
+
+            if has_rbbb:
+                if self.lead_name == "V1":
+                    bbb_text = f"RBBB: QRS {qrs_ms} ms with split terminal R' pattern in V1."
+                elif self.lead_name in ("I", "V6"):
+                    bbb_text = f"RBBB: QRS {qrs_ms} ms; confirm wide terminal S in {self.lead_name} and rSR' in V1."
+                else:
+                    bbb_text = f"RBBB detected: QRS {qrs_ms} ms. Best morphology confirmation is from V1 and lateral leads I/V6."
+            elif has_lbbb:
+                if self.lead_name in ("I", "V6"):
+                    bbb_text = f"LBBB: QRS {qrs_ms} ms with broad/notched lateral R and absent septal q={q_absent}."
+                elif self.lead_name == "V1":
+                    bbb_text = f"LBBB: QRS {qrs_ms} ms; V1 should show QS/rS while I/V6 show broad R."
+                else:
+                    bbb_text = f"LBBB detected: QRS {qrs_ms} ms. Best confirmation is from V1 plus lateral leads I/V6."
+            elif qrs_ms >= 120:
+                hints = []
+                if self.lead_name == "V1" and split_r:
+                    hints.append("split R' seen in V1")
+                if self.lead_name in ("I", "V6") and notched_r:
+                    hints.append("broad/notched lateral R seen")
+                hint_text = f" Morphology hint: {', '.join(hints)}." if hints else ""
+                bbb_text = f"Wide QRS ({qrs_ms} ms), but full RBBB/LBBB confirmation needs V1 and I/V6 morphology.{hint_text}"
+            else:
+                bbb_text = f"BBB unlikely in this beat/window because QRS is not wide ({qrs_ms} ms)."
+
+            nsr_prefix = "NSR satisfied." if nsr_ok else "NSR not satisfied."
+            detail_parts = []
+            if passed:
+                detail_parts.append("Pass: " + ", ".join(passed[:4]))
+            if failed:
+                detail_parts.append("Fail: " + ", ".join(failed[:4]))
+
+            self.rhythm_reason_label.setText(
+                f"{nsr_prefix} {' | '.join(detail_parts)}\n{bbb_text}"
+            )
+        except Exception:
+            self.rhythm_reason_label.setText(
+                "Decision summary unavailable. NSR uses rate, P wave, PR, QRS, and RR regularity; BBB uses wide-QRS morphology."
+            )
     
     def update_plot_with_markers(self, analysis):
         """Update the plot without PQRST labels/markers (as requested)"""

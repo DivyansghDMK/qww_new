@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import requests
 # Ensure .env is loaded before anything else (revert to previous simple loader)
 try:
     from dotenv import load_dotenv
@@ -25,6 +26,34 @@ def resource_path(relative_path):
     return os.path.join(os.path.abspath(os.path.dirname(__file__)), '..', relative_path)
 
 CHAT_HISTORY_FILE = resource_path('chat_history.json')
+ECG_SCOPE_KEYWORDS = {
+    "ecg", "ekg", "cardio", "cardiac", "heart", "rhythm", "arrhythmia", "tachycardia",
+    "bradycardia", "qt", "qtc", "qrs", "pr interval", "st segment", "t wave", "p wave",
+    "lead", "leads", "ventricular", "atrial", "afib", "af", "vt", "svt", "bundle branch",
+    "mi", "myocardial", "ischemia", "infarction", "sinus rhythm", "axis", "electrocardiogram",
+    "electrocardiograph", "pac", "pvc", "holter", "hyperkalemia"
+}
+
+ECG_SYSTEM_PROMPT = (
+    "You are an ECG-focused clinical assistant for healthcare professionals. "
+    "Only answer questions about ECG interpretation, rhythm analysis, waveform morphology, "
+    "intervals, leads, arrhythmias, and closely related cardiology topics. "
+    "If asked about non-ECG topics, politely refuse and ask for an ECG-related question instead. "
+    "Be concise, clinically careful, and practical. Do not provide a final diagnosis. "
+    "When information is incomplete, say so clearly. Suggest escalation for emergency red flags."
+)
+
+
+def _is_ecg_topic(text: str) -> bool:
+    msg = (text or "").lower()
+    return any(keyword in msg for keyword in ECG_SCOPE_KEYWORDS)
+
+
+def _ecg_scope_message() -> str:
+    return (
+        "I can only help with ECG-related questions for healthcare professionals. "
+        "Please ask about ECG interpretation, leads, intervals, arrhythmias, or waveform findings."
+    )
 
 class ChatbotThread(QThread):
     response_ready = pyqtSignal(str)
@@ -34,139 +63,39 @@ class ChatbotThread(QThread):
         self.api_key = api_key
     def run(self):
         try:
-            import google.generativeai as genai
-            genai.configure(api_key=self.api_key)
-            # Prefer stable models. Allow override via CHATBOT_MODEL env.
-            env_model = os.getenv("CHATBOT_MODEL", "").strip()
-            ordered_full_names = [
-                "models/" + env_model if env_model and not env_model.startswith("models/") else env_model,
-                "models/gemini-1.5-flash",
-                "models/gemini-1.5-pro",
-            ]
-            ordered_full_names = [m for m in ordered_full_names if m]
-            model_name = None
-            available_names = set()
-            try:
-                available = list(genai.list_models())
-                for m in available:
-                    n = getattr(m, "name", "")
-                    if n:
-                        available_names.add(n)
-                # Prefer free/flash models if available
-                flash_candidates = [n for n in available_names if "1.5-flash" in n]
-                if flash_candidates:
-                    model_name = sorted(flash_candidates)[0]
-                # Else use first preferred present
-                if not model_name:
-                    for cand in ordered_full_names:
-                        if cand in available_names:
-                            model_name = cand
-                            break
-                # Else pick any model that supports generateContent
-                if not model_name:
-                    for m in available:
-                        methods = getattr(m, "supported_generation_methods", []) or []
-                        if "generateContent" in methods and getattr(m, "name", ""):
-                            model_name = m.name
-                            break
-            except Exception:
-                # Fallback to common
-                model_name = "models/gemini-1.5-flash"
-            if not model_name:
-                model_name = "models/gemini-1.5-flash"
-            # Always try plain id first (SDK examples use plain id)
-            plain_id = model_name.split("/", 1)[-1]
-            def build_model(name_or_id):
-                return genai.GenerativeModel(name_or_id)
-            # Retry once on transient/quota errors with server-provided retry delay
-            def _call(active_model):
-                return active_model.generate_content(
-                    self.prompt,
-                    generation_config={
-                        "max_output_tokens": 256,
-                        "temperature": 0.7,
-                        "top_p": 0.9,
-                    }
-                )
-            try:
-                # Try plain id first
-                model = build_model(plain_id)
-                response = _call(model)
-            except Exception as e1:
-                msg = str(e1)
-                # On 404 try full name, then alternate model
-                if "404" in msg or "not found" in msg.lower():
-                    try:
-                        model = build_model(model_name)  # full form
-                        response = _call(model)
-                    except Exception:
-                        # Try alternate between flash/pro ids (plain form)
-                        alt_full = (
-                            "models/gemini-1.5-pro" if "1.5-flash" in model_name else "models/gemini-1.5-flash"
-                        )
-                        alt_plain = alt_full.split("/", 1)[-1]
-                        try:
-                            model = build_model(alt_plain)
-                            response = _call(model)
-                        except Exception as e2:
-                            # Surface available models to help user set CHATBOT_MODEL
-                            try:
-                                models_str = "\n".join(sorted(available_names)) if available_names else "(list_models unavailable)"
-                            except Exception:
-                                models_str = "(list_models unavailable)"
-                            self.response_ready.emit(
-                                "Error: Selected model not available.\n"
-                                f"Tried (plain): {plain_id}\nTried (full): {model_name}\n"
-                                f"Available on this key:\n{models_str}\n\n"
-                                "Set CHATBOT_MODEL to one of the above (use full name from list)."
-                            )
-                            return
-                elif "429" in msg or "quota" in msg.lower():
-                    import re, time
-                    wait_s = 30
-                    m = re.search(r"retry[_ ]delay\s*{\s*seconds:\s*(\d+)", msg)
-                    if not m:
-                        m = re.search(r"Please retry in\s*([0-9.]+)s", msg)
-                    if m:
-                        try:
-                            wait_s = int(float(m.group(1)))
-                        except Exception:
-                            wait_s = 30
-                    time.sleep(min(wait_s, 60))
-                    # After wait, try alternate plain id to avoid same cap
-                    alt_full = (
-                        "models/gemini-1.5-pro" if "1.5-flash" in model_name else "models/gemini-1.5-flash"
-                    )
-                    alt_plain = alt_full.split("/", 1)[-1]
-                    try:
-                        model = build_model(alt_plain)
-                        response = _call(model)
-                    except Exception as e2:
-                        self.response_ready.emit(
-                            "Quota exceeded or rate limited.\n"
-                            "Try later, shorten prompts, or enable billing.\n"
-                            "Docs: https://ai.google.dev/gemini-api/docs/rate-limits\n\n"
-                            f"Details: {e2}"
-                        )
-                        return
-                else:
-                    self.response_ready.emit(f"Error: {e1}")
-                    return
-            # Safely extract text
-            reply = getattr(response, "text", None)
+            if not _is_ecg_topic(self.prompt):
+                self.response_ready.emit(_ecg_scope_message())
+                return
+
+            api_url = os.getenv("CHATBOT_API_URL", "https://api.groq.com/openai/v1/chat/completions").strip()
+            model_name = os.getenv("CHATBOT_MODEL", "llama-3.1-8b-instant").strip()
+            response = requests.post(
+                api_url,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model_name,
+                    "temperature": 0.2,
+                    "max_tokens": 400,
+                    "messages": [
+                        {"role": "system", "content": ECG_SYSTEM_PROMPT},
+                        {"role": "user", "content": self.prompt},
+                    ],
+                },
+                timeout=45,
+            )
+            if response.status_code != 200:
+                self.response_ready.emit(f"Error: Chatbot request failed ({response.status_code}): {response.text}")
+                return
+            data = response.json()
+            reply = ""
+            choices = data.get("choices") or []
+            if choices:
+                reply = (((choices[0] or {}).get("message") or {}).get("content") or "").strip()
             if not reply:
-                try:
-                    lines = []
-                    for c in getattr(response, "candidates", []) or []:
-                        content = getattr(c, "content", None)
-                        parts = getattr(content, "parts", []) if content else []
-                        for p in parts:
-                            t = getattr(p, "text", None)
-                            if t:
-                                lines.append(t)
-                    reply = "\n".join(lines) if lines else "(No content returned by model)"
-                except Exception:
-                    reply = "(No content returned by model)"
+                reply = "(No content returned by model)"
             self.response_ready.emit(reply)
         except Exception as e:
             self.response_ready.emit(f"Error: {e}")
@@ -174,7 +103,7 @@ class ChatbotThread(QThread):
 class ChatbotDialog(QDialog):
     def __init__(self, parent=None, user_id=None, dashboard_data_func=None):
         super().__init__(parent)
-        self.setWindowTitle("AI Health Chatbot")
+        self.setWindowTitle("ECG AI Chatbot")
         self.setMinimumSize(600, 600)
         self.setStyleSheet("""
             QDialog {
@@ -217,8 +146,7 @@ class ChatbotDialog(QDialog):
                 color: #fff;
             }
         """)
-        # Load Gemini API key from environment (.env: CHATBOT_API_KEY)
-        self.api_key = os.getenv("CHATBOT_API_KEY", "")
+        self.api_key = (os.getenv("GROQ_API_KEY") or os.getenv("CHATBOT_API_KEY", "")).strip()
         self.user_id = user_id or "default"
         self.dashboard_data_func = dashboard_data_func
         layout = QVBoxLayout(self)
@@ -229,9 +157,9 @@ class ChatbotDialog(QDialog):
         icon.setPixmap(QIcon(resource_path('assets/vheart2.png')).pixmap(40, 40))
         header.addWidget(icon)
         title_col = QVBoxLayout()
-        title = QLabel("AI Health Chatbot")
+        title = QLabel("ECG AI Chatbot")
         title.setObjectName("HeaderTitle")
-        desc = QLabel("Ask health questions. Get safe, friendly suggestions. Not a diagnosis.")
+        desc = QLabel("Ask ECG-only questions. Built for healthcare professionals. Not a diagnosis.")
         desc.setObjectName("HeaderDesc")
         title_col.addWidget(title)
         title_col.addWidget(desc)
@@ -243,6 +171,9 @@ class ChatbotDialog(QDialog):
         self.chat_list.setObjectName("ChatList")
         self.chat_list.setSpacing(10)
         self.chat_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.chat_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.chat_list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.chat_list.setWordWrap(True)
         layout.addWidget(self.chat_list, 4)
         # History (collapsible)
         self.history_list = QListWidget()
@@ -267,7 +198,7 @@ class ChatbotDialog(QDialog):
         self.setLayout(layout)
         self.history_list.itemClicked.connect(self.show_history_item)
         if not self.api_key:
-            self.add_message("[Error: Chatbot API key not set. Please set CHATBOT_API_KEY in your .env file.]", sender="AI")
+            self.add_message("[Error: Chatbot API key not set. Please set GROQ_API_KEY in your .env file.]", sender="AI")
             self.send_btn.setEnabled(False)
     def add_message(self, text, sender="user"):
         item = QListWidgetItem()
@@ -278,6 +209,8 @@ class ChatbotDialog(QDialog):
         label.setWordWrap(True)
         label.setFont(QFont("Segoe UI", 13))
         label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        label.setMaximumWidth(self._message_max_width())
         if sender == "user":
             label.setStyleSheet("background: #2453ff; color: white; border-radius: 14px; padding: 10px 16px; margin: 2px 0 2px 40px;")
             bubble_layout.addStretch(1)
@@ -291,6 +224,26 @@ class ChatbotDialog(QDialog):
         self.chat_list.addItem(item)
         self.chat_list.setItemWidget(item, bubble)
         self.chat_list.scrollToBottom()
+
+    def _message_max_width(self):
+        viewport_width = self.chat_list.viewport().width() if hasattr(self, "chat_list") else self.width()
+        return max(260, viewport_width - 80)
+
+    def _rewrap_messages(self):
+        for i in range(self.chat_list.count()):
+            item = self.chat_list.item(i)
+            widget = self.chat_list.itemWidget(item)
+            if not widget:
+                continue
+            labels = widget.findChildren(QLabel)
+            if not labels:
+                continue
+            labels[0].setMaximumWidth(self._message_max_width())
+            item.setSizeHint(widget.sizeHint())
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._rewrap_messages()
     def load_history(self):
         self.history = []
         if os.path.exists(CHAT_HISTORY_FILE):
@@ -319,6 +272,11 @@ class ChatbotDialog(QDialog):
     def send_message(self):
         user_msg = self.input_box.toPlainText().strip()
         if not user_msg:
+            return
+        if not _is_ecg_topic(user_msg):
+            self.add_message(user_msg, sender="user")
+            self.input_box.clear()
+            self.add_message(_ecg_scope_message(), sender="AI")
             return
         dashboard_info = ""
         if self.dashboard_data_func:

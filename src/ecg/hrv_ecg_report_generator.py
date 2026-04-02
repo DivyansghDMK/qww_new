@@ -3491,7 +3491,7 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     # Right-column morphology values
     rv5          = data.get('rv5', 0.0)
     sv1          = data.get('sv1', 0.0)
-    rv5_sv1_sum  = rv5 + abs(sv1)
+    rv5_sv1_sum  = rv5 - abs(sv1)
     qtcf         = data.get('QTc_Fridericia', 0)
     p_axis       = str(data.get('p_axis',   '--')).replace('°', '')
     qrs_axis_str = str(data.get('qrs_axis', '--')).replace('°', '')

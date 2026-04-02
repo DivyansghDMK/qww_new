@@ -1889,11 +1889,23 @@ class ECGTestPage(QWidget):
             # Filter physiologically reasonable intervals (200-8000 ms = 7.5-300 BPM)
             valid_rr = rr_intervals_ms[(rr_intervals_ms >= 200) & (rr_intervals_ms <= 8000)]
             if len(valid_rr) > 0:
-                # Use median for robustness, but prioritize recent intervals for accuracy
-                # Take last 5 RR intervals if available for more accurate current BPM
-                recent_rr = valid_rr[-5:] if len(valid_rr) > 5 else valid_rr
-                rr_ms = np.median(recent_rr)
-                estimated_bpm = 60000.0 / rr_ms if rr_ms > 0 else 60
+                prior_rr_ms = getattr(self, 'last_rr_interval', 0)
+                has_stable_history = bool(prior_rr_ms and prior_rr_ms > 0)
+                provisional_only = len(valid_rr) < 2
+
+                # Do not let a single early RR interval rewrite the live BPM.
+                # During startup or after a noisy false R-peak, one short RR can briefly
+                # look like 220-280 BPM before the next beats settle. Keep the previous
+                # stable RR if we only have one interval so the UI does not spike.
+                if provisional_only and has_stable_history:
+                    rr_ms = float(prior_rr_ms)
+                    estimated_bpm = 60000.0 / rr_ms if rr_ms > 0 else 60
+                else:
+                    # Use median for robustness, but prioritize recent intervals for accuracy
+                    # Take last 5 RR intervals if available for more accurate current BPM
+                    recent_rr = valid_rr[-5:] if len(valid_rr) > 5 else valid_rr
+                    rr_ms = np.median(recent_rr)
+                    estimated_bpm = 60000.0 / rr_ms if rr_ms > 0 else 60
                 
                 # Debug: Show RR calculation (print once)
                 # if not hasattr(self, '_rr_debug_printed'):

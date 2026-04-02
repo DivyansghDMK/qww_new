@@ -2390,31 +2390,17 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     master_drawing.add(p_qrs_label)
 
     # SECOND COLUMN - RV5/SV1 (SAME LINE AS PR - right column)
-    # Use the same ADC -> mV calibration as the main viewer.
-    adc_midpoint = 2048.0
-    counts_per_mv = 500.0
     rv5_mv = 0.0
     sv1_mv = 0.0
     try:
-        if ecg_test_page is not None and hasattr(ecg_test_page, "data") and len(ecg_test_page.data) > 10:
-            v5_arr = np.asarray(ecg_test_page.data[10], dtype=float)  # V5
-            v1_arr = np.asarray(ecg_test_page.data[6], dtype=float)    # V1
-
-            if v5_arr.size > 10:
-                v5_mv_arr = (v5_arr - adc_midpoint) / counts_per_mv
-                v5_centered = v5_mv_arr - np.mean(v5_mv_arr)
-                rv5_mv = float(np.percentile(v5_centered, 98))
-                rv5_mv = max(0.0, round(rv5_mv, 3))
-
-            if v1_arr.size > 10:
-                v1_mv_arr = (v1_arr - adc_midpoint) / counts_per_mv
-                v1_centered = v1_mv_arr - np.mean(v1_mv_arr)
-                sv1_mv = float(np.percentile(v1_centered, 2))  # keep sign (should be <= 0)
-                if sv1_mv > 0:
-                    sv1_mv = 0.0
-                sv1_mv = round(sv1_mv, 3)
+        if ecg_test_page is not None:
+            from .metrics.intervals import calculate_rv5_sv1_from_test_page
+            rv5_calc, sv1_calc = calculate_rv5_sv1_from_test_page(ecg_test_page)
+            if rv5_calc is not None and rv5_calc > 0:
+                rv5_mv = round(float(rv5_calc), 3)
+            if sv1_calc is not None and sv1_calc != 0.0:
+                sv1_mv = round(float(sv1_calc), 3)
     except Exception:
-        # Keep defaults (0.0) if RV5/SV1 cannot be computed.
         pass
 
     rv5_sv_label = String(
@@ -2427,7 +2413,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     # SECOND COLUMN - RV5+SV1 (SAME LINE AS QRS - right column) - DUMMY LABEL
     rv5_sv1_sum_label = String(
         240, 700,
-        f"RV5+SV1 : {(rv5_mv + abs(sv1_mv)):.3f} mV",
+        f"RV5+SV1 : {(rv5_mv - abs(sv1_mv)):.3f} mV",
         fontSize=10, fontName="Helvetica", fillColor=colors.black
     )
     master_drawing.add(rv5_sv1_sum_label)
@@ -3892,29 +3878,24 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     # ==================== CALCULATE RV5/SV1, QTcF, P/QRS/T AXES FROM ECG DATA ====================
     import math as _math
 
-    # --- RV5 and SV1 from saved lead data ---
+    # --- RV5 and SV1 from raw ECG graph data ---
     rv5_mv = 0.0
     sv1_mv = 0.0
     try:
-        adc_per_mv_v5 = ADC_PER_BOX_CONFIG.get('V5', 6400.0) / max(1e-6, wave_gain_mm_mv)
-        adc_per_mv_v1 = ADC_PER_BOX_CONFIG.get('V1', 6400.0) / max(1e-6, wave_gain_mm_mv)
-        # V5 RV5 = max R-wave amplitude (positive peak above baseline)
-        if 'V5' in v_leads_data and len(v_leads_data['V5']) > 0:
-            v5_arr = v_leads_data['V5'].astype(float)
-            v5_centered = v5_arr - np.mean(v5_arr)
-            rv5_mv = float(np.percentile(v5_centered, 98)) / adc_per_mv_v5
-            rv5_mv = max(0.0, round(rv5_mv, 3))
-        # V1 SV1 = depth of S-wave (negative deflection below baseline)
-        if 'V1' in v_leads_data and len(v_leads_data['V1']) > 0:
-            v1_arr = v_leads_data['V1'].astype(float)
-            v1_centered = v1_arr - np.mean(v1_arr)
-            sv1_raw = float(np.percentile(v1_centered, 2))  # most negative = S depth
-            sv1_mv = round(sv1_raw / adc_per_mv_v1, 3)  # keep sign (negative = S-wave)
+        if ecg_test_page is not None:
+            from .metrics.intervals import calculate_rv5_sv1_from_test_page
+            rv5_calc, sv1_calc = calculate_rv5_sv1_from_test_page(ecg_test_page)
+            if rv5_calc is not None and rv5_calc > 0:
+                rv5_mv = round(float(rv5_calc), 3)
+            if sv1_calc is not None and sv1_calc != 0.0:
+                sv1_mv = round(float(sv1_calc), 3)
+        elif 'V5' in v_leads_data and 'V1' in v_leads_data:
+            print(" Hyperkalemia report RV5/SV1 falling back to saved lead data because live ECG page is unavailable")
         print(f" Calculated RV5={rv5_mv:.3f} mV, SV1={sv1_mv:.3f} mV")
     except Exception as _err:
         print(f" RV5/SV1 calc error: {_err}")
 
-    rv5_sv1_sum = round(rv5_mv + sv1_mv, 3)
+    rv5_sv1_sum = round(rv5_mv - abs(sv1_mv), 3)
 
     # --- QTcF (Fridericia) = QT / RR^(1/3) ---
     qtcf_ms = 0

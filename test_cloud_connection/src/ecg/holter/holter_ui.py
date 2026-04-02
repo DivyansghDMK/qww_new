@@ -40,9 +40,9 @@ from PyQt5.QtWidgets import (
     QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView,
     QSizePolicy, QScrollArea, QGridLayout, QSpinBox, QMessageBox,
     QFileDialog, QApplication, QProgressBar, QSplitter, QTextEdit,
-    QAbstractItemView, QToolButton, QButtonGroup
+    QAbstractItemView, QToolButton, QButtonGroup, QRubberBand
 )
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread, QPointF
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread, QPointF, QRect
 from PyQt5.QtGui import QFont, QColor, QPalette, QPainter, QPen, QBrush, QPixmap
 
 try:
@@ -53,15 +53,15 @@ except Exception:
     HAS_PG = False
 
 # ── Colour palette — strict Black & Green ────────────────────────────────────
-COL_GREEN     = "#00FF00"
-COL_GREEN_DRK = "#004400"
-COL_GREEN_MID = "#00AA00"
-COL_BLACK     = "#000000"
-COL_DARK      = "#0A0A0A"
-COL_GRAY      = "#1A1A1A"
-COL_BG        = "#000000"
-COL_TEXT      = "#00FF00"
-COL_WHITE     = "#FFFFFF"
+COL_GREEN     = "#111111"
+COL_GREEN_DRK = "#D6D6D6"
+COL_GREEN_MID = "#666666"
+COL_BLACK     = "#FFFFFF"
+COL_DARK      = "#F7F7F7"
+COL_GRAY      = "#EFEFEF"
+COL_BG        = "#FFFFFF"
+COL_TEXT      = "#111111"
+COL_WHITE     = "#111111"
 COL_YELLOW    = "#FFFF00"
 COL_RED       = "#FF4444"
 
@@ -671,13 +671,13 @@ class HolterReplayPanel(QWidget):
         # CH1 / CH2 / CH3 strips
         self._ch_strips = []
         for i in range(12):
-            strip = ECGStripCanvas(height=60, color="#00FF00", pen_width=0.7)
+            strip = ECGStripCanvas(height=60, color="#000000", pen_width=0.5)
             strip.set_gain(1.0)
             self._ch_strips.append(strip)
             ecg_right_layout.addWidget(strip)
 
         # Mini overview strip at bottom
-        self._mini_strip = ECGStripCanvas(height=40, color="#00AA00")
+        self._mini_strip = ECGStripCanvas(height=40, color="#000000", pen_width=0.5)
         ecg_right_layout.addWidget(self._mini_strip)
         top_splitter.addWidget(ecg_right)
         top_splitter.setSizes([300, 700])
@@ -762,7 +762,7 @@ class HolterReplayPanel(QWidget):
         toolbar_layout.setSpacing(4)
         self._tool_btns = {}
         for tool in ["Patient information", "Full Disc.", "Goto Template", "Measuring Ruler",
-                     "Parallel Ruler", "Magnifying Glass", "Gain Settings",
+                     "Parallel Ruler", "Gain Settings",
                      "Paper speed:25mm/s", "Add Event(space)", "Adjust strip position", "Strip Length:7s"]:
             tbtn = QPushButton(tool)
             tbtn.setStyleSheet(f"QPushButton{{background:{COL_DARK};color:{COL_GREEN};border:1px solid {COL_GREEN_DRK};"
@@ -804,7 +804,7 @@ class HolterReplayPanel(QWidget):
             if btn: btn.setText(f"Strip Length:{val}s")
             return
 
-        mode = tool_name if tool_name in ["Measuring Ruler", "Parallel Ruler", "Magnifying Glass"] else "Normal"
+        mode = tool_name if tool_name in ["Measuring Ruler", "Parallel Ruler"] else "Normal"
         for strip in self._strip_labels:
             if hasattr(strip, 'set_mode'):
                 strip.set_mode(mode)
@@ -938,7 +938,7 @@ class LorenzCanvas(QWidget):
 
 class ECGStripCanvas(QWidget):
     """Simple ECG strip renderer with interactive measurement tools."""
-    def __init__(self, parent=None, height: int = 80, color: str = "#00FF00", pen_width: float = 0.7):
+    def __init__(self, parent=None, height: int = 80, color: str = "#000000", pen_width: float = 0.5):
         super().__init__(parent)
         self._data = np.zeros(200)
         self._color = color
@@ -951,95 +951,117 @@ class ECGStripCanvas(QWidget):
         self._mode = "Normal"
         self._start_pos = None
         self._curr_pos = None
+        self._paint_in_progress = False
+        self._rubber_band_origin = None
+        self._rubber_band = QRubberBand(QRubberBand.Rectangle, self)
+        self._rubber_band.hide()
+
+    def _safe_update(self):
+        """Queue a repaint safely even if a paint event is already running."""
+        if self._paint_in_progress:
+            QTimer.singleShot(0, self.update)
+        else:
+            self.update()
 
     def set_gain(self, gain: float):
         self._gain = gain
-        self.update()
+        self._safe_update()
 
     def set_paper_speed(self, speed: int):
         self._speed = speed
-        self.update()
+        self._safe_update()
 
     def set_mode(self, mode: str):
         self._mode = mode
         self._start_pos = None
         self._curr_pos = None
-        self.update()
+        self._rubber_band_origin = None
+        self._rubber_band.hide()
+        self._safe_update()
 
     def set_data(self, *args):
         if len(args) == 2:
             self._data = np.asarray(args[1], dtype=float)
         elif len(args) == 1:
             self._data = np.asarray(args[0], dtype=float)
-        self.update()
+        self._safe_update()
 
     def mousePressEvent(self, event):
         if self._mode != "Normal":
             self._start_pos = event.pos()
             self._curr_pos = event.pos()
-            self.update()
+            if self._mode == "Magnifying Glass":
+                self._rubber_band_origin = event.pos()
+                self._rubber_band.setGeometry(QRect(self._rubber_band_origin, self._rubber_band_origin))
+                self._rubber_band.show()
+            else:
+                self._safe_update()
 
     def mouseMoveEvent(self, event):
         if self._mode != "Normal" and self._start_pos is not None:
             self._curr_pos = event.pos()
-            self.update()
+            if self._mode == "Magnifying Glass" and self._rubber_band_origin is not None:
+                self._rubber_band.setGeometry(QRect(self._rubber_band_origin, event.pos()).normalized())
+            else:
+                self._safe_update()
 
     def mouseReleaseEvent(self, event):
         if self._mode == "Magnifying Glass":
             self._start_pos = None
             self._curr_pos = None
-            self.update()
+            self._rubber_band_origin = None
+            self._rubber_band.hide()
+            self._safe_update()
 
     def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor(COL_BLACK))
-        grid_pen = QPen(QColor(COL_GREEN_DRK))
-        grid_pen.setWidth(1)
-        painter.setPen(grid_pen)
-        w, h = self.width(), self.height()
-        for gx in range(0, w, 20):
-            painter.drawLine(gx, 0, gx, h)
-        for gy in range(0, h, 20):
-            painter.drawLine(0, gy, w, gy)
+        self._paint_in_progress = True
+        try:
+            painter = QPainter(self)
+            painter.fillRect(self.rect(), QColor(COL_BLACK))
+            grid_pen = QPen(QColor(COL_GREEN_DRK))
+            grid_pen.setWidth(1)
+            painter.setPen(grid_pen)
+            w, h = self.width(), self.height()
+            for gx in range(0, w, 20):
+                painter.drawLine(gx, 0, gx, h)
+            for gy in range(0, h, 20):
+                painter.drawLine(0, gy, w, gy)
 
-        if self._data.size < 2:
-            return
-        d = self._data
-        mn, mx = 0, 4096
-        rng = 4096
-        
-        pen = QPen(QColor(self._color))
-        pen.setWidthF(self._pen_width)
-        painter.setPen(pen)
-        x_scale = w / (len(d) - 1)
-        for i in range(1, len(d)):
-            x1 = int((i - 1) * x_scale)
-            y1 = int(h - (d[i-1] - mn) / rng * h)
-            x2 = int(i * x_scale)
-            y2 = int(h - (d[i] - mn) / rng * h)
-            painter.drawLine(x1, y1, x2, y2)
+            if self._data.size < 2:
+                return
+            d = self._data
+            mn, mx = 0, 4096
+            rng = 4096
+            
+            pen = QPen(QColor(self._color))
+            pen.setWidthF(self._pen_width)
+            painter.setPen(pen)
+            x_scale = w / (len(d) - 1)
+            for i in range(1, len(d)):
+                x1 = int((i - 1) * x_scale)
+                y1 = int(h - (d[i-1] - mn) / rng * h)
+                x2 = int(i * x_scale)
+                y2 = int(h - (d[i] - mn) / rng * h)
+                painter.drawLine(x1, y1, x2, y2)
 
-        if self._mode == "Measuring Ruler" and self._start_pos and self._curr_pos:
-            rpen = QPen(QColor("#00FFFF"), 2, Qt.DashLine)
-            painter.setPen(rpen)
-            painter.drawLine(self._start_pos, self._curr_pos)
-            dx = abs(self._curr_pos.x() - self._start_pos.x())
-            ms = (dx / w) * (len(d) / 500.0) * 1000 if len(d)>0 else 0
-            bpm = 60000 / ms if ms > 0 else 0
-            painter.drawText(self._curr_pos.x(), self._curr_pos.y() - 5, f"{ms:.0f} ms ({bpm:.0f} BPM)")
-        elif self._mode == "Parallel Ruler" and self._start_pos and self._curr_pos:
-            ppen = QPen(QColor("#FFFF00"), 1)
-            painter.setPen(ppen)
-            painter.drawLine(self._start_pos.x(), 0, self._start_pos.x(), h)
-            painter.drawLine(self._curr_pos.x(), 0, self._curr_pos.x(), h)
-            dx = abs(self._curr_pos.x() - self._start_pos.x())
-            ms = (dx / w) * (len(d) / 500.0) * 1000 if len(d)>0 else 0
-            painter.drawText(min(self._start_pos.x(), self._curr_pos.x()) + dx//2, 12, f"{ms:.0f} ms")
-        elif self._mode == "Magnifying Glass" and self._start_pos and self._curr_pos:
-            painter.setPen(QPen(QColor("#FFFFFF"), 1, Qt.DotLine))
-            painter.setBrush(QColor(255, 255, 255, 30))
-            rx, ry, rw, rh = min(self._start_pos.x(), self._curr_pos.x()), min(self._start_pos.y(), self._curr_pos.y()), abs(self._curr_pos.x() - self._start_pos.x()), abs(self._curr_pos.y() - self._start_pos.y())
-            painter.drawRect(rx, ry, rw, rh)
+            if self._mode == "Measuring Ruler" and self._start_pos and self._curr_pos:
+                rpen = QPen(QColor("#00FFFF"), 2, Qt.DashLine)
+                painter.setPen(rpen)
+                painter.drawLine(self._start_pos, self._curr_pos)
+                dx = abs(self._curr_pos.x() - self._start_pos.x())
+                ms = (dx / w) * (len(d) / 500.0) * 1000 if len(d)>0 else 0
+                bpm = 60000 / ms if ms > 0 else 0
+                painter.drawText(self._curr_pos.x(), self._curr_pos.y() - 5, f"{ms:.0f} ms ({bpm:.0f} BPM)")
+            elif self._mode == "Parallel Ruler" and self._start_pos and self._curr_pos:
+                ppen = QPen(QColor("#FFFF00"), 1)
+                painter.setPen(ppen)
+                painter.drawLine(self._start_pos.x(), 0, self._start_pos.x(), h)
+                painter.drawLine(self._curr_pos.x(), 0, self._curr_pos.x(), h)
+                dx = abs(self._curr_pos.x() - self._start_pos.x())
+                ms = (dx / w) * (len(d) / 500.0) * 1000 if len(d)>0 else 0
+                painter.drawText(min(self._start_pos.x(), self._curr_pos.x()) + dx//2, 12, f"{ms:.0f} ms")
+        finally:
+            self._paint_in_progress = False
 
 
 # ══════════════════════════════════════════════════════════════════════════════

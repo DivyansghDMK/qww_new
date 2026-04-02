@@ -222,3 +222,71 @@ def calculate_rv5_sv1_from_median(data: list, r_peaks: np.ndarray,
     except Exception as e:
         print(f" Error calculating RV5/SV1 from median: {e}")
         return None, None
+
+
+def calculate_rv5_sv1_from_test_page(ecg_test_page) -> Tuple[Optional[float], Optional[float]]:
+    """
+    Measure RV5/SV1 directly from the report's raw ECG page data.
+
+    The preferred path is the page's own median-beat helper when available.
+    Otherwise, detect shared R-peaks from Lead II on the last 10 seconds of
+    raw data and reuse the standardized median-beat measurement logic.
+    """
+    try:
+        if ecg_test_page is None or not hasattr(ecg_test_page, "data"):
+            return None, None
+
+        if hasattr(ecg_test_page, "calculate_rv5_sv1_from_median"):
+            try:
+                rv5_mv, sv1_mv = ecg_test_page.calculate_rv5_sv1_from_median()
+                if rv5_mv is not None or sv1_mv is not None:
+                    return rv5_mv, sv1_mv
+            except Exception as e:
+                print(f" Error using page RV5/SV1 helper: {e}")
+
+        data = getattr(ecg_test_page, "data", None)
+        if not data or len(data) <= 10:
+            return None, None
+
+        fs = 500.0
+        if hasattr(ecg_test_page, "sampler") and hasattr(ecg_test_page.sampler, "sampling_rate"):
+            sampling_rate = getattr(ecg_test_page.sampler, "sampling_rate", None)
+            if sampling_rate:
+                fs = float(sampling_rate)
+
+        window = max(1, int(round(10.0 * fs)))
+
+        def _last_segment(arr):
+            arr = np.asarray(arr, dtype=float)
+            if arr.size > window:
+                arr = arr[-window:]
+            return arr
+
+        lead_ii = _last_segment(data[1]) if len(data) > 1 else None
+        trimmed_data = [_last_segment(lead) for lead in data]
+
+        if lead_ii is None or lead_ii.size < int(2 * fs):
+            return None, None
+
+        nyq = fs / 2.0
+        b, a = butter(2, [max(0.5 / nyq, 0.001), min(40.0 / nyq, 0.99)], btype="band")
+        lead_ii_filt = filtfilt(b, a, lead_ii)
+        env = np.convolve(
+            np.square(np.diff(lead_ii_filt)),
+            np.ones(max(1, int(0.15 * fs))) / max(1, int(0.15 * fs)),
+            mode="same",
+        )
+        r_peaks, _ = find_peaks(
+            env,
+            height=np.mean(env) + 0.5 * np.std(env),
+            distance=max(1, int(0.6 * fs)),
+        )
+
+        if len(r_peaks) < 8:
+            return None, None
+
+        return calculate_rv5_sv1_from_median(trimmed_data, r_peaks, fs)
+
+    except Exception as e:
+        print(f" Error calculating RV5/SV1 from test page: {e}")
+        return None, None

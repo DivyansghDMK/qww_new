@@ -13,9 +13,9 @@ from PyQt5.QtWidgets import (
     QLineEdit, QComboBox, QLabel, QDateEdit, QFrame,
     QScrollArea, QWidget, QProgressDialog, QFormLayout,
     QTextEdit, QCheckBox, QGridLayout, QListWidget,
-    QListWidgetItem, QAbstractItemView, QGroupBox, QStackedWidget,
+    QListWidgetItem, QAbstractItemView, QGroupBox, QStackedWidget, QHeaderView,
 )
-import sys, os, json, datetime, shutil, smtplib, traceback, tempfile
+import sys, os, json, datetime, shutil, smtplib, traceback, tempfile, re
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email.mime.text import MIMEText
@@ -29,7 +29,7 @@ except ImportError:
     sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
     from utils.cloud_uploader import get_cloud_uploader
 
-from PyQt5.QtCore import Qt, QDate, QThread, pyqtSignal, QSize
+from PyQt5.QtCore import Qt, QDate, QThread, pyqtSignal, QSize, QEvent
 from PyQt5.QtGui import QFont, QPixmap, QColor, QImage
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -39,7 +39,20 @@ REPORTS_INDEX_FILE = os.path.join(BASE_DIR, "reports", "index.json")
 REPORTS_DIR = os.path.join(BASE_DIR, "reports")
 BACKEND_API_URL = "https://your-backend-api.com/api/reports"
 API_TIMEOUT = 30
-PUBLIC_REVIEWED_REPORTS_URL = "https://6jhix49qt6.execute-api.us-east-1.amazonaws.com/api/public/reviewed-reports"
+PUBLIC_REVIEWED_REPORTS_URL = os.getenv(
+    "REVIEWED_REPORTS_API_URL",
+    "https://6jhix49qt6.execute-api.us-east-1.amazonaws.com/api/public/reviewed-reports",
+).strip()
+PUBLIC_REVIEWED_REPORTS_API_KEY = (
+    os.getenv("PUBLIC_API_KEY") or os.getenv("REVIEWED_REPORTS_API_KEY", "")
+).strip()
+
+
+def _reviewed_reports_headers() -> dict:
+    headers = {}
+    if PUBLIC_REVIEWED_REPORTS_API_KEY:
+        headers["x-api-key"] = PUBLIC_REVIEWED_REPORTS_API_KEY
+    return headers
 
 # ── pymupdf (fitz) optional import ─────────────────────────────────────────
 try:
@@ -78,24 +91,17 @@ class PdfPreviewPanel(QWidget):
         self._page_index = 0
         self._total_pages = 0
         self._zoom = 1.4
+        self._page_pixmap = QPixmap()
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(4)
+        root.setSpacing(8)
 
         # ── toolbar ────────────────────────────────────────────────────────
         bar = QHBoxLayout()
-        self.prev_btn = QPushButton("◀ Prev")
-        self.prev_btn.setFixedWidth(70)
-        self.prev_btn.clicked.connect(self._prev_page)
-
         self.page_label = QLabel("No report")
         self.page_label.setAlignment(Qt.AlignCenter)
         self.page_label.setStyleSheet("font-weight:700;color:#111;")
-
-        self.next_btn = QPushButton("Next ▶")
-        self.next_btn.setFixedWidth(70)
-        self.next_btn.clicked.connect(self._next_page)
 
         self.zoom_in = QPushButton("＋")
         self.zoom_in.setFixedWidth(32)
@@ -105,19 +111,24 @@ class PdfPreviewPanel(QWidget):
         self.zoom_out.setFixedWidth(32)
         self.zoom_out.clicked.connect(lambda: self._set_zoom(max(0.4, self._zoom - 0.2)))
 
-        for w in (self.prev_btn, self.page_label, self.next_btn, self.zoom_out, self.zoom_in):
+        bar.addStretch(1)
+        for w in (self.page_label, self.zoom_out, self.zoom_in):
             bar.addWidget(w)
+        bar.addStretch(1)
         root.addLayout(bar)
 
         # ── scroll area with page image ────────────────────────────────────
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setAlignment(Qt.AlignCenter)
-        self.scroll.setStyleSheet("background:#f4f4f4;border:1px solid #d9d9d9;")
+        self.scroll.viewport().installEventFilter(self)
+        self.scroll.setStyleSheet("background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;")
 
         self.img_label = QLabel()
         self.img_label.setAlignment(Qt.AlignCenter)
         self.img_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.img_label.setMinimumSize(240, 240)
+        self.img_label.setWordWrap(True)
         self.scroll.setWidget(self.img_label)
         root.addWidget(self.scroll, 1)
 
@@ -127,7 +138,28 @@ class PdfPreviewPanel(QWidget):
     def load_pdf(self, path: str):
         self._pdf_path = path
         self._page_index = 0
-        if _HAS_FITZ and path and os.path.exists(path):
+        if not path or not os.path.exists(path):
+            self._total_pages = 0
+            self._page_pixmap = QPixmap()
+            self.img_label.setPixmap(QPixmap())
+            self.img_label.setText("Report file not found.")
+            self.img_label.setStyleSheet("color:#7c2d12;font-size:14px;font-weight:600;")
+            self._update_nav()
+            return
+
+        if not _HAS_FITZ:
+            self._total_pages = 0
+            self._page_pixmap = QPixmap()
+            self.img_label.setPixmap(QPixmap())
+            self.img_label.setText(
+                "Preview renderer is not installed on this system.\n"
+                "Install `pymupdf` to enable in-app preview, or use 'Open Selected Report'."
+            )
+            self.img_label.setStyleSheet("color:#7c2d12;font-size:13px;font-weight:600;")
+            self._update_nav()
+            return
+
+        if path and os.path.exists(path):
             try:
                 doc = _fitz.open(path)
                 self._total_pages = len(doc)
@@ -142,37 +174,53 @@ class PdfPreviewPanel(QWidget):
         self._pdf_path = None
         self._page_index = 0
         self._total_pages = 0
+        self._page_pixmap = QPixmap()
         self.img_label.setPixmap(QPixmap())
-        self.img_label.setText("Select a report to preview")
-        self.img_label.setStyleSheet("color:#666;font-size:15px;")
+        self.img_label.setText("Select a report from history to preview")
+        self.img_label.setStyleSheet("color:#7c2d12;font-size:15px;font-weight:600;")
         self._update_nav()
 
     # ── private ────────────────────────────────────────────────────────────
+    def eventFilter(self, obj, event):
+        if obj is self.scroll.viewport() and event.type() == QEvent.Resize:
+            self._apply_scaled_pixmap()
+        return super().eventFilter(obj, event)
+
     def _render(self):
         if not self._pdf_path or self._total_pages == 0:
             self.clear()
             return
         px = _pdf_page_to_pixmap(self._pdf_path, self._page_index, self._zoom)
         if px.isNull():
+            self._page_pixmap = QPixmap()
             if not _HAS_FITZ:
-                self.img_label.setText("Install pymupdf for in-app preview\npip install pymupdf")
+                self.img_label.setText("In-app PDF preview is unavailable on this system.\nUse 'Open Selected Report' or double-click a row.")
             else:
                 self.img_label.setText("Could not render page.")
-            self.img_label.setStyleSheet("color:#555;font-size:13px;")
+            self.img_label.setStyleSheet("color:#7c2d12;font-size:13px;font-weight:600;")
         else:
-            self.img_label.setPixmap(px)
+            self._page_pixmap = px
+            self.img_label.setText("")
             self.img_label.setStyleSheet("")
+            self._apply_scaled_pixmap()
         self._update_nav()
 
-    def _prev_page(self):
-        if self._page_index > 0:
-            self._page_index -= 1
-            self._render()
-
-    def _next_page(self):
-        if self._page_index < self._total_pages - 1:
-            self._page_index += 1
-            self._render()
+    def _apply_scaled_pixmap(self):
+        if self._page_pixmap.isNull():
+            self.img_label.setPixmap(QPixmap())
+            return
+        viewport_size = self.scroll.viewport().size()
+        if viewport_size.width() <= 0 or viewport_size.height() <= 0:
+            self.img_label.setPixmap(self._page_pixmap)
+            return
+        scaled = self._page_pixmap.scaled(
+            max(100, viewport_size.width() - 24),
+            max(100, viewport_size.height() - 24),
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation,
+        )
+        self.img_label.setPixmap(scaled)
+        self.img_label.resize(scaled.size())
 
     def _set_zoom(self, z):
         self._zoom = z
@@ -180,10 +228,12 @@ class PdfPreviewPanel(QWidget):
 
     def _update_nav(self):
         has = self._total_pages > 0
-        self.prev_btn.setEnabled(has and self._page_index > 0)
-        self.next_btn.setEnabled(has and self._page_index < self._total_pages - 1)
+        self.zoom_in.setEnabled(_HAS_FITZ and has)
+        self.zoom_out.setEnabled(_HAS_FITZ and has)
         if has:
             self.page_label.setText(f"Page {self._page_index+1} / {self._total_pages}")
+        elif self._pdf_path and os.path.exists(self._pdf_path) and not _HAS_FITZ:
+            self.page_label.setText("Preview unavailable")
         else:
             self.page_label.setText("No report loaded")
 
@@ -342,101 +392,101 @@ class HistoryWindow(QDialog):
     # ── black/white clean theme ─────────────────────────────────────────────
     STYLE = """
         QDialog{
-            background:#ffffff;
-            color:#111111;
+            background:#fffaf5;
+            color:#1f2937;
             font-family:'Segoe UI',Helvetica,Arial,sans-serif;
         }
         QTableWidget{
-            border:1px solid #d9d9d9;
+            border:1px solid #fed7aa;
             background:#ffffff;
-            gridline-color:#ececec;
-            selection-background-color:#111111;
-            selection-color:#ffffff;
-            alternate-background-color:#fafafa;
+            gridline-color:#ffedd5;
+            selection-background-color:#ffedd5;
+            selection-color:#9a3412;
+            alternate-background-color:#fff7ed;
         }
         QTableWidget::item{
             padding:6px 8px;
-            border-bottom:1px solid #efefef;
-            color:#111111;
+            border-bottom:1px solid #ffedd5;
+            color:#1f2937;
         }
         QHeaderView::section{
             background:#111111;
             color:#ffffff;
             font-weight:700;
             font-size:12px;
-            padding:8px 6px;
+            padding:10px 6px;
             border:none;
             border-right:1px solid #2a2a2a;
         }
         QPushButton{
-            background:#111111;
+            background:#f97316;
             color:#ffffff;
-            border:1px solid #111111;
-            border-radius:6px;
-            padding:7px 14px;
+            border:1px solid #f97316;
+            border-radius:10px;
+            padding:8px 16px;
             font-weight:600;
             font-size:12px;
         }
-        QPushButton:hover{background:#000000;}
-        QPushButton:pressed{background:#2a2a2a;}
+        QPushButton:hover{background:#ea580c;}
+        QPushButton:pressed{background:#c2410c;}
         QPushButton#btn_secondary,
         QPushButton#btn_close{
             background:#ffffff;
-            color:#111111;
-            border:1px solid #111111;
+            color:#9a3412;
+            border:1px solid #fdba74;
         }
         QPushButton#btn_secondary:hover,
-        QPushButton#btn_close:hover{background:#f3f3f3;}
+        QPushButton#btn_close:hover{background:#fff7ed;}
         QLineEdit,QComboBox,QDateEdit{
-            border:1px solid #cfcfcf;
-            border-radius:6px;
+            border:1px solid #fdba74;
+            border-radius:10px;
             padding:6px 10px;
             background:#ffffff;
-            color:#111111;
+            color:#1f2937;
             font-size:13px;
         }
-        QLineEdit:focus,QComboBox:focus,QDateEdit:focus{border-color:#111111;}
+        QLineEdit:focus,QComboBox:focus,QDateEdit:focus{border-color:#f97316;}
         QComboBox::drop-down{border:none;width:22px;}
-        QLabel{color:#111111;font-weight:600;}
+        QLabel{color:#1f2937;font-weight:600;}
         QGroupBox{
-            border:1px solid #d5d5d5;
-            border-radius:8px;
+            border:1px solid #fed7aa;
+            border-radius:14px;
             background:#ffffff;
             margin-top:12px;
-            padding:10px 8px 8px 8px;
+            padding:12px 10px 10px 10px;
             font-weight:bold;
         }
         QGroupBox::title{
-            color:#111111;
+            color:#9a3412;
             font-weight:700;
             subcontrol-origin:margin;
             left:12px;
             padding:0 4px;
         }
-        QSplitter::handle{background:#d0d0d0;width:2px;}
-        QScrollBar:vertical{background:#f5f5f5;width:10px;border-radius:5px;}
-        QScrollBar::handle:vertical{background:#9b9b9b;border-radius:5px;min-height:20px;}
-        QScrollBar::handle:vertical:hover{background:#7d7d7d;}
+        QSplitter::handle{background:#fed7aa;width:3px;}
+        QScrollBar:vertical{background:#fff7ed;width:10px;border-radius:5px;}
+        QScrollBar::handle:vertical{background:#fdba74;border-radius:5px;min-height:20px;}
+        QScrollBar::handle:vertical:hover{background:#fb923c;}
         QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0;}
         QTabBar::tab{
-            background:#f3f3f3;
-            color:#111111;
-            border:1px solid #d5d5d5;
+            background:#fff7ed;
+            color:#9a3412;
+            border:1px solid #fed7aa;
             border-bottom:none;
-            border-radius:5px 5px 0 0;
-            padding:7px 18px;
+            border-radius:10px 10px 0 0;
+            padding:8px 18px;
             font-weight:600;
             font-size:12px;
             margin-right:2px;
-            min-width:100px;
+            min-width:120px;
         }
         QTabBar::tab:selected{background:#111111;color:#ffffff;}
-        QTabBar::tab:hover:!selected{background:#e8e8e8;}
-        QTabWidget::pane{border:1px solid #d5d5d5;border-radius:0 6px 6px 6px;background:#ffffff;}
-        QListWidget{border:1px solid #d5d5d5;border-radius:5px;background:#ffffff;}
-        QListWidget::item{padding:6px 10px;color:#111111;}
+        QTabBar::tab:hover:!selected{background:#ffedd5;}
+        QTabWidget::pane{border:1px solid #fed7aa;border-radius:0 12px 12px 12px;background:#ffffff;}
+        QListWidget{border:1px solid #fed7aa;border-radius:10px;background:#ffffff;}
+        QListWidget::item{padding:6px 10px;color:#1f2937;}
         QListWidget::item:selected{background:#111111;color:#ffffff;}
-        QListWidget::item:hover:!selected{background:#f2f2f2;}
+        QListWidget::item:hover:!selected{background:#fff7ed;}
     """
 
     def __init__(self, parent=None, username=None):
@@ -469,14 +519,14 @@ class HistoryWindow(QDialog):
     def _build_ui(self):
         from PyQt5.QtWidgets import QTabWidget
         root = QVBoxLayout(self)
-        root.setContentsMargins(12, 10, 12, 10)
+        root.setContentsMargins(16, 14, 16, 14)
         root.setSpacing(0)
 
         # ── Header bar ─────────────────────────────────────────────────────
         header = QFrame()
-        header.setFixedHeight(54)
+        header.setFixedHeight(72)
         header.setStyleSheet(
-            "QFrame{background:#111111;border-radius:8px 8px 0 0;}"
+            "QFrame{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #111111,stop:0.55 #1f1f1f,stop:1 #f97316);border-radius:16px 16px 0 0;}"
         )
         hh = QHBoxLayout(header)
         hh.setContentsMargins(18, 0, 18, 0)
@@ -484,10 +534,10 @@ class HistoryWindow(QDialog):
         logo.setStyleSheet("font-size:20px;color:#fff;")
         title_lbl = QLabel("ECG Report History")
         title_lbl.setStyleSheet(
-            "font-size:18px;font-weight:700;color:#fff;letter-spacing:0.5px;"
+            "font-size:20px;font-weight:700;color:#fff;letter-spacing:0.5px;"
         )
-        sub_lbl = QLabel("View, preview and send ECG reports")
-        sub_lbl.setStyleSheet("font-size:11px;color:#d9d9d9;font-weight:400;")
+        sub_lbl = QLabel("Search, preview, open and manage patient ECG reports")
+        sub_lbl.setStyleSheet("font-size:11px;color:#ffedd5;font-weight:500;")
         txt_col = QVBoxLayout()
         txt_col.setSpacing(1)
         txt_col.addWidget(title_lbl)
@@ -498,7 +548,7 @@ class HistoryWindow(QDialog):
         hh.addStretch()
         close_btn = QPushButton("✕  Close")
         close_btn.setObjectName("btn_close")
-        close_btn.setFixedSize(90, 32)
+        close_btn.setFixedSize(98, 36)
         close_btn.clicked.connect(self.close)
         hh.addWidget(close_btn)
         root.addWidget(header)
@@ -506,8 +556,8 @@ class HistoryWindow(QDialog):
         # ── Search bar ─────────────────────────────────────────────────────
         search_frame = self._build_search_bar()
         search_frame.setStyleSheet(
-            "QFrame{background:#ffffff;border:none;"
-            "border-bottom:1px solid #e3e3e3;padding:6px 12px;}"
+            "QFrame{background:#ffffff;border:1px solid #fed7aa;"
+            "border-top:none;border-bottom:none;padding:10px 12px;}"
         )
         root.addWidget(search_frame)
 
@@ -530,20 +580,34 @@ class HistoryWindow(QDialog):
 
         # Tab 2 — Reviewed reports from API
         reviewed_tab = self._build_reviewed_tab()
-        self.tabs.addTab(reviewed_tab, "Reviewed (Cloud)")
+        self.tabs.addTab(reviewed_tab, "Reviewed")
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
         # Right: PDF preview
         preview_group = QGroupBox("  Report Preview")
         pg_layout = QVBoxLayout(preview_group)
-        pg_layout.setContentsMargins(4, 4, 4, 4)
+        pg_layout.setContentsMargins(10, 10, 10, 10)
+        pg_layout.setSpacing(8)
+        preview_hint = QLabel("Single-click a row to preview. Double-click a row to open the report.")
+        preview_hint.setStyleSheet("color:#7c2d12;font-size:11px;font-weight:600;")
+        preview_hint.setWordWrap(True)
+        pg_layout.addWidget(preview_hint)
+        preview_open_btn = QPushButton("Open Selected Report")
+        preview_open_btn.setObjectName("btn_secondary")
+        preview_open_btn.setFixedHeight(34)
+        preview_open_btn.clicked.connect(self._open_in_system)
+        pg_layout.addWidget(preview_open_btn)
         self.preview_panel = PdfPreviewPanel()
         pg_layout.addWidget(self.preview_panel)
 
         self.splitter.addWidget(self.tabs)
         self.splitter.addWidget(preview_group)
+        self.splitter.setChildrenCollapsible(False)
+        self.tabs.setMinimumWidth(520)
+        preview_group.setMinimumWidth(360)
         self.splitter.setStretchFactor(0, 56)
         self.splitter.setStretchFactor(1, 44)
+        self.splitter.setSizes([max(520, int(self.width() * 0.64)), max(360, int(self.width() * 0.36))])
         root.addWidget(self.splitter, 1)
 
     def _on_tab_changed(self, idx):
@@ -608,12 +672,11 @@ class HistoryWindow(QDialog):
 
         # ── info banner ────────────────────────────────────────────────────
         info = QLabel(
-            "Enter doctor name exactly as registered (e.g. Dr_Neha) and click "
-            "'Fetch Reports' to load reviewed ECG reports from the cloud."
+            "Browse reviewed reports by doctor and open the shared report link directly from the list."
         )
         info.setStyleSheet(
-            "background:#e8f0fe;border:1px solid #c5d4f0;border-radius:5px;"
-            "color:#1a2340;font-weight:400;font-size:12px;padding:8px 10px;"
+            "background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;"
+            "color:#7c2d12;font-weight:500;font-size:12px;padding:10px 12px;"
         )
         info.setWordWrap(True)
         layout.addWidget(info)
@@ -623,7 +686,7 @@ class HistoryWindow(QDialog):
         top.setSpacing(8)
 
         dl = QLabel("Doctor:")
-        dl.setStyleSheet("color:#1a73e8;font-size:12px;font-weight:600;")
+        dl.setStyleSheet("color:#9a3412;font-size:12px;font-weight:700;")
 
         # Combo populated from get_available_doctors()
         self.rev_doctor_combo = QComboBox()
@@ -685,14 +748,14 @@ class HistoryWindow(QDialog):
         # ── status bar ─────────────────────────────────────────────────────
         hint_row = QHBoxLayout()
         self.rev_status_lbl = QLabel(
-            "Type a doctor name and press 'Fetch Reports' to load from cloud."
+            "Load a doctor to view reviewed reports."
         )
         self.rev_status_lbl.setStyleSheet(
-            "color:#444;font-size:11px;font-weight:400;"
+            "color:#7c2d12;font-size:11px;font-weight:500;"
         )
         hint_row.addWidget(self.rev_status_lbl, 1)
         hint_lbl = QLabel("Double-click a row to open URL")
-        hint_lbl.setStyleSheet("color:#666;font-size:10px;font-weight:400;")
+        hint_lbl.setStyleSheet("color:#9a3412;font-size:10px;font-weight:600;")
         hint_row.addWidget(hint_lbl)
         layout.addLayout(hint_row)
         return w
@@ -709,8 +772,12 @@ class HistoryWindow(QDialog):
         self.rev_status_lbl.setText(f"Fetching reports for '{doc_name}' from cloud...")
         QApplication.processEvents()
         try:
-            url = f"{PUBLIC_REVIEWED_REPORTS_URL}?doctorName={doc_name}"
-            resp = requests.get(url, timeout=12)
+            resp = requests.get(
+                PUBLIC_REVIEWED_REPORTS_URL,
+                params={"doctor": doc_name},
+                headers=_reviewed_reports_headers(),
+                timeout=12,
+            )
             if resp.status_code != 200:
                 self.rev_status_lbl.setText(
                     f"Cloud API Error: {resp.status_code} - {resp.reason}. Doctor: {doc_name}"
@@ -863,19 +930,60 @@ class HistoryWindow(QDialog):
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.table.setWordWrap(False)
+        self.table.verticalHeader().setVisible(False)
+        self.table.verticalHeader().setDefaultSectionSize(26)
+        self.table.verticalHeader().setMinimumSectionSize(26)
         hh = self.table.horizontalHeader()
         hh.setStretchLastSection(False)
-        hh.setSectionResizeMode(hh.Stretch)
+        self._configure_table_columns()
         self.table.cellClicked.connect(self._on_cell_clicked)
         self.table.cellDoubleClicked.connect(self._on_row_double_clicked)
         self.table.itemSelectionChanged.connect(self._on_selection_changed_preview)
         layout.addWidget(self.table, 1)
 
+    def _configure_table_columns(self):
+        hh = self.table.horizontalHeader()
+        hh.setMinimumSectionSize(52)
+        fixed_columns = {
+            0: 92,   # Date
+            1: 84,   # Time
+            5: 58,   # Age
+            6: 72,   # Gender
+            7: 68,   # Height
+            8: 68,   # Weight
+            9: 90,   # Type
+            10: 86,  # Status
+        }
+        for col in range(self.table.columnCount()):
+            if col in fixed_columns:
+                hh.setSectionResizeMode(col, QHeaderView.Interactive)
+                self.table.setColumnWidth(col, fixed_columns[col])
+            elif col == 4:
+                hh.setSectionResizeMode(col, QHeaderView.Stretch)
+            else:
+                hh.setSectionResizeMode(col, QHeaderView.Interactive)
+        self.table.setColumnWidth(2, 126)
+        self.table.setColumnWidth(3, 96)
+        self.table.setColumnWidth(4, max(140, self.table.viewport().width() // 5))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        try:
+            total_w = max(1, self.width())
+            left_w = max(520, int(total_w * 0.62))
+            right_w = max(360, total_w - left_w - 40)
+            self.splitter.setSizes([left_w, right_w])
+            if hasattr(self, "table"):
+                self._configure_table_columns()
+        except Exception:
+            pass
+
     def _build_action_buttons(self, layout):
         bar = QFrame()
         bar.setStyleSheet(
-            "QFrame{background:#ffffff;border-top:1px solid #e3e3e3;"
-            "border-radius:0 0 8px 8px;padding:4px 2px;}"
+            "QFrame{background:#fffaf5;border-top:1px solid #fed7aa;"
+            "border-radius:0 0 14px 14px;padding:6px 4px;}"
         )
         row = QHBoxLayout(bar)
         row.setContentsMargins(8, 4, 8, 4)
@@ -892,10 +1000,9 @@ class HistoryWindow(QDialog):
 
         btn("Preview", self._preview_selected)
         btn("Email", self._send_email)
-        btn("System Viewer", self._open_in_system, secondary=True)
+        btn("Open Report", self._open_in_system, secondary=True)
         btn("Send for Review", self.send_report_for_review)
         btn("Export All", self.export_all_reports, secondary=True)
-        btn("Cloud Status", self.refresh_reviewed_reports, secondary=True)
         row.addStretch()
 
         layout.addWidget(bar)
@@ -1200,6 +1307,7 @@ class HistoryWindow(QDialog):
         if self.table.item(row, 0):
             self.table.item(row, 0).setData(Qt.UserRole, rf)
         self.table.setRowHeight(row, 26)
+        self._configure_table_columns()
 
     # ── interactions ─────────────────────────────────────────────────────────
     def _on_selection_changed_preview(self):
@@ -1255,20 +1363,22 @@ class HistoryWindow(QDialog):
         self._load_preview_for_row(row, silent=True)
 
     def _on_row_double_clicked(self, row, col):
-        self._preview_selected()
+        self._open_report_for_row(row)
 
     def _get_report_file(self, row) -> str:
         item = self.table.item(row, 0)
         if item:
-            rf = item.data(Qt.UserRole) or ""
-            if rf and os.path.exists(rf):
+            rf = self._resolve_report_path(item.data(Qt.UserRole) or "")
+            if rf:
                 return rf
-        # Try to find by patient name
+
         pi = self.table.item(row, 4)
         di = self.table.item(row, 0)
+        ti = self.table.item(row, 1)
         pname = pi.text().strip() if pi else ""
         date_str = di.text().strip() if di else ""
-        return self._find_report_file(pname, date_str) or ""
+        time_str = ti.text().strip() if ti else ""
+        return self._find_report_file(pname, date_str, time_str) or ""
 
     def _preview_selected(self):
         row = self.table.currentRow()
@@ -1276,6 +1386,17 @@ class HistoryWindow(QDialog):
             QMessageBox.information(self, "Preview", "Select a report row first.")
             return
         self._load_preview_for_row(row, silent=False)
+
+    def _open_report_for_row(self, row: int):
+        rf = self._get_report_file(row)
+        if rf and os.path.exists(rf):
+            self._open_pdf_file(rf)
+            return
+        cloud_url = self._get_cloud_preview_url(row)
+        if cloud_url:
+            webbrowser.open(cloud_url)
+            return
+        QMessageBox.information(self, "Open Report", "No report file or review link is available for this row.")
 
     def _open_in_system(self):
         row = self.table.currentRow()
@@ -1349,26 +1470,87 @@ class HistoryWindow(QDialog):
         self._save_history_to_file()
 
     # ── file helpers ─────────────────────────────────────────────────────────
-    def _find_report_file(self, patient_name, date_str="") -> str:
+    def _resolve_report_path(self, report_path: str) -> str:
+        candidate = (report_path or "").strip()
+        if not candidate:
+            return ""
+
+        normalized = os.path.abspath(candidate)
+        if os.path.exists(normalized):
+            return normalized
+
+        base_name = os.path.basename(candidate)
+        for root_dir in (REPORTS_DIR, os.path.join(BASE_DIR, "recordings")):
+            if not os.path.exists(root_dir):
+                continue
+            for root, _dirs, files in os.walk(root_dir):
+                for fn in files:
+                    if fn.lower() == base_name.lower():
+                        found = os.path.join(root, fn)
+                        if os.path.exists(found):
+                            return found
+        return ""
+
+    def _find_report_file(self, patient_name, date_str="", time_str="") -> str:
         if not os.path.exists(REPORTS_DIR):
             return ""
-        pdfs = [f for f in os.listdir(REPORTS_DIR) if f.lower().endswith(".pdf")]
+
+        pdf_paths = []
+        for root, _dirs, files in os.walk(REPORTS_DIR):
+            for pdf in files:
+                if pdf.lower().endswith(".pdf"):
+                    pdf_paths.append(os.path.join(root, pdf))
+
         pclean = patient_name.replace(" ", "_").replace(",", "").upper()
-        for pdf in pdfs:
-            if pclean and pclean in pdf.upper():
-                return os.path.join(REPORTS_DIR, pdf)
+        for pdf_path in pdf_paths:
+            pdf_name = os.path.basename(pdf_path)
+            if pclean and pclean in pdf_name.upper():
+                return pdf_path
+
+        if date_str and time_str:
+            try:
+                row_dt = datetime.datetime.strptime(
+                    f"{date_str} {time_str}", "%Y-%m-%d %H:%M:%S"
+                )
+                best_match = None
+                best_delta = None
+                for pdf_path in pdf_paths:
+                    match = re.search(
+                        r"(20\d{2})(\d{2})(\d{2})[_-]?(\d{2})(\d{2})(\d{2})",
+                        os.path.basename(pdf_path),
+                    )
+                    if not match:
+                        continue
+                    pdf_dt = datetime.datetime(
+                        int(match.group(1)),
+                        int(match.group(2)),
+                        int(match.group(3)),
+                        int(match.group(4)),
+                        int(match.group(5)),
+                        int(match.group(6)),
+                    )
+                    delta = abs((pdf_dt - row_dt).total_seconds())
+                    if best_delta is None or delta < best_delta:
+                        best_delta = delta
+                        best_match = pdf_path
+                if best_match and best_delta is not None and best_delta <= 5:
+                    return best_match
+            except Exception:
+                pass
+
         if date_str:
             try:
                 dp = datetime.datetime.strptime(date_str, "%Y-%m-%d").strftime("%Y%m%d")
-                for pdf in pdfs:
-                    if dp in pdf:
-                        return os.path.join(REPORTS_DIR, pdf)
+                for pdf_path in pdf_paths:
+                    if dp in os.path.basename(pdf_path):
+                        return pdf_path
             except Exception:
                 pass
-        ecg = [f for f in pdfs if f.startswith("ECG_Report_")]
+
+        ecg = [f for f in pdf_paths if os.path.basename(f).startswith("ECG_Report_")]
         if ecg:
-            ecg.sort(key=lambda f: os.path.getmtime(os.path.join(REPORTS_DIR, f)), reverse=True)
-            return os.path.join(REPORTS_DIR, ecg[0])
+            ecg.sort(key=lambda f: os.path.getmtime(f), reverse=True)
+            return ecg[0]
         return ""
 
     def _open_pdf_file(self, path):
@@ -1439,7 +1621,11 @@ class HistoryWindow(QDialog):
 
     def refresh_reviewed_reports(self):
         try:
-            resp = requests.get(PUBLIC_REVIEWED_REPORTS_URL, timeout=10)
+            resp = requests.get(
+                PUBLIC_REVIEWED_REPORTS_URL,
+                headers=_reviewed_reports_headers(),
+                timeout=10,
+            )
             if resp.status_code != 200:
                 QMessageBox.information(self, "Cloud", "Could not fetch reviewed reports.")
                 return
@@ -1680,8 +1866,12 @@ class ReviewedReportsDialog(QDialog):
         dname = self.doctor_combo.currentText().strip()
         rows = []
         try:
-            resp = requests.get(PUBLIC_REVIEWED_REPORTS_URL,
-                                params={"doctorName": dname} if dname else {}, timeout=10)
+            resp = requests.get(
+                PUBLIC_REVIEWED_REPORTS_URL,
+                params={"doctor": dname} if dname else {},
+                headers=_reviewed_reports_headers(),
+                timeout=10,
+            )
             if resp.status_code == 200:
                 data = resp.json() if "application/json" in resp.headers.get("Content-Type", "") else []
                 if isinstance(data, list):

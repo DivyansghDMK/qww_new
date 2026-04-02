@@ -28,5 +28,13 @@
     "phone": "897654",
     "contact": "897654",
     "signup_date": "2026-03-27"
+  },
+  "9560350477": {
+    "signup_date": "2026-04-02",
+    "phone": "9560350477",
+    "contact": "9560350477",
+    "auth_provider": "ecg_otp_backend",
+    "jwt_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJtb2JpbGVfbm8iOiI5NTYwMzUwNDc3IiwiaWF0IjoxNzc1MTI1ODA0LCJleHAiOjE3NzU3MzA2MDR9.wMYmzsxNTWJg42k_YiSdNh3BakGD28ovseGJekITuus",
+    "last_phone_login_at": "2026-04-02T16:00:05.203795"
   }
 }

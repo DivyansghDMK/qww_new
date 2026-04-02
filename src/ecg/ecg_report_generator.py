@@ -34,6 +34,9 @@ ECG_SMALL_BOX_MM = ECG_LARGE_BOX_MM / 5.0
 ECG_SPEED_SCALE = ECG_LARGE_BOX_MM / ECG_BASE_BOX_MM
 STANDARD_REPORT_WINDOW_SECONDS = 10.0
 REPORT_STRIP_WIDTH_POINTS = 460
+# Rendering-only trim so a waveform currently spanning ~13 large boxes
+# prints closer to the requested 12 large boxes without changing metric math.
+REPORT_WAVEFORM_ADC_DIVISOR = 1083.3333333333333
 
 
 def _samples_for_standard_report_window(sampling_rate):
@@ -232,13 +235,12 @@ def _build_conservative_conclusions(metrics, settings_manager=None, sampling_rat
         else:
             qtc_line += f"; QTcF (Fridericia): {qtc_frid:.0f} ms ({qtc_sec:.3f} s)"  # GE/Philips/BPL: ms and seconds
 
-    # LVH (Sokolow-Lyon) – use abs(SV1) internally, keep signed SV1 for reporting
+    # Use displayed magnitudes for RV5/SV1 math.
     # CRITICAL: RV5 and SV1 from metrics are in mV
     # Sokolow-Lyon criteria: RV5 + |SV1| >= 3.5 mV (35 mm on ECG paper) indicates possible LVH
     lvh_line = None
     if rv5 is not None and sv1 is not None:
-        # Use abs(SV1) only for Sokolow-Lyon sum calculation (SV1 itself remains negative for reporting)
-        total_mv = rv5_sv1 if rv5_sv1 is not None else (rv5 + abs(sv1))
+        total_mv = rv5_sv1 if rv5_sv1 is not None else (rv5 - abs(sv1))
         if total_mv is not None and total_mv >= 3.5:  # 3.5 mV threshold (35 mm on ECG paper)
             total_mm = total_mv * 10.0  # Convert to mm for display (1 mV = 10 mm)
             lvh_line = f"Possible LVH (Sokolow-Lyon RV5+SV1 = {total_mm:.1f} mm)"
@@ -1004,7 +1006,7 @@ def create_reportlab_ecg_drawing_with_real_data(lead_name, ecg_data, width=REPOR
 
     ecg_array = np.asarray(ecg_data, dtype=float)
     med_abs = np.nanmedian(np.abs(ecg_array)) if len(ecg_array) else 0.0
-    ecg_mv = ecg_array / 1000.0 if med_abs > 20.0 else ecg_array
+    ecg_mv = ecg_array / REPORT_WAVEFORM_ADC_DIVISOR if med_abs > 20.0 else ecg_array
 
     fs = float(sampling_rate)
 
@@ -3055,6 +3057,34 @@ def generate_ecg_report(
         except Exception:
             return None
 
+    def _axis_delta_deg(a, b):
+        if a is None or b is None:
+            return None
+        return abs(((a - b + 180) % 360) - 180)
+
+    def _sanitize_axis_for_report(axis_name, axis_value, qrs_value=None, hr_value=None):
+        axis_num = _to_axis_degree(axis_value)
+        qrs_num = _to_axis_degree(qrs_value)
+        hr_num = _safe_float(hr_value, None)
+        if axis_num is None:
+            return "--"
+
+        if axis_name == "P":
+            if abs(axis_num) > 120:
+                return "--"
+            delta = _axis_delta_deg(axis_num, qrs_num)
+            if delta is not None and delta > 120:
+                return "--"
+
+        if axis_name == "T":
+            delta = _axis_delta_deg(axis_num, qrs_num)
+            if delta is not None and delta > 150:
+                return "--"
+            if hr_num is not None and hr_num >= 100 and abs(axis_num) > 150:
+                return "--"
+
+        return f"{axis_num}°"
+
     # PRIORITY 1: Use standardized values from data dictionary (passed from dashboard)
     p_axis_deg = "--"
     qrs_axis_deg = "--"
@@ -3423,11 +3453,14 @@ def generate_ecg_report(
             import traceback
             traceback.print_exc()
         
+    sanitized_p_axis = _sanitize_axis_for_report("P", p_axis_deg, qrs_axis_deg, data.get("HR_bpm") or data.get("HR"))
+    sanitized_qrs_axis = _sanitize_axis_for_report("QRS", qrs_axis_deg, qrs_axis_deg, data.get("HR_bpm") or data.get("HR"))
+    sanitized_t_axis = _sanitize_axis_for_report("T", t_axis_deg, qrs_axis_deg, data.get("HR_bpm") or data.get("HR"))
+
     # Format axis values for display (remove ° symbol for compact display)
-    # Convert to string first in case they're integers
-    p_axis_display = str(p_axis_deg).replace("°", "") if p_axis_deg != "--" else "--"
-    qrs_axis_display = str(qrs_axis_deg).replace("°", "") if qrs_axis_deg != "--" else "--"
-    t_axis_display = str(t_axis_deg).replace("°", "") if t_axis_deg != "--" else "--"
+    p_axis_display = str(sanitized_p_axis).replace("°", "") if sanitized_p_axis != "--" else "--"
+    qrs_axis_display = str(sanitized_qrs_axis).replace("°", "") if sanitized_qrs_axis != "--" else "--"
+    t_axis_display = str(sanitized_t_axis).replace("°", "") if sanitized_t_axis != "--" else "--"
     
     # Extract numeric values for JSON storage (convert from string format like "45°" to int)
     def extract_axis_value(axis_str):
@@ -3440,9 +3473,9 @@ def generate_ecg_report(
         except (ValueError, AttributeError):
             return 0
     
-    p_mm = extract_axis_value(p_axis_deg)
-    qrs_mm = extract_axis_value(qrs_axis_deg)
-    t_mm = extract_axis_value(t_axis_deg)
+    p_mm = extract_axis_value(sanitized_p_axis)
+    qrs_mm = extract_axis_value(sanitized_qrs_axis)
+    t_mm = extract_axis_value(sanitized_t_axis)
     
     # SECOND COLUMN - P/QRS/T Axis (optional: hidden in compact report mode)
     show_extended_header_metrics = bool(data.get('show_extended_header_metrics', True))
@@ -3451,35 +3484,32 @@ def generate_ecg_report(
                              fontSize=10, fontName="Helvetica", fillColor=colors.black)
         master_drawing.add(p_qrs_label)
 
-    # Get RV5 and SV1 amplitudes
-    # PRIORITY: Use standardized values from ECG test page if available
-    rv5_amp = _safe_float(data.get('rv5'), 0.0)
-    sv1_amp = _safe_float(data.get('sv1'), 0.0)
-    
-    # Try to get from ECG test page's standardized calculation
+    # Get RV5 and SV1 amplitudes from the actual raw ECG graph whenever available.
+    rv5_amp = None
+    sv1_amp = None
+    used_live_measurement = False
+
     if ecg_test_page is not None:
         try:
-            if hasattr(ecg_test_page, 'calculate_rv5_sv1_from_median'):
-                rv5_calc, sv1_calc = ecg_test_page.calculate_rv5_sv1_from_median()
-                if rv5_calc is not None and rv5_calc > 0:
-                    rv5_amp = float(rv5_calc)
-                    print(f" Using standardized RV5 from ECG test page: {rv5_amp:.3f} mV")
-                if sv1_calc is not None and sv1_calc != 0.0:
-                    sv1_amp = float(sv1_calc)
-                    print(f" Using standardized SV1 from ECG test page: {sv1_amp:.3f} mV")
+            from .metrics.intervals import calculate_rv5_sv1_from_test_page
+            rv5_calc, sv1_calc = calculate_rv5_sv1_from_test_page(ecg_test_page)
+            if rv5_calc is not None and rv5_calc > 0:
+                rv5_amp = float(rv5_calc)
+                used_live_measurement = True
+            if sv1_calc is not None and sv1_calc != 0.0:
+                sv1_amp = float(sv1_calc)
+                used_live_measurement = True
         except Exception as e:
-            print(f" Error getting RV5/SV1 from ECG test page: {e}")
-            import traceback
-            traceback.print_exc()
-    
-    print(f" Report Generator - Received RV5/SV1 from data:")
-    print(f"   rv5: {rv5_amp}, sv1: {sv1_amp}")
+            print(f" Error getting live RV5/SV1 measurement: {e}")
+
+    print(" Report Generator - Final RV5/SV1 source values:")
+    print(f"   rv5: {rv5_amp}, sv1: {sv1_amp}, source={'live_raw_ecg' if used_live_measurement else 'lead_data_unavailable'}")
     
     # If missing/zero, compute from V5 and V1 of last 10 seconds (GE/Hospital Standard)
     # CRITICAL: Use RAW ECG data, not display-filtered signals
     # Measurements must be from median beat, relative to TP baseline (isoelectric segment before P-wave)
     # NOTE: sv1_amp can be negative (SV1 is negative by definition), so check for == 0.0, not <= 0
-    if (rv5_amp<=0 or sv1_amp==0.0) and ecg_test_page is not None and hasattr(ecg_test_page,'data'):
+    if False:
         try:
             from scipy.signal import butter, filtfilt, find_peaks
             fs = 500.0
@@ -3570,28 +3600,28 @@ def generate_ecg_report(
     # CRITICAL: calculate_wave_amplitudes() now returns values in mV (converted from ADC counts)
     # No additional conversion needed - use values directly
     # GE Standard ranges: RV5 typically 0.5-3.0 mV, SV1 typically -0.5 to -2.0 mV
-    rv5_mv = rv5_amp if rv5_amp > 0 else 0.0
-    sv1_mv = sv1_amp if sv1_amp != 0.0 else 0.0  # SV1 is negative (preserved from calculation)
+    rv5_mv = float(rv5_amp) if rv5_amp is not None and rv5_amp > 0 else None
+    sv1_mv = float(sv1_amp) if sv1_amp is not None and sv1_amp != 0.0 else None
     
-    print(f"   Converted to mV: RV5={rv5_mv:.3f}, SV1={sv1_mv:.3f}")
+    print(f"   Converted to mV: RV5={rv5_mv if rv5_mv is not None else '--'}, SV1={sv1_mv if sv1_mv is not None else '--'}")
     
     # SECOND COLUMN - RV5/SV1 (ABOVE ECG GRAPH - shifted further up)
     # Display SV1 as negative mV (GE/Hospital standard)
     # Use 3 decimal places for precision (not rounded to integers)
-    rv5_sv_label = String(84.7 * mm, 279.0 * mm, f"RV5/SV1  : {rv5_mv:.3f} mV/{sv1_mv:.3f} mV",  # SV1 will show as negative
+    rv5_text = f"{rv5_mv:.3f} mV" if rv5_mv is not None else "--"
+    sv1_text = f"{sv1_mv:.3f} mV" if sv1_mv is not None else "--"
+    rv5_sv_label = String(84.7 * mm, 279.0 * mm, f"RV5/SV1  : {rv5_text}/{sv1_text}",
                          fontSize=10, fontName="Helvetica", fillColor=colors.black)
     if show_extended_header_metrics:
         master_drawing.add(rv5_sv_label)
 
-    # Calculate RV5+SV1 = RV5 + abs(SV1) (GE/Philips standard)
-    # CRITICAL: Calculate from unrounded values to avoid rounding errors
-    # Sokolow-Lyon index uses RV5 + |SV1| (both in mV).
-    # SV1 is typically negative by sign convention, so use absolute magnitude.
-    rv5_sv1_sum = rv5_mv + abs(sv1_mv)
+    # Calculate RV5+SV1 from displayed magnitudes: RV5 - SV1_magnitude.
+    rv5_sv1_sum = (rv5_mv - abs(sv1_mv)) if rv5_mv is not None and sv1_mv is not None else None
 
     # SECOND COLUMN - RV5+SV1 (ABOVE ECG GRAPH - shifted further up)
     # Use 3 decimal places for precision
-    rv5_sv1_sum_label = String(84.7 * mm, 273.9 * mm, f"RV5+SV1 : {rv5_sv1_sum:.3f} mV",
+    rv5_sv1_sum_text = f"{rv5_sv1_sum:.3f} mV" if rv5_sv1_sum is not None else "--"
+    rv5_sv1_sum_label = String(84.7 * mm, 273.9 * mm, f"RV5+SV1 : {rv5_sv1_sum_text}",
                                fontSize=10, fontName="Helvetica", fillColor=colors.black)
     if show_extended_header_metrics:
         master_drawing.add(rv5_sv1_sum_label)
@@ -4002,9 +4032,12 @@ def generate_ecg_report(
                 "QTc_ms": QTc,
                 "ST_ms": ST,
                 "RR_ms": RR,
-                "RV5_plus_SV1_mV": round(rv5_sv1_sum, 3),
+                "RV5_plus_SV1_mV": round(rv5_sv1_sum, 3) if rv5_sv1_sum is not None else None,
                 "P_QRS_T_mm": [p_mm, qrs_mm, t_mm],
-                "RV5_SV1_mV": [round(rv5_mv, 3), round(sv1_mv, 3)],
+                "RV5_SV1_mV": [
+                    round(rv5_mv, 3) if rv5_mv is not None else None,
+                    round(sv1_mv, 3) if sv1_mv is not None else None,
+                ],
                 "QTCF_ms": round(qtcf_val, 1) if 'qtcf_val' in locals() and qtcf_val else None,
             },
             "username": username  # Add username to track report ownership
@@ -4040,10 +4073,13 @@ def generate_ecg_report(
             "QTc_ms": QTc,
             "ST_ms": ST,
             "RR_ms": RR,
-            "RV5_plus_SV1_mV": round(rv5_sv1_sum, 3),
+            "RV5_plus_SV1_mV": round(rv5_sv1_sum, 3) if rv5_sv1_sum is not None else None,
             "P_QRS_T_mm": [p_mm, qrs_mm, t_mm],
             "QTCF": round(qtcf_val, 1) if 'qtcf_val' in locals() and qtcf_val and qtcf_val > 0 else None,
-            "RV5_SV1_mV": [round(rv5_mv, 3), round(sv1_mv, 3)]
+            "RV5_SV1_mV": [
+                round(rv5_mv, 3) if rv5_mv is not None else None,
+                round(sv1_mv, 3) if sv1_mv is not None else None,
+            ]
         }
 
         metrics_list = []
@@ -4085,10 +4121,13 @@ def generate_ecg_report(
         backend_metrics_payload = {
             "HR_bpm": HR, "PR_ms": PR, "QRS_ms": QRS, "QT_ms": QT, "QTc_ms": QTc,
             "ST_ms": ST, "RR_ms": RR,
-            "RV5_plus_SV1_mV": round(rv5_sv1_sum, 3),
+            "RV5_plus_SV1_mV": round(rv5_sv1_sum, 3) if rv5_sv1_sum is not None else None,
             "P_QRS_T_mm": [p_mm, qrs_mm, t_mm],
             "QTCF_ms": round(qtcf_val, 1) if 'qtcf_val' in locals() and qtcf_val else None,
-            "RV5_SV1_mV": [round(rv5_mv, 3), round(sv1_mv, 3)],
+            "RV5_SV1_mV": [
+                round(rv5_mv, 3) if rv5_mv is not None else None,
+                round(sv1_mv, 3) if sv1_mv is not None else None,
+            ],
         }
         _sync_report_package_to_backend(
             filename=filename,
