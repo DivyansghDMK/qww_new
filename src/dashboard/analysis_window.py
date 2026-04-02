@@ -57,25 +57,16 @@ except ImportError:
             PQRSTAnalyzer = None
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  TOOL CONSTANTS
-# ─────────────────────────────────────────────────────────────────────────────
-TOOL_SELECT    = "select"
-TOOL_RULER     = "ruler"
-TOOL_CALIPER   = "caliper"
-TOOL_MAGNIFIER = "magnifier"
-TOOL_ANNOTATE  = "annotate"
-
-TOOL_CURSORS = {
-    TOOL_SELECT:    Qt.ArrowCursor,
-    TOOL_RULER:     Qt.CrossCursor,
-    TOOL_CALIPER:   Qt.SplitHCursor,
-    TOOL_MAGNIFIER: Qt.CrossCursor,
-    TOOL_ANNOTATE:  Qt.PointingHandCursor,
-}
-
-# ECG display scale: ADC 0-4096, show in mV (1 mV ≈ 200 ADC at typical gain)
-ADC_TO_MV = 1.0 / 200.0      # approx — adjust per device calibration
+try:
+    from ecg.holter.theme import ADC_TO_MV, COL_CROSSHAIR, TOOL_ANNOTATE, TOOL_CALIPER, TOOL_MAGNIFY, TOOL_RULER, TOOL_SELECT
+    from ecg.holter.tool_engine import caliper_label, cursor as tool_cursor, hint as tool_hint, ruler_label, tool_specs
+except ImportError:
+    try:
+        from src.ecg.holter.theme import ADC_TO_MV, COL_CROSSHAIR, TOOL_ANNOTATE, TOOL_CALIPER, TOOL_MAGNIFY, TOOL_RULER, TOOL_SELECT
+        from src.ecg.holter.tool_engine import caliper_label, cursor as tool_cursor, hint as tool_hint, ruler_label, tool_specs
+    except ImportError:
+        from ..ecg.holter.theme import ADC_TO_MV, COL_CROSSHAIR, TOOL_ANNOTATE, TOOL_CALIPER, TOOL_MAGNIFY, TOOL_RULER, TOOL_SELECT
+        from ..ecg.holter.tool_engine import caliper_label, cursor as tool_cursor, hint as tool_hint, ruler_label, tool_specs
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -186,14 +177,14 @@ class InteractiveLeadCanvas(FigureCanvas):
         if tool == TOOL_CALIPER and self._caliper_x[0] is not None and self._caliper_x[1] is None:
             self._draw_caliper_preview(self._caliper_x[0], xd)
 
-        if tool == TOOL_MAGNIFIER:
+        if tool == TOOL_MAGNIFY:
             self._mag_pos = QPoint(int(event.x), self.height() - int(event.y))
             self.update()
 
         self.draw_idle()
 
     def mouseMoveEvent(self, event):
-        if self.tool == TOOL_MAGNIFIER:
+        if self.tool == TOOL_MAGNIFY:
             self._mag_pos = event.pos()
             self.update()
         super().mouseMoveEvent(event)
@@ -267,17 +258,17 @@ class InteractiveLeadCanvas(FigureCanvas):
         ylim = self.ax.get_ylim()
 
         self._crosshair_v, = self.ax.plot(
-            [xd, xd], ylim, color='#00e5ff', linewidth=0.7,
+            [xd, xd], ylim, color=COL_CROSSHAIR, linewidth=0.7,
             linestyle='--', alpha=0.85, zorder=10)
         self._crosshair_h, = self.ax.plot(
-            xlim, [yd, yd], color='#00e5ff', linewidth=0.7,
+            xlim, [yd, yd], color=COL_CROSSHAIR, linewidth=0.7,
             linestyle='--', alpha=0.85, zorder=10)
 
         # Convert ADC to mV for display
         mv = (yd - 2048) * ADC_TO_MV
         txt = f" t={xd*1000:.1f}ms  {mv:+.2f}mV"
         self._readout_text = self.ax.text(
-            xd, ylim[1] * 0.97, txt, fontsize=7, color='#00e5ff',
+            xd, ylim[1] * 0.97, txt, fontsize=7, color=COL_CROSSHAIR,
             va='top', ha='left', zorder=11,
             bbox=dict(boxstyle='round,pad=0.15', fc='#000000', alpha=0.55, ec='none'))
 
@@ -302,7 +293,7 @@ class InteractiveLeadCanvas(FigureCanvas):
         mx = (lx + rx) / 2
         my = ry
         ylim = self.ax.get_ylim()
-        label = f"Δt={dt_ms:.1f}ms  Δ={dv_mv:.2f}mV"
+        label = ruler_label(dt_ms, dv_mv)
         self.ax.text(mx, min(my + (ylim[1] - ylim[0]) * 0.05, ylim[1] * 0.95),
                      label, fontsize=7.5, color='#ffdd00', ha='center',
                      va='bottom', fontweight='bold', zorder=12,
@@ -317,7 +308,7 @@ class InteractiveLeadCanvas(FigureCanvas):
             dy = abs(y1 - y0)
             dt_ms = dx * 1000.0
             dv_mv = dy * ADC_TO_MV
-            label = f"Δt={dt_ms:.1f}ms  Δ={dv_mv:.2f}mV"
+            label = ruler_label(dt_ms, dv_mv)
             self.ruler_measured.emit(label)
         self.draw_idle()
 
@@ -339,7 +330,7 @@ class InteractiveLeadCanvas(FigureCanvas):
         x0, x1 = sorted(self._caliper_x)
         dt_ms = abs(x1 - x0) * 1000.0
         bpm   = 60000.0 / dt_ms if dt_ms > 0 else 0
-        label = f"RR/PP = {dt_ms:.1f} ms  →  {bpm:.0f} bpm"
+        label = caliper_label(dt_ms)
         # draw bracket
         self._draw_caliper_preview(x0, x1)
         # mid-span label
@@ -394,7 +385,7 @@ class InteractiveLeadCanvas(FigureCanvas):
     # ── Magnifier paintEvent overlay ─────────────────────────────────────────
     def paintEvent(self, event):
         super().paintEvent(event)
-        if self.tool != TOOL_MAGNIFIER or self._mag_pos is None:
+        if self.tool != TOOL_MAGNIFY or self._mag_pos is None:
             return
         if not self.parent_window.lead_has_visible_data(self.lead_name):
             return
@@ -842,13 +833,7 @@ class ECGAnalysisWindow(QDialog):
         lay.setContentsMargins(6, 10, 6, 10)
         lay.setSpacing(6)
 
-        tool_data = [
-            (TOOL_SELECT,    "Select", "Select / Pan"),
-            (TOOL_RULER,     "Ruler", "Measurement ruler\nDrag to measure dt & dmV"),
-            (TOOL_CALIPER,   "Caliper", "Interval caliper\nClick x2 -> RR/PP bpm"),
-            (TOOL_MAGNIFIER, "Magnify", "Magnifier lens\nHover to zoom in"),
-            (TOOL_ANNOTATE,  "Annotate", "Quick annotate\nClick start then end on lead"),
-        ]
+        tool_data = tool_specs(include_annotate=True)
 
         self._tool_btns = {}
         self._tool_btn_group = QButtonGroup(self)
@@ -883,7 +868,7 @@ class ECGAnalysisWindow(QDialog):
         lay.addWidget(zoom_lbl)
 
         self.zoom_combo = QComboBox()
-        self.zoom_combo.addItems(["2x", "3x", "4x", "5x", "6x"])
+        self.zoom_combo.addItems([f"{level}x" for level in [2, 3, 4, 5, 6]])
         self.zoom_combo.setCurrentText("4x")
         self.zoom_combo.currentIndexChanged.connect(
             lambda i: setattr(self, 'magnifier_zoom', i + 2))
@@ -912,18 +897,10 @@ class ECGAnalysisWindow(QDialog):
 
     def set_tool(self, tool_id):
         self.current_tool = tool_id
-        cursor = TOOL_CURSORS.get(tool_id, Qt.ArrowCursor)
+        cursor = tool_cursor(tool_id)
         for canvas in self._lead_canvases.values():
             canvas.setCursor(cursor)
-        # Update measure label hint
-        hints = {
-            TOOL_SELECT:    "",
-            TOOL_RULER:     "Ruler active. Drag on any lead to measure time and amplitude.",
-            TOOL_CALIPER:   "Caliper active. Click once for line 1, again for line 2.",
-            TOOL_MAGNIFIER: "Magnifier active. Hover over waveform to zoom. Use the zoom selector below.",
-            TOOL_ANNOTATE:  "Annotate active. Click start point, then click end point.",
-        }
-        self.measure_lbl.setText(hints.get(tool_id, ""))
+        self.measure_lbl.setText(tool_hint(tool_id))
 
     def _clear_all_overlays(self):
         for canvas in self._lead_canvases.values():
@@ -1248,8 +1225,8 @@ class ECGAnalysisWindow(QDialog):
             self.set_tool(TOOL_CALIPER)
             self._tool_btns[TOOL_CALIPER].setChecked(True)
         elif key == Qt.Key_M:
-            self.set_tool(TOOL_MAGNIFIER)
-            self._tool_btns[TOOL_MAGNIFIER].setChecked(True)
+            self.set_tool(TOOL_MAGNIFY)
+            self._tool_btns[TOOL_MAGNIFY].setChecked(True)
         elif key == Qt.Key_A:
             self.set_tool(TOOL_ANNOTATE)
             self._tool_btns[TOOL_ANNOTATE].setChecked(True)

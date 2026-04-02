@@ -42,7 +42,7 @@ from PyQt5.QtWidgets import (
     QFileDialog, QApplication, QProgressBar, QSplitter, QTextEdit,
     QAbstractItemView, QToolButton, QButtonGroup
 )
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread, QPointF
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread, QPointF, QRect
 from PyQt5.QtGui import QFont, QColor, QPalette, QPainter, QPen, QBrush, QPixmap
 
 try:
@@ -52,26 +52,86 @@ except Exception:
     pg = None
     HAS_PG = False
 
-# ── Comprehensive ECG Analysis professional palette ───────────────────────────
-COL_BLACK     = "#080808"   # root canvas
-COL_DARK      = "#1a1a1a"   # panel dark
-COL_GRAY      = "#111111"   # surface dark
-COL_BG        = COL_BLACK
-COL_TEXT      = "#e0e0e0"   # primary text
-COL_GREEN     = "#00e050"   # waveform green
-COL_GREEN_MID = "#00ff66"   # bright ECG green
-COL_GREEN_DRK = "#2a2a2a"   # borders/separators
-COL_WHITE     = "#FFFFFF"
-COL_YELLOW    = "#f5c518"
-COL_RED       = "#ff3333"
-COL_WAVE_ORANGE = "#e06020"
-COL_WAVE_RED    = "#ff3333"
-COL_GRID_MINOR  = "#0a2a0a"
-COL_GRID_MAJOR  = "#1a4a1a"
-COL_BTN_ACTIVE_BG = "#1e4a7a"
-COL_BTN_ACTIVE_TEXT = "#6aacf5"
-COL_TIMESTAMP = "#f0a030"
-COL_BEAT_S = "#ff9900"
+try:
+    from .theme import (
+        ADC_TO_MV,
+        COL_BEAT_S,
+        COL_BG,
+        COL_BLACK,
+        COL_BTN_ACTIVE_BG,
+        COL_BTN_ACTIVE_TEXT,
+        COL_DARK,
+        COL_GRAY,
+        COL_GREEN,
+        COL_GREEN_DRK,
+        COL_GREEN_MID,
+        COL_GRID_MAJOR,
+        COL_GRID_MINOR,
+        COL_RED,
+        COL_TEXT,
+        COL_TIMESTAMP,
+        COL_WAVE_ORANGE,
+        COL_WAVE_RED,
+        COL_WHITE,
+        COL_YELLOW,
+        GAINS,
+        PAPER_SPEEDS,
+        TOOL_CALIPER,
+        TOOL_MAGNIFY,
+        TOOL_RULER,
+        TOOL_SELECT,
+    )
+    from .tool_engine import (
+        ECGToolEngine,
+        amplitude_mv_from_pixels,
+        caliper_label,
+        canonical_tool,
+        hint as tool_hint,
+        interval_ms_from_pixels,
+        ruler_label,
+        tool_specs,
+        tooltip as tool_tooltip,
+    )
+except ImportError:
+    from ecg.holter.theme import (
+        ADC_TO_MV,
+        COL_BEAT_S,
+        COL_BG,
+        COL_BLACK,
+        COL_BTN_ACTIVE_BG,
+        COL_BTN_ACTIVE_TEXT,
+        COL_DARK,
+        COL_GRAY,
+        COL_GREEN,
+        COL_GREEN_DRK,
+        COL_GREEN_MID,
+        COL_GRID_MAJOR,
+        COL_GRID_MINOR,
+        COL_RED,
+        COL_TEXT,
+        COL_TIMESTAMP,
+        COL_WAVE_ORANGE,
+        COL_WAVE_RED,
+        COL_WHITE,
+        COL_YELLOW,
+        GAINS,
+        PAPER_SPEEDS,
+        TOOL_CALIPER,
+        TOOL_MAGNIFY,
+        TOOL_RULER,
+        TOOL_SELECT,
+    )
+    from ecg.holter.tool_engine import (
+        ECGToolEngine,
+        amplitude_mv_from_pixels,
+        caliper_label,
+        canonical_tool,
+        hint as tool_hint,
+        interval_ms_from_pixels,
+        ruler_label,
+        tool_specs,
+        tooltip as tool_tooltip,
+    )
 
 
 def _style_btn(bg=COL_GREEN_DRK, fg=COL_WHITE, hover=COL_GREEN):
@@ -659,6 +719,7 @@ class HolterReplayPanel(QWidget):
         self._strip_length_sec = 10.0
         self.setStyleSheet(f"background:{COL_DARK};")
         self._replay_engine = None
+        self._tool_engine = ECGToolEngine()
         self._build_ui()
 
     def _build_ui(self):
@@ -783,8 +844,28 @@ class HolterReplayPanel(QWidget):
         toolbar_layout.setContentsMargins(4, 4, 4, 4)
         toolbar_layout.setSpacing(4)
         self._tool_btns = {}
-        for tool in ["Patient information", "Full Disc.", "Goto Template", "Measuring Ruler",
-                     "Parallel Ruler", "Magnifying Glass", "Gain Settings",
+        for tool in ["Patient information", "Full Disc.", "Goto Template"]:
+            tbtn = QPushButton(tool)
+            tbtn.setStyleSheet(f"QPushButton{{background:{COL_DARK};color:{COL_TEXT};border:1px solid {COL_GREEN_DRK};"
+                               f"border-radius:3px;padding:3px 6px;font-size:10px;}}"
+                               f"QPushButton:hover{{background:#202020;color:{COL_WHITE};}}")
+            tbtn.clicked.connect(lambda _, t=tool, b=tbtn: self._set_tool_mode(t, b))
+            toolbar_layout.addWidget(tbtn)
+            self._tool_btns[tool] = tbtn
+
+        for tool_id, label, tip in tool_specs(include_annotate=False):
+            if tool_id == TOOL_SELECT:
+                continue
+            tbtn = QPushButton(label)
+            tbtn.setStyleSheet(f"QPushButton{{background:{COL_DARK};color:{COL_TEXT};border:1px solid {COL_GREEN_DRK};"
+                               f"border-radius:3px;padding:3px 6px;font-size:10px;}}"
+                               f"QPushButton:hover{{background:#202020;color:{COL_WHITE};}}")
+            tbtn.setToolTip(tip)
+            tbtn.clicked.connect(lambda _, t=tool_id, b=tbtn: self._set_tool_mode(t, b))
+            toolbar_layout.addWidget(tbtn)
+            self._tool_btns[tool_id] = tbtn
+
+        for tool in ["Gain Settings",
                      "Paper speed:25mm/s", "Add Event(space)", "Adjust strip position", "Strip Length:10s"]:
             tbtn = QPushButton(tool)
             tbtn.setStyleSheet(f"QPushButton{{background:{COL_DARK};color:{COL_TEXT};border:1px solid {COL_GREEN_DRK};"
@@ -793,15 +874,6 @@ class HolterReplayPanel(QWidget):
             tbtn.clicked.connect(lambda _, t=tool, b=tbtn: self._set_tool_mode(t, b))
             toolbar_layout.addWidget(tbtn)
             self._tool_btns[tool] = tbtn
-        self._tool_btns["Measuring Ruler"].setToolTip(
-            "Measure interval in ms and approximate BPM between two points."
-        )
-        self._tool_btns["Parallel Ruler"].setToolTip(
-            "Compare beat-to-beat interval regularity using two vertical markers."
-        )
-        self._tool_btns["Magnifying Glass"].setToolTip(
-            "Drag to zoom-highlight a detailed ECG segment for review."
-        )
         self._tool_btns["Gain Settings"].setToolTip(
             "Cycle gain (5/10/20/40 mm/mV equivalent) to improve waveform visibility."
         )
@@ -813,9 +885,9 @@ class HolterReplayPanel(QWidget):
             QMessageBox.information(
                 self,
                 "Holter ECG Software Tools — Explained",
-                "Measuring Ruler: measure interval/amplitude and BPM.\n"
-                "Parallel Ruler: compare regularity/coupling across beats.\n"
-                "Magnifying Glass: zoom-highlight subtle waveform details.\n"
+                "Ruler: measure interval/amplitude and BPM.\n"
+                "Caliper: compare regularity and coupling across beats.\n"
+                "Magnify: zoom-highlight subtle waveform details.\n"
                 "Gain Settings: cycle 5/10/20/40 mm/mV-equivalent scaling.\n\n"
                 "End-to-end flow:\n"
                 "Raw recording → Gain optimization → Magnify flagged events → "
@@ -825,8 +897,7 @@ class HolterReplayPanel(QWidget):
 
         # Handle state cycles for Gain, Speed, Length
         if "Gain Settings" in tool_name:
-            # Cycle: 5 -> 10 -> 20 -> 40
-            gains = [0.5, 1.0, 2.0, 4.0]
+            gains = [g / 10.0 for g in GAINS]
             curr_g = getattr(self, '_curr_gain_idx', 1)
             next_g = (curr_g + 1) % len(gains)
             self._curr_gain_idx = next_g
@@ -838,7 +909,7 @@ class HolterReplayPanel(QWidget):
             if btn: btn.setText(f"Gain: {int(val*10)}mm/mV")
             return
         elif "Paper speed" in tool_name:
-            speeds = [12.5, 25, 50, 100]
+            speeds = PAPER_SPEEDS
             curr_s = getattr(self, '_curr_speed_idx', 1)
             next_s = (curr_s + 1) % len(speeds)
             self._curr_speed_idx = next_s
@@ -860,7 +931,8 @@ class HolterReplayPanel(QWidget):
             if btn: btn.setText(f"Strip Length:{val}s")
             return
 
-        mode = tool_name if tool_name in ["Measuring Ruler", "Parallel Ruler", "Magnifying Glass"] else "Normal"
+        mode = canonical_tool(tool_name)
+        self._tool_engine.set_tool(mode)
         for strip in getattr(self, "_ch_strips", []):
             if hasattr(strip, 'set_mode'):
                 strip.set_mode(mode)
@@ -1019,7 +1091,7 @@ class ECGStripCanvas(QWidget):
         self.setFixedHeight(height)
         self.setStyleSheet(f"background:{COL_BLACK};border:none;")
         self.setMouseTracking(True)
-        self._mode = "Normal"
+        self._mode = TOOL_SELECT
         self._start_pos = None
         self._curr_pos = None
         self._hover_pos = None
@@ -1034,7 +1106,7 @@ class ECGStripCanvas(QWidget):
         self.update()
 
     def set_mode(self, mode: str):
-        self._mode = mode
+        self._mode = canonical_tool(mode)
         self._start_pos = None
         self._curr_pos = None
         self._hover_pos = None
@@ -1048,7 +1120,7 @@ class ECGStripCanvas(QWidget):
         self.update()
 
     def mousePressEvent(self, event):
-        if self._mode != "Normal":
+        if self._mode != TOOL_SELECT:
             self._start_pos = event.pos()
             self._curr_pos = event.pos()
             self._hover_pos = event.pos()
@@ -1056,19 +1128,19 @@ class ECGStripCanvas(QWidget):
 
     def mouseMoveEvent(self, event):
         self._hover_pos = event.pos()
-        if self._mode == "Magnifying Glass":
+        if self._mode == TOOL_MAGNIFY:
             self.update()
             return
-        if self._mode != "Normal" and self._start_pos is not None:
+        if self._mode != TOOL_SELECT and self._start_pos is not None:
             self._curr_pos = event.pos()
             self.update()
 
     def mouseReleaseEvent(self, event):
-        if self._mode == "Magnifying Glass":
+        if self._mode == TOOL_MAGNIFY:
             self._hover_pos = event.pos()
             self.update()
             return
-        if self._mode != "Normal":
+        if self._mode != TOOL_SELECT:
             self._curr_pos = event.pos()
             self.update()
 
@@ -1123,27 +1195,25 @@ class ECGStripCanvas(QWidget):
             y2 = int(h - (d[i] - mn) / rng * h)
             painter.drawLine(x1, y1, x2, y2)
 
-        if self._mode == "Measuring Ruler" and self._start_pos and self._curr_pos:
+        if self._mode == TOOL_RULER and self._start_pos and self._curr_pos:
             rpen = QPen(QColor("#00FFFF"), 2, Qt.DashLine)
             painter.setPen(rpen)
             painter.drawLine(self._start_pos, self._curr_pos)
             dx = abs(self._curr_pos.x() - self._start_pos.x())
-            ms = (dx / max(1, w)) * (len(d) / self._fs) * 1000 if len(d) > 0 else 0
+            ms = interval_ms_from_pixels(dx, max(1, w), len(d), self._fs)
             bpm = 60000 / ms if ms > 0 else 0
-            dy_adc = abs(self._curr_pos.y() - self._start_pos.y()) / max(1, h) * rng
-            dy_mv = dy_adc / 200.0
+            dy_mv = amplitude_mv_from_pixels(abs(self._curr_pos.y() - self._start_pos.y()), max(1, h), rng, ADC_TO_MV)
             painter.setPen(QPen(QColor("#00FFFF")))
-            painter.drawText(self._curr_pos.x(), max(12, self._curr_pos.y() - 6), f"{ms:.0f} ms  {dy_mv:.2f} mV  {bpm:.0f} BPM")
-        elif self._mode == "Parallel Ruler" and self._start_pos and self._curr_pos:
+            painter.drawText(self._curr_pos.x(), max(12, self._curr_pos.y() - 6), ruler_label(ms, dy_mv, bpm))
+        elif self._mode == TOOL_CALIPER and self._start_pos and self._curr_pos:
             ppen = QPen(QColor("#FFFF00"), 1)
             painter.setPen(ppen)
             painter.drawLine(self._start_pos.x(), 0, self._start_pos.x(), h)
             painter.drawLine(self._curr_pos.x(), 0, self._curr_pos.x(), h)
             dx = abs(self._curr_pos.x() - self._start_pos.x())
-            ms = (dx / max(1, w)) * (len(d) / self._fs) * 1000 if len(d) > 0 else 0
-            bpm = 60000 / ms if ms > 0 else 0
-            painter.drawText(min(self._start_pos.x(), self._curr_pos.x()) + dx//2, 12, f"{ms:.0f} ms  {bpm:.0f} BPM")
-        elif self._mode == "Magnifying Glass" and self._hover_pos is not None:
+            ms = interval_ms_from_pixels(dx, max(1, w), len(d), self._fs)
+            painter.drawText(min(self._start_pos.x(), self._curr_pos.x()) + dx//2, 12, caliper_label(ms))
+        elif self._mode == TOOL_MAGNIFY and self._hover_pos is not None:
             hover_x = max(0, min(self._hover_pos.x(), w - 1))
             hover_y = max(0, min(self._hover_pos.y(), h - 1))
             src_center = self._x_to_index(hover_x, w, len(d))
