@@ -43,6 +43,7 @@ except ImportError:
 
 from utils.settings_manager import SettingsManager
 from utils.crash_logger import get_crash_logger
+from utils.patient_profile import resolve_patient_profile
 from dashboard.history_window import append_history_entry
 
 # Import ECGTestPage + helpers to reuse EXACT same calculation + smoothing as 12‑lead test
@@ -1306,41 +1307,12 @@ class HyperkalemiaTestWindow(QWidget):
         
         
         try:
-            # Load latest patient details (same strategy as HRV/ECG flows)
-            patient = {}
-            try:
-                current_file_dir = os.path.dirname(os.path.abspath(__file__))
-                base_dir = os.path.abspath(os.path.join(current_file_dir, '..', '..'))
-                all_patients_file = os.path.join(base_dir, 'all_patients.json')
-                if os.path.exists(all_patients_file):
-                    with open(all_patients_file, 'r') as f:
-                        all_patients_data = json.load(f)
-                    if isinstance(all_patients_data, dict) and 'patients' in all_patients_data:
-                        patients_list = all_patients_data['patients']
-                        if patients_list:
-                            patient = patients_list[-1].copy()
-                if not patient:
-                    last_patient_file = os.path.join(base_dir, 'last_patient_details.json')
-                    if os.path.exists(last_patient_file):
-                        with open(last_patient_file, 'r') as f:
-                            patient = json.load(f)
-                if not patient or "first_name" not in patient:
-                    patient = {
-                        "first_name": "Patient",
-                        "last_name": "Hyperkalemia",
-                        "age": "",
-                        "gender": "",
-                        "date_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "Org.": "",
-                        "doctor_mobile": "",
-                        "doctor": "",
-                    }
-                else:
-                    patient["date_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                if "doctor_mobile" not in patient:
-                    patient["doctor_mobile"] = ""
-            except Exception as e:
-                print(f" Could not load patient details for hyperkalemia report: {e}")
+            patient = resolve_patient_profile(
+                explicit_patient=getattr(self.dashboard_instance, "patient_details", None),
+                username=getattr(self, "username", "") or "",
+                user_details=getattr(self.dashboard_instance, "user_details", {}) if self.dashboard_instance else {},
+            )
+            if not patient.get("first_name") and not patient.get("patient_name"):
                 patient = {
                     "first_name": "Patient",
                     "last_name": "Hyperkalemia",
@@ -1351,6 +1323,8 @@ class HyperkalemiaTestWindow(QWidget):
                     "doctor_mobile": "",
                     "doctor": "",
                 }
+            if "doctor_mobile" not in patient:
+                patient["doctor_mobile"] = ""
 
             # Attach patient into analysis_results so the generator can render it
             if isinstance(self.analysis_results, dict):

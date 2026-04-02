@@ -407,7 +407,7 @@ class LoginRegisterDialog(QDialog):
         password_header.setStyleSheet("color: #ffb347; font-size: 12px; font-weight: bold; letter-spacing: 1px;")
 
         self.login_email = QLineEdit()
-        self.login_email.setPlaceholderText("Full Name")
+        self.login_email.setPlaceholderText("Full Name or Phone Number")
         self.login_email.setMinimumHeight(44)
 
         password_row = QHBoxLayout()
@@ -770,6 +770,130 @@ class LoginRegisterDialog(QDialog):
         save_users(users)
         return user_key, user_record
 
+    def _save_phone_user_password(self, username: str, password: str):
+        users = load_users()
+        record = users.get(username, {})
+        if not isinstance(record, dict):
+            record = {}
+        record['password'] = password
+        record['password_set_via'] = 'phone_otp'
+        record['password_set_at'] = datetime.now().isoformat()
+        users[username] = record
+        save_users(users)
+        return record
+
+    def _prompt_phone_password_setup(self, phone: str) -> str:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Create Password")
+        dialog.setModal(True)
+        dialog.setMinimumWidth(420)
+        dialog.setStyleSheet("""
+            QDialog { background: #141a2c; border-radius: 16px; }
+            QLabel { color: white; font-size: 13px; }
+            QLineEdit {
+                border: 1px solid rgba(255, 156, 64, 0.82);
+                border-radius: 12px;
+                padding: 10px 12px;
+                font-size: 14px;
+                background: rgba(255,255,255,0.94);
+                color: #1f1f1f;
+            }
+            QPushButton {
+                border-radius: 12px;
+                padding: 10px 14px;
+                font-size: 13px;
+                font-weight: bold;
+                border: none;
+            }
+        """)
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(12)
+
+        title = QLabel(f"Phone {phone} verified successfully.")
+        title.setStyleSheet("color: white; font-size: 16px; font-weight: bold;")
+        desc = QLabel("Create a password once so next time you can log in directly with your phone number and password.")
+        desc.setWordWrap(True)
+
+        password_input = QLineEdit()
+        password_input.setPlaceholderText("Create Password")
+        password_input.setEchoMode(QLineEdit.Password)
+
+        confirm_input = QLineEdit()
+        confirm_input.setPlaceholderText("Confirm Password")
+        confirm_input.setEchoMode(QLineEdit.Password)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+
+        skip_btn = QPushButton("Skip")
+        skip_btn.setStyleSheet("background: rgba(255,255,255,0.12); color: #ffd2a3;")
+        save_btn = QPushButton("Save Password")
+        save_btn.setStyleSheet("background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #ff7a12, stop:1 #ff950f); color: white;")
+
+        btn_row.addWidget(skip_btn)
+        btn_row.addWidget(save_btn)
+
+        layout.addWidget(title)
+        layout.addWidget(desc)
+        layout.addWidget(password_input)
+        layout.addWidget(confirm_input)
+        layout.addLayout(btn_row)
+
+        result = {"password": ""}
+
+        def _skip():
+            dialog.reject()
+
+        def _save():
+            password = password_input.text().strip()
+            confirm = confirm_input.text().strip()
+            if len(password) < 4:
+                QMessageBox.warning(dialog, "Password Required", "Password must be at least 4 characters long.")
+                return
+            if password != confirm:
+                QMessageBox.warning(dialog, "Password Mismatch", "Password and confirm password must match.")
+                return
+            result["password"] = password
+            dialog.accept()
+
+        skip_btn.clicked.connect(_skip)
+        save_btn.clicked.connect(_save)
+        password_input.returnPressed.connect(_save)
+        confirm_input.returnPressed.connect(_save)
+
+        dialog.exec_()
+        return result["password"]
+
+    def _ensure_phone_user_password(self, username: str, user_record: dict, phone: str):
+        if not isinstance(user_record, dict):
+            user_record = {}
+        if str(user_record.get('password', '')).strip():
+            return user_record
+
+        reply = QMessageBox.question(
+            self,
+            "Create Password",
+            "Do you want to create a password for this phone login?\n\nYou can use it next time with phone number + password.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        if reply != QMessageBox.Yes:
+            return user_record
+
+        new_password = self._prompt_phone_password_setup(phone)
+        if not new_password:
+            return user_record
+
+        updated_record = self._save_phone_user_password(username, new_password)
+        QMessageBox.information(
+            self,
+            "Password Saved",
+            "Password created successfully. Next time you can sign in using your phone number and password.",
+        )
+        return updated_record
+
     def _get_inline_phone_number(self) -> str:
         auth_api = get_ecg_auth_api()
         raw_phone = self.login_phone.text().strip() if hasattr(self, "login_phone") else ""
@@ -820,6 +944,7 @@ class LoginRegisterDialog(QDialog):
                 logger.warning(f"Could not propagate JWT token to backend API helper: {token_error}")
 
             username, user_record = self._upsert_phone_login_user(normalized_phone, token)
+            user_record = self._ensure_phone_user_password(username, user_record, normalized_phone)
             self.result = True
             self.username = username
             self.user_details = user_record

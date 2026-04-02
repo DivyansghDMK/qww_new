@@ -11,6 +11,7 @@ from PyQt5.QtGui import QIntValidator, QColor
 from PyQt5.QtWidgets import QGraphicsDropShadowEffect
 from utils.settings_manager import SettingsManager
 from utils.localization import translate_text
+from utils.patient_profile import resolve_patient_profile
 import os
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -931,7 +932,15 @@ class ECGMenu(QGroupBox):
             if hasattr(self, "patient_details") and isinstance(self.patient_details, dict):
                 prefill = self.patient_details
             
-            # 2) If not in memory, load the LAST patient from centralized database
+            # 2) If not in memory, prefer the logged-in user's signup profile
+            if prefill is None and self.dashboard:
+                prefill = resolve_patient_profile(
+                    explicit_patient=getattr(self.dashboard, "patient_details", None),
+                    username=getattr(self.dashboard, "username", "") or "",
+                    user_details=getattr(self.dashboard, "user_details", {}) or {},
+                )
+
+            # 3) If still not in memory, load the LAST patient from centralized database
             if prefill is None:
                 try:
                     # Get path to centralized database (in modularecg folder)

@@ -47,6 +47,7 @@ except ImportError:
 
 from utils.settings_manager import SettingsManager
 from utils.crash_logger import get_crash_logger
+from utils.patient_profile import resolve_patient_profile
 from ecg.ecg_filters import apply_ac_filter, apply_emg_filter
 from dashboard.history_window import append_history_entry
 
@@ -923,70 +924,12 @@ class HRVTestWindow(QWidget):
             # Import the HRV ECG report generator (separate file with EXACT same format as main report)
             from ecg.hrv_ecg_report_generator import generate_hrv_ecg_report
             
-            # Prepare patient data - PICK LATEST FROM all_patients.json (COMPLETE DETAILS)
-            # Priority 1: all_patients.json (HAS doctor_mobile and complete info)
-            # Priority 2: last_patient_details.json (fallback)
-            patient = {}
-            try:
-                # Get base directory (modularecg folder)
-                current_file_dir = os.path.dirname(os.path.abspath(__file__))
-                base_dir = os.path.abspath(os.path.join(current_file_dir, '..', '..'))
-                
-                print(f" HRV Report: Looking for patient files in: {base_dir}")
-                
-                # Try all_patients.json FIRST (has complete details including doctor_mobile)
-                all_patients_file = os.path.join(base_dir, 'all_patients.json')
-                print(f" Checking all_patients.json at: {all_patients_file}")
-                print(f" File exists: {os.path.exists(all_patients_file)}")
-                
-                if os.path.exists(all_patients_file):
-                    with open(all_patients_file, 'r') as f:
-                        all_patients_data = json.load(f)
-                    
-                    print(f" Loaded JSON data type: {type(all_patients_data)}")
-                    print(f" Has 'patients' key: {'patients' in all_patients_data if isinstance(all_patients_data, dict) else False}")
-                    
-                    # Get LATEST patient (last entry in the list)
-                    if isinstance(all_patients_data, dict) and 'patients' in all_patients_data:
-                        patients_list = all_patients_data['patients']
-                        print(f" Number of patients in list: {len(patients_list)}")
-                        
-                        if patients_list and len(patients_list) > 0:
-                            patient = patients_list[-1].copy()  # LATEST = LAST ENTRY (make a copy)
-                            print(f" Loaded LATEST patient from all_patients.json:")
-                            print(f"   Name: {patient.get('first_name')} {patient.get('last_name')}")
-                            print(f"   Age: {patient.get('age')}")
-                            print(f"   Gender: {patient.get('gender')}")
-                            print(f"   Doctor: {patient.get('doctor')}")
-                            print(f"   Org: {patient.get('Org.')}")
-                            print(f"   Mobile: {patient.get('doctor_mobile')}")
-                        else:
-                            print(f" Patients list is empty!")
-                    else:
-                        print(f" Invalid JSON structure in all_patients.json")
-                else:
-                    print(f" all_patients.json not found at: {all_patients_file}")
-                
-                # Fallback: Try last_patient_details.json
-                if not patient:
-                    patient_file = os.path.join(base_dir, 'last_patient_details.json')
-                    print(f" Trying fallback: {patient_file}")
-                    if os.path.exists(patient_file):
-                        with open(patient_file, 'r') as f:
-                            patient = json.load(f)
-                        print(f" Loaded patient from last_patient_details.json (fallback): {patient.get('patient_name', 'Unknown')}")
-                
-                if not patient:
-                    print(f" No patient files found, using defaults")
-                    
-            except Exception as e:
-                print(f" ERROR loading patient details: {e}")
-                import traceback
-                traceback.print_exc()
-            
-            # Ensure all required fields exist (ONLY if patient not loaded)
-            if not patient or "first_name" not in patient:
-                print(f" Patient data empty or invalid, using defaults")
+            patient = resolve_patient_profile(
+                explicit_patient=getattr(self.dashboard_instance, "patient_details", None),
+                username=getattr(self, "username", "") or "",
+                user_details=getattr(self.dashboard_instance, "user_details", {}) if self.dashboard_instance else {},
+            )
+            if not patient.get("first_name") and not patient.get("patient_name"):
                 patient = {
                     "first_name": "HRV",
                     "last_name": "Patient",
@@ -997,17 +940,8 @@ class HRVTestWindow(QWidget):
                     "doctor_mobile": "",
                     "doctor": "",
                 }
-            else:
-                print(f" Patient data loaded successfully: {patient.get('first_name')} {patient.get('last_name')}")
-            
-            # Ensure doctor_mobile exists (might be missing in old data)
             if "doctor_mobile" not in patient:
                 patient["doctor_mobile"] = ""
-                print(f" Added missing doctor_mobile field")
-            
-            # Update date_time to current (keep other fields from loaded data)
-            patient["date_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            print(f" Updated date_time to: {patient['date_time']}")
             
             # Calculate REAL metrics from captured Lead II data (SAME AS update_metrics() method)
             # Use the SAME calculation methods as 12-lead test

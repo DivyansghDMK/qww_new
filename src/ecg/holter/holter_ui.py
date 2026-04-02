@@ -1022,6 +1022,8 @@ class ECGStripCanvas(QWidget):
         self._mode = "Normal"
         self._start_pos = None
         self._curr_pos = None
+        self._hover_pos = None
+        self._fs = 500.0
 
     def set_gain(self, gain: float):
         self._gain = gain
@@ -1035,6 +1037,7 @@ class ECGStripCanvas(QWidget):
         self._mode = mode
         self._start_pos = None
         self._curr_pos = None
+        self._hover_pos = None
         self.update()
 
     def set_data(self, *args):
@@ -1048,20 +1051,45 @@ class ECGStripCanvas(QWidget):
         if self._mode != "Normal":
             self._start_pos = event.pos()
             self._curr_pos = event.pos()
+            self._hover_pos = event.pos()
             self.update()
 
     def mouseMoveEvent(self, event):
+        self._hover_pos = event.pos()
+        if self._mode == "Magnifying Glass":
+            self.update()
+            return
         if self._mode != "Normal" and self._start_pos is not None:
             self._curr_pos = event.pos()
             self.update()
 
     def mouseReleaseEvent(self, event):
         if self._mode == "Magnifying Glass":
-            # Keep selection after mouse release so magnifier stays visible.
-            if self._start_pos is None:
-                self._start_pos = event.pos()
+            self._hover_pos = event.pos()
+            self.update()
+            return
+        if self._mode != "Normal":
             self._curr_pos = event.pos()
             self.update()
+
+    def leaveEvent(self, event):
+        self._hover_pos = None
+        self.update()
+        super().leaveEvent(event)
+
+    def _get_display_signal(self):
+        if self._data.size < 2:
+            return np.array([]), 0.0, 1.0
+        mn, mx = 0.0, 4096.0
+        rng = 4096.0
+        d = np.clip(((self._data - 2048.0) * self._gain) + 2048.0, mn, mx)
+        return d, mn, rng
+
+    def _x_to_index(self, x: int, width: int, n: int) -> int:
+        if n <= 1 or width <= 1:
+            return 0
+        x = max(0, min(x, width - 1))
+        return int(round((x / float(width - 1)) * (n - 1)))
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -1080,10 +1108,9 @@ class ECGStripCanvas(QWidget):
 
         if self._data.size < 2:
             return
-        d = self._data
-        mn, mx = 0, 4096
-        rng = 4096
-        d = np.clip(((d - 2048.0) * self._gain) + 2048.0, mn, mx)
+        d, mn, rng = self._get_display_signal()
+        if d.size < 2:
+            return
         
         pen = QPen(QColor(self._color))
         pen.setWidthF(self._pen_width)
@@ -1101,57 +1128,82 @@ class ECGStripCanvas(QWidget):
             painter.setPen(rpen)
             painter.drawLine(self._start_pos, self._curr_pos)
             dx = abs(self._curr_pos.x() - self._start_pos.x())
-            ms = (dx / w) * (len(d) / 500.0) * 1000 if len(d)>0 else 0
+            ms = (dx / max(1, w)) * (len(d) / self._fs) * 1000 if len(d) > 0 else 0
             bpm = 60000 / ms if ms > 0 else 0
-            painter.drawText(self._curr_pos.x(), self._curr_pos.y() - 5, f"{ms:.0f} ms ({bpm:.0f} BPM)")
+            dy_adc = abs(self._curr_pos.y() - self._start_pos.y()) / max(1, h) * rng
+            dy_mv = dy_adc / 200.0
+            painter.setPen(QPen(QColor("#00FFFF")))
+            painter.drawText(self._curr_pos.x(), max(12, self._curr_pos.y() - 6), f"{ms:.0f} ms  {dy_mv:.2f} mV  {bpm:.0f} BPM")
         elif self._mode == "Parallel Ruler" and self._start_pos and self._curr_pos:
             ppen = QPen(QColor("#FFFF00"), 1)
             painter.setPen(ppen)
             painter.drawLine(self._start_pos.x(), 0, self._start_pos.x(), h)
             painter.drawLine(self._curr_pos.x(), 0, self._curr_pos.x(), h)
             dx = abs(self._curr_pos.x() - self._start_pos.x())
-            ms = (dx / w) * (len(d) / 500.0) * 1000 if len(d)>0 else 0
-            painter.drawText(min(self._start_pos.x(), self._curr_pos.x()) + dx//2, 12, f"{ms:.0f} ms")
-        elif self._mode == "Magnifying Glass" and self._start_pos and self._curr_pos:
-            painter.setPen(QPen(QColor(COL_YELLOW), 1, Qt.DashLine))
-            painter.setBrush(QColor(245, 197, 24, 30))
-            rx = min(self._start_pos.x(), self._curr_pos.x())
-            ry = min(self._start_pos.y(), self._curr_pos.y())
-            rw = max(8, abs(self._curr_pos.x() - self._start_pos.x()))
-            rh = max(8, abs(self._curr_pos.y() - self._start_pos.y()))
-            painter.drawRect(rx, ry, rw, rh)
+            ms = (dx / max(1, w)) * (len(d) / self._fs) * 1000 if len(d) > 0 else 0
+            bpm = 60000 / ms if ms > 0 else 0
+            painter.drawText(min(self._start_pos.x(), self._curr_pos.x()) + dx//2, 12, f"{ms:.0f} ms  {bpm:.0f} BPM")
+        elif self._mode == "Magnifying Glass" and self._hover_pos is not None:
+            hover_x = max(0, min(self._hover_pos.x(), w - 1))
+            hover_y = max(0, min(self._hover_pos.y(), h - 1))
+            src_center = self._x_to_index(hover_x, w, len(d))
+            span = max(12, int(len(d) / max(2.0, self._speed / 12.5) / max(2, getattr(self.parent(), "_curr_length_idx", 1) + 2)))
+            half = max(8, int(span / max(2, self._gain * 1.5)))
+            i0 = max(0, src_center - half)
+            i1 = min(len(d), src_center + half)
+            sub = d[i0:i1]
 
-            # Magnifier inset (zoomed waveform from selected x-range)
-            x0 = max(0, min(rx, w - 1))
-            x1 = max(0, min(rx + rw, w - 1))
-            i0 = int((x0 / max(1, w - 1)) * (len(d) - 1))
-            i1 = int((x1 / max(1, w - 1)) * (len(d) - 1))
-            if i1 > i0 + 2:
-                sub = d[i0:i1 + 1]
-                inset_w = min(260, max(140, rw * 2))
-                inset_h = min(120, max(70, rh * 2))
-                inset_x = min(w - inset_w - 8, rx + 10)
-                inset_y = max(6, ry - inset_h - 10)
+            panel_w = min(320, max(220, int(w * 0.34)))
+            panel_h = min(180, max(120, int(h * 0.72)))
+            panel_x = min(w - panel_w - 10, hover_x + 24)
+            panel_y = max(8, hover_y - panel_h - 18)
+            if panel_x < 8:
+                panel_x = 8
+            if panel_y < 8:
+                panel_y = min(h - panel_h - 8, hover_y + 18)
 
-                painter.setPen(QPen(QColor("#3399ff"), 1))
-                painter.setBrush(QColor(8, 8, 8, 220))
-                painter.drawRect(inset_x, inset_y, inset_w, inset_h)
-                painter.setPen(QPen(QColor(COL_GRID_MINOR), 1))
-                for gx in range(inset_x, inset_x + inset_w, 20):
-                    painter.drawLine(gx, inset_y, gx, inset_y + inset_h)
-                for gy in range(inset_y, inset_y + inset_h, 20):
-                    painter.drawLine(inset_x, gy, inset_x + inset_w, gy)
+            panel_rect = QRect(panel_x, panel_y, panel_w, panel_h)
+            inner = panel_rect.adjusted(10, 10, -10, -10)
 
-                p = QPen(QColor(self._color))
-                p.setWidthF(max(1.2, self._pen_width * 1.6))
-                painter.setPen(p)
-                sub_x_scale = inset_w / max(1, len(sub) - 1)
-                for i in range(1, len(sub)):
-                    xx1 = int(inset_x + (i - 1) * sub_x_scale)
-                    yy1 = int(inset_y + inset_h - ((sub[i-1] - mn) / rng * inset_h))
-                    xx2 = int(inset_x + i * sub_x_scale)
-                    yy2 = int(inset_y + inset_h - ((sub[i] - mn) / rng * inset_h))
-                    painter.drawLine(xx1, yy1, xx2, yy2)
+            painter.setBrush(QColor(8, 8, 8, 235))
+            painter.setPen(QPen(QColor(COL_YELLOW), 3))
+            painter.drawRoundedRect(panel_rect, 12, 12)
+
+            painter.setPen(QPen(QColor(COL_GRID_MINOR), 1))
+            for frac in (0.25, 0.5, 0.75):
+                gx = int(inner.left() + inner.width() * frac)
+                gy = int(inner.top() + inner.height() * frac)
+                painter.drawLine(gx, inner.top(), gx, inner.bottom())
+                painter.drawLine(inner.left(), gy, inner.right(), gy)
+
+            if len(sub) > 1:
+                sub_min = max(mn, float(np.min(sub)))
+                sub_max = min(mn + rng, float(np.max(sub)))
+                pad = max(80.0, (sub_max - sub_min) * 0.35)
+                view_min = max(mn, sub_min - pad)
+                view_max = min(mn + rng, sub_max + pad)
+                view_rng = max(1.0, view_max - view_min)
+
+                path_pen = QPen(QColor(self._color))
+                path_pen.setWidthF(2.0)
+                painter.setPen(path_pen)
+                x_scale_sub = inner.width() / max(1, len(sub) - 1)
+                prev = None
+                for i in range(len(sub)):
+                    xx = int(inner.left() + i * x_scale_sub)
+                    yy = int(inner.bottom() - ((sub[i] - view_min) / view_rng) * inner.height())
+                    if prev is not None:
+                        painter.drawLine(prev[0], prev[1], xx, yy)
+                    prev = (xx, yy)
+
+                focus_x = int(inner.left() + ((src_center - i0) / max(1, len(sub) - 1)) * inner.width())
+                focus_y = int(inner.bottom() - ((d[src_center] - view_min) / view_rng) * inner.height())
+                painter.setPen(QPen(QColor("#ffffff"), 1))
+                painter.drawLine(focus_x, inner.top(), focus_x, inner.bottom())
+                painter.drawLine(inner.left(), focus_y, inner.right(), focus_y)
+
+            painter.setPen(QPen(QColor(COL_WHITE)))
+            painter.drawText(panel_rect.left() + 10, panel_rect.bottom() - 10, f"{getattr(self.parent(), '_curr_gain_idx', 1) + 2}x")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
