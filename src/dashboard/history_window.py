@@ -774,7 +774,7 @@ class HistoryWindow(QDialog):
         try:
             resp = requests.get(
                 PUBLIC_REVIEWED_REPORTS_URL,
-                params={"doctor": doc_name},
+                params={"doctorName": doc_name},
                 headers=_reviewed_reports_headers(),
                 timeout=12,
             )
@@ -1868,7 +1868,7 @@ class ReviewedReportsDialog(QDialog):
         try:
             resp = requests.get(
                 PUBLIC_REVIEWED_REPORTS_URL,
-                params={"doctor": dname} if dname else {},
+                params={"doctorName": dname} if dname else {},
                 headers=_reviewed_reports_headers(),
                 timeout=10,
             )

@@ -17,7 +17,6 @@ from PyQt5.QtGui import QFont, QColor
 from PyQt5.QtCore import Qt, QTimer
 # import pyqtgraph as pg  # Lazy loaded in methods
 from scipy.signal import find_peaks, butter, filtfilt
-from scipy.ndimage import gaussian_filter1d
 
 # Try to import serial
 try:
@@ -381,8 +380,16 @@ class HyperkalemiaTestWindow(QWidget):
             'V6': '#ee5a24'      # Dark Orange
         }
         
-        # Arrange in 2 columns (II on top full width, then V1-V6 in 3 rows)
-        positions = [(0, 0), (1, 0), (1, 1), (2, 0), (2, 1), (3, 0), (3, 1)]
+        # Arrange in 2 columns (V1-V6 first, Lead II at the last bottom row full width)
+        positions = {
+            'V1': (0, 0),
+            'V2': (0, 1),
+            'V3': (1, 0),
+            'V4': (1, 1),
+            'V5': (2, 0),
+            'V6': (2, 1),
+            'II': (3, 0),
+        }
         
         # Consistent colors from 12-lead dashboard
         lead_colors = {
@@ -402,26 +409,32 @@ class HyperkalemiaTestWindow(QWidget):
             plot_widget.setMenuEnabled(False)
             plot_widget.showGrid(x=False, y=False)
             
-            # Show Y-axis labels to indicate 0-4096 range
+            # Hide Y-axis numeric labels (clean clinical look)
             plot_widget.getAxis('left').setPen('k')
-            plot_widget.getAxis('left').setTextPen('k')
+            plot_widget.getAxis('left').setStyle(showValues=False)
             plot_widget.getAxis('bottom').setTextPen('k')
             plot_widget.getAxis('bottom').setPen('k')
             
             lead_color = lead_colors.get(lead_name, '#000000')
             plot_widget.setTitle(f"Lead {lead_name}", color=lead_color, size='11pt')
             
-            # Set initial Y-range (matching 12-lead dashboard style)
-            # Set initial Y-range (Raw ADC 0-4096)
-            plot_widget.setYRange(0, 4096, padding=0)
+            # Fixed raw-ADC Y ranges (same as 12-lead style)
+            if lead_name == 'aVR':
+                plot_widget.setYRange(0, -4096, padding=0)
+            else:
+                plot_widget.setYRange(0, 4096, padding=0)
             
             # Add center line at 2048
-            center_line = pg.InfiniteLine(pos=2048, angle=0, pen=pg.mkPen(color='gray', width=0.5, style=Qt.DashLine))
+            center_pos = -2048 if lead_name == 'aVR' else 2048
+            center_line = pg.InfiniteLine(pos=center_pos, angle=0, pen=pg.mkPen(color='gray', width=0.5, style=Qt.DashLine))
             plot_widget.addItem(center_line)
 
             vb = plot_widget.getViewBox()
             if vb is not None:
-                vb.setLimits(yMin=0, yMax=4096)
+                if lead_name == 'aVR':
+                    vb.setLimits(yMin=-4096, yMax=0)
+                else:
+                    vb.setLimits(yMin=0, yMax=4096)
                 try:
                     vb.setRange(xRange=(0.0, 3.0))
                 except Exception:
@@ -434,9 +447,9 @@ class HyperkalemiaTestWindow(QWidget):
             self.plot_curves[lead_name] = plot_curve
             self.data_lines[lead_name] = plot_curve
             
-            row, col = positions[i]
+            row, col = positions[lead_name]
             if lead_name == 'II':
-                plot_layout.addWidget(plot_widget, 0, 0, 1, 2) # Lead II spanning 2 columns
+                plot_layout.addWidget(plot_widget, row, col, 1, 2) # Lead II spanning 2 columns at bottom
             else:
                 plot_layout.addWidget(plot_widget, row, col)
         
@@ -866,12 +879,15 @@ class HyperkalemiaTestWindow(QWidget):
             # Update all plots with stable display window
             for lead_name in self.lead_data.keys():
                 if len(self.lead_data[lead_name]) > 0:
-                    # 25 mm/s → ~3 s window (wave speed logic disabled for Hyperkalemia test)
+                    # Match 12-lead style window size for sharper, consistent motion.
                     seconds_to_show = 3.0
-
-                    # Lead II: use a larger window for wave movement visibility
-                    if lead_name == 'II':
-                        seconds_to_show = 6.0
+                    try:
+                        if self.ecg_calculator is not None and hasattr(self.ecg_calculator, 'window_size'):
+                            ws = int(getattr(self.ecg_calculator, 'window_size', 0) or 0)
+                            if ws > 0:
+                                seconds_to_show = max(1.0, ws / float(fs))
+                    except Exception:
+                        pass
 
 
                     # try:
@@ -908,10 +924,7 @@ class HyperkalemiaTestWindow(QWidget):
                         display_times = [t for i, t in enumerate(times) if mask[i]]
                         display_values = [v for i, v in enumerate(values) if mask[i]]
 
-                        # --- Add Gaussian smoothing here ---
-                        if len(display_values) > 5:
-                            gaussian_sigma = 2  # You can adjust this value for more/less smoothing
-                            display_values = gaussian_filter1d(display_values, sigma=gaussian_sigma)
+                        # Keep waveform sharp: do not apply additional display-time Gaussian blur.
                         
                         if len(display_times) > 0:
                             
@@ -919,8 +932,11 @@ class HyperkalemiaTestWindow(QWidget):
                             self.plot_curves[lead_name].setData(display_times, display_values)
                             self.plot_widgets[lead_name].setXRange(min(display_times), max(display_times), padding=0)
                             
-                            # Fixed Y-axis scaling (0-4096)
-                            self.plot_widgets[lead_name].setYRange(0, 4096, padding=0)
+                            # Fixed Y-axis scaling: standard leads 0..4096, aVR 0..-4096
+                            if lead_name == 'aVR':
+                                self.plot_widgets[lead_name].setYRange(0, -4096, padding=0)
+                            else:
+                                self.plot_widgets[lead_name].setYRange(0, 4096, padding=0)
         
         except Exception as e:
             pass

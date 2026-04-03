@@ -3,7 +3,7 @@ from PyQt5.QtWidgets import (
     QDialog, QLineEdit, QComboBox, QFormLayout, QMessageBox, QSizePolicy, QStackedWidget, QScrollArea, QSpacerItem, QSlider
 )
 from PyQt5.QtGui import QFont, QPixmap, QMovie
-from PyQt5.QtCore import Qt, QTimer, QSize, QThread, pyqtSignal
+from PyQt5.QtCore import Qt, QTimer, QSize, QThread, pyqtSignal, QDate
 try:
     from PyQt5.QtMultimedia import QSound
 except ImportError:
@@ -983,6 +983,8 @@ class Dashboard(QWidget):
         self.schedule_calendar.setMaximumHeight(260)
         self.schedule_calendar.setMinimumWidth(280)
         self.schedule_calendar.setNavigationBarVisible(False)  # Hide default navigation
+        # Never allow selecting/report filtering into future dates.
+        self.schedule_calendar.setMaximumDate(QDate.currentDate())
         
         self.schedule_calendar.setStyleSheet("""
         QCalendarWidget QWidget { 
@@ -1025,7 +1027,7 @@ class Dashboard(QWidget):
         if last_ecg_date:
             try:
                 y, m, d = map(int, last_ecg_date.split('-'))
-                last_date = Qt.QDate(y, m, d)
+                last_date = QDate(y, m, d)
                 fmt = QTextCharFormat()
                 fmt.setBackground(QColor('red'))
                 fmt.setForeground(QColor('white'))
@@ -1036,9 +1038,8 @@ class Dashboard(QWidget):
         # Apply calendar date restrictions for new users
         self._apply_new_user_calendar_restrictions()
         
-        # connect date click/selection to filter reports
+        # connect date click to filter reports
         self.schedule_calendar.clicked.connect(self.on_calendar_date_selected)
-        self.schedule_calendar.selectionChanged.connect(self.on_calendar_selection_changed)
         
         # Update labels when calendar page changes
         self.schedule_calendar.currentPageChanged.connect(self.update_calendar_labels)
@@ -1303,20 +1304,25 @@ class Dashboard(QWidget):
     def update_calendar_labels(self):
         """Update the custom month and year labels based on current calendar date."""
         try:
-            current_date = self.schedule_calendar.selectedDate()
+            current_date = QDate(self.schedule_calendar.yearShown(), self.schedule_calendar.monthShown(), 1)
             month_names = ["January", "February", "March", "April", "May", "June",
                           "July", "August", "September", "October", "November", "December"]
             self.month_label.setText(month_names[current_date.month() - 1])
             self.year_label.setText(str(current_date.year()))
+            self._sync_calendar_nav_buttons()
         except Exception as e:
             print(f"Error updating calendar labels: {e}")
     
     def go_to_prev_month(self):
         """Navigate to previous month."""
         try:
-            current_date = self.schedule_calendar.selectedDate()
-            new_date = current_date.addMonths(-1)
-            self.schedule_calendar.setSelectedDate(new_date)
+            current_page = QDate(self.schedule_calendar.yearShown(), self.schedule_calendar.monthShown(), 1)
+            min_page = QDate(self.schedule_calendar.minimumDate().year(),
+                                self.schedule_calendar.minimumDate().month(), 1)
+            new_page = current_page.addMonths(-1)
+            if new_page < min_page:
+                new_page = min_page
+            self.schedule_calendar.setCurrentPage(new_page.year(), new_page.month())
             self.update_calendar_labels()
         except Exception as e:
             print(f"Error navigating to previous month: {e}")
@@ -1324,29 +1330,30 @@ class Dashboard(QWidget):
     def go_to_next_month(self):
         """Navigate to next month."""
         try:
-            current_date = self.schedule_calendar.selectedDate()
-            new_date = current_date.addMonths(1)
-            self.schedule_calendar.setSelectedDate(new_date)
+            current_page = QDate(self.schedule_calendar.yearShown(), self.schedule_calendar.monthShown(), 1)
+            max_page = QDate(self.schedule_calendar.maximumDate().year(),
+                                self.schedule_calendar.maximumDate().month(), 1)
+            new_page = current_page.addMonths(1)
+            if new_page > max_page:
+                new_page = max_page
+            self.schedule_calendar.setCurrentPage(new_page.year(), new_page.month())
             self.update_calendar_labels()
         except Exception as e:
             print(f"Error navigating to next month: {e}")
 
     def on_calendar_date_selected(self, qdate):
         try:
-            # Check if date is valid and within allowed range for new users
-            if hasattr(self, '_user_signup_date') and hasattr(self, '_user_max_date'):
-                if qdate < self._user_signup_date:
-                    # Date is before signup - reset to signup date
-                    self.schedule_calendar.setSelectedDate(self._user_signup_date)
-                    QMessageBox.warning(self, "Invalid Date", 
-                                      f"Please select a date on or after your signup date: {self._user_signup_date.toString('yyyy-MM-dd')}")
-                    return
-                elif qdate > self._user_max_date:
-                    # Date is after max date - reset to max date
-                    self.schedule_calendar.setSelectedDate(self._user_max_date)
-                    QMessageBox.warning(self, "Invalid Date", 
-                                      f"Please select a date on or before: {self._user_max_date.toString('yyyy-MM-dd')}")
-                    return
+            # Clamp date silently to valid calendar range (avoid intrusive popup windows).
+            min_d = self.schedule_calendar.minimumDate()
+            max_d = self.schedule_calendar.maximumDate()
+            safe_date = qdate
+            if safe_date < min_d:
+                safe_date = min_d
+            if safe_date > max_d:
+                safe_date = max_d
+            if safe_date != qdate:
+                self.schedule_calendar.setSelectedDate(safe_date)
+            qdate = safe_date
             
             self.reports_filter_date = qdate.toString("yyyy-MM-dd")
             # Set flag to prevent automatic report opening when calendar is clicked
@@ -1395,9 +1402,10 @@ class Dashboard(QWidget):
                 print(f"Error parsing signup date: {e}")
                 return
             
-            # Calculate maximum date (1 year from signup)
-            max_date_obj = signup_date_obj + timedelta(days=365)
-            max_qdate = QDate(max_date_obj.year, max_date_obj.month, max_date_obj.day)
+            # Always allow navigation up to today's date.
+            # Restricting to signup+365 can make the calendar appear "stuck" on old months.
+            today_qdate = QDate.currentDate()
+            max_qdate = today_qdate
             
             # Set date range
             self.schedule_calendar.setMinimumDate(signup_qdate)
@@ -1429,9 +1437,9 @@ class Dashboard(QWidget):
             self._user_max_date = max_qdate
             self._user_navigated_months = set()  # Track which months user has navigated to
             
-            # Set initial selected date to signup date for new users
-            self.schedule_calendar.setSelectedDate(signup_qdate)
-            self.schedule_calendar.setCurrentPage(signup_qdate.year(), signup_qdate.month())
+            # Start on the latest available month/day.
+            self.schedule_calendar.setSelectedDate(max_qdate)
+            self.schedule_calendar.setCurrentPage(max_qdate.year(), max_qdate.month())
             
             print(f" Calendar restrictions applied for new user. Signup: {signup_date_str}, Max: {max_date_obj}")
             
@@ -1443,8 +1451,17 @@ class Dashboard(QWidget):
     def on_calendar_page_changed(self, year, month):
         """Handle calendar page change - apply date locking after navigation"""
         try:
+            # Hard-stop any attempt to navigate beyond maximum allowed month.
+            max_d = self.schedule_calendar.maximumDate()
+            max_page = QDate(max_d.year(), max_d.month(), 1)
+            shown_page = QDate(year, month, 1)
+            if shown_page > max_page:
+                self.schedule_calendar.setCurrentPage(max_page.year(), max_page.month())
+                year, month = max_page.year(), max_page.month()
+
             # Check if this is a new user with restrictions
             if not hasattr(self, '_user_signup_date'):
+                self._sync_calendar_nav_buttons()
                 return
             
             from PyQt5.QtCore import QDate
@@ -1466,7 +1483,7 @@ class Dashboard(QWidget):
                 lock_format.setBackground(QColor(220, 220, 220))  # Gray background
                 
                 # Lock dates in the displayed month that are after today
-                days_in_month = QDate.daysInMonth(month, year)
+                days_in_month = QDate(year, month, 1).daysInMonth()
                 for day in range(1, days_in_month + 1):
                     check_date = QDate(year, month, day)
                     if check_date.isValid() and check_date > current_date:
@@ -1482,11 +1499,50 @@ class Dashboard(QWidget):
                 check_date = QDate(year, month, day)
                 if check_date.isValid() and check_date < self._user_signup_date:
                     self.schedule_calendar.setDateTextFormat(check_date, fade_format)
+            self._sync_calendar_nav_buttons()
             
         except Exception as e:
             print(f"Error in calendar page change: {e}")
             import traceback
             traceback.print_exc()
+
+    def _sync_calendar_nav_buttons(self):
+        """Enable/disable custom calendar arrows based on current min/max months."""
+        try:
+            shown = QDate(self.schedule_calendar.yearShown(), self.schedule_calendar.monthShown(), 1)
+            min_d = self.schedule_calendar.minimumDate()
+            max_d = self.schedule_calendar.maximumDate()
+            min_page = QDate(min_d.year(), min_d.month(), 1)
+            max_page = QDate(max_d.year(), max_d.month(), 1)
+            self.prev_month_btn.setEnabled(shown > min_page)
+            self.next_month_btn.setEnabled(shown < max_page)
+        except Exception:
+            pass
+
+    def _normalize_report_date_key(self, value: str) -> str:
+        """Normalize date text to YYYY-MM-DD for reliable calendar filtering."""
+        try:
+            s = str(value or "").strip()
+            if not s:
+                return ""
+            # Common formats: YYYY-MM-DD, YYYYMMDD, YYYY/MM/DD, DD-MM-YYYY
+            s = s.split(" ")[0].split("T")[0]
+            if len(s) == 8 and s.isdigit():
+                return f"{s[0:4]}-{s[4:6]}-{s[6:8]}"
+            if "/" in s:
+                parts = s.split("/")
+            else:
+                parts = s.split("-")
+            if len(parts) == 3:
+                # Already Y-M-D
+                if len(parts[0]) == 4:
+                    return f"{int(parts[0]):04d}-{int(parts[1]):02d}-{int(parts[2]):02d}"
+                # D-M-Y
+                if len(parts[2]) == 4:
+                    return f"{int(parts[2]):04d}-{int(parts[1]):02d}-{int(parts[0]):02d}"
+            return s
+        except Exception:
+            return str(value or "").strip()
 
     def show_month_dropdown(self, year, month):
         """Show month selection dropdown"""
@@ -1591,6 +1647,7 @@ class Dashboard(QWidget):
                     self.ecg_test_page.start_live_holter_from_dashboard()
             
             elif msg.clickedButton() == btn_prev:
+                self.page_stack.setCurrentWidget(self.ecg_test_page)
                 # Open up Holter workspace on Record Management tab
                 if hasattr(self.ecg_test_page, '_show_holter_ui'):
                     self.ecg_test_page._show_holter_ui(is_recording=False, ecgh_path=None, show_record_mgmt=True)
@@ -1641,8 +1698,11 @@ class Dashboard(QWidget):
             filter_date = getattr(self, "reports_filter_date", None)
 
         if filter_date:
-            fd = str(filter_date).strip()
-            entries = [e for e in entries if str(e.get('date','')).strip() == fd]
+            fd = self._normalize_report_date_key(filter_date)
+            entries = [
+                e for e in entries
+                if self._normalize_report_date_key(e.get('date', '')) == fd
+            ]
 
         # Filter to only show ECG Report entries (not detailed JSON metadata)
         # ECG Report entries have 'filename' and 'title' keys
@@ -1662,7 +1722,8 @@ class Dashboard(QWidget):
             row.setContentsMargins(6, 6, 12, 6)  # Increased right margin to 12px to prevent button cropping
             row.setSpacing(8)  # Add spacing between elements
 
-            meta = QLabel(f"{e.get('date','')} {e.get('time','')}  |  {e.get('patient','')}  |  {e.get('title','Report')}")
+            cont = QWidget(self.reports_list_widget)
+            meta = QLabel(f"{e.get('date','')} {e.get('time','')}  |  {e.get('patient','')}  |  {e.get('title','Report')}", cont)
             meta.setStyleSheet("color: #333333; font-size: 12px;")
             meta.setCursor(Qt.PointingHandCursor)
             meta.setWordWrap(False)  # Prevent text wrapping
@@ -1679,7 +1740,7 @@ class Dashboard(QWidget):
             # row.addWidget(params_btn)
 
             # "Open" button strictly opens the PDF
-            btn = QPushButton("Open")
+            btn = QPushButton("Open", cont)
             btn.setStyleSheet("background: #ff6600; color: white; border-radius: 8px; padding: 4px 12px; font-weight: bold;")
             btn.setMinimumWidth(65)  # Increased minimum width to prevent cropping
             btn.setMaximumWidth(75)  # Set maximum width
@@ -1689,7 +1750,6 @@ class Dashboard(QWidget):
             row.addSpacing(4)  # Add extra spacing after button
 
             # Container with hover feedback and full-row click
-            cont = QWidget()
             cont.setLayout(row)
             cont.setMinimumHeight(35)  # Ensure container has minimum height
             cont.setCursor(Qt.PointingHandCursor)

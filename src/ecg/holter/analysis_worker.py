@@ -206,6 +206,23 @@ class HolterAnalysisWorker(threading.Thread):
         tachy = int(np.sum(rr_intervals < 400)) if len(rr_intervals) else 0
         result['brady_beats'] = brady
         result['tachy_beats'] = tachy
+        try:
+            beat_classes, template_summary, classified_events = self._classify_beats(
+                lead_ii=lead_ii,
+                r_peaks=r_peaks,
+                rr_intervals=rr_intervals,
+                fs=fs,
+                chunk_start_sec=float(start_sec),
+            )
+        except Exception as e:
+            print(f"[HolterWorker] Beat classification error: {e}")
+            beat_classes, template_summary, classified_events = ({}, [], [])
+        result['beat_class_counts'] = beat_classes
+        result['template_summary'] = template_summary
+        result['classified_events'] = classified_events
+        result['template_count'] = len(template_summary)
+        result['ve_beats'] = int(beat_classes.get('VE', 0))
+        result['sve_beats'] = int(beat_classes.get('SVE', 0))
 
         # ── 5. ST deviation (simplified) ──────────────────────────────────────
         try:
@@ -295,3 +312,130 @@ class HolterAnalysisWorker(threading.Thread):
                 st_vals.append((st - bl) * adc_scale)
 
         return float(np.median(st_vals)) if st_vals else 0.0
+
+    def _classify_beats(
+        self,
+        lead_ii: np.ndarray,
+        r_peaks: np.ndarray,
+        rr_intervals: np.ndarray,
+        fs: int,
+        chunk_start_sec: float,
+    ):
+        """
+        Classify beats and build lightweight template clusters for review UI.
+        Returns class_counts, template_summary, classified_events.
+        """
+        if len(r_peaks) == 0:
+            return {}, [], []
+
+        pre = int(0.16 * fs)
+        post = int(0.24 * fs)
+        rr_ms = rr_intervals if len(rr_intervals) else np.array([], dtype=float)
+        rr_median = float(np.median(rr_ms)) if len(rr_ms) else 800.0
+
+        class_counts = {'N': 0, 'VE': 0, 'SVE': 0, 'Brady': 0, 'Tachy': 0, 'Pause': 0}
+        clusters = {}
+        classified_events = []
+
+        for idx, r in enumerate(r_peaks):
+            i0 = int(r) - pre
+            i1 = int(r) + post
+            if i0 < 0 or i1 >= len(lead_ii):
+                continue
+
+            segment = np.asarray(lead_ii[i0:i1], dtype=np.float32)
+            if segment.size < 8:
+                continue
+
+            rr_prev = float(rr_ms[idx - 1]) if idx - 1 >= 0 and idx - 1 < len(rr_ms) else rr_median
+            qrs_width_ms = self._estimate_qrs_width_ms(segment, fs)
+            label = self._label_beat(rr_prev, rr_median, qrs_width_ms)
+            class_counts[label] = class_counts.get(label, 0) + 1
+
+            t_sec = float(chunk_start_sec + (float(r) / float(fs)))
+            if label != 'N':
+                classified_events.append({
+                    'timestamp': round(t_sec, 3),
+                    'label': self._event_label_from_class(label),
+                    'template_label': label,
+                    'rr_ms': round(rr_prev, 1),
+                    'qrs_ms': round(qrs_width_ms, 1),
+                })
+
+            key = self._template_key(label, segment, qrs_width_ms)
+            cluster = clusters.setdefault(
+                key,
+                {
+                    'count': 0,
+                    'rr': [],
+                    'qrs': [],
+                    'first_timestamp': t_sec,
+                    'label': label,
+                },
+            )
+            cluster['count'] += 1
+            cluster['rr'].append(rr_prev)
+            cluster['qrs'].append(qrs_width_ms)
+            if t_sec < cluster['first_timestamp']:
+                cluster['first_timestamp'] = t_sec
+
+        class_counts = {k: int(v) for k, v in class_counts.items() if v > 0}
+        template_rows = []
+        ordered = sorted(clusters.items(), key=lambda kv: kv[1]['count'], reverse=True)
+        for i, (key, payload) in enumerate(ordered, start=1):
+            template_rows.append({
+                'template_id': f"T{i}",
+                'template_key': key,
+                'label': payload['label'],
+                'count': int(payload['count']),
+                'avg_rr_ms': round(float(np.mean(payload['rr'])) if payload['rr'] else 0.0, 1),
+                'avg_qrs_ms': round(float(np.mean(payload['qrs'])) if payload['qrs'] else 0.0, 1),
+                'first_timestamp': round(float(payload['first_timestamp']), 3),
+            })
+
+        return class_counts, template_rows, classified_events
+
+    @staticmethod
+    def _estimate_qrs_width_ms(segment: np.ndarray, fs: int) -> float:
+        centered = segment - float(np.median(segment))
+        peak = float(np.max(np.abs(centered))) if centered.size else 0.0
+        if peak <= 1e-6:
+            return 0.0
+        active = np.where(np.abs(centered) >= 0.35 * peak)[0]
+        if active.size == 0:
+            return 0.0
+        width_samples = int(active[-1] - active[0] + 1)
+        return float(width_samples) * 1000.0 / float(fs)
+
+    @staticmethod
+    def _label_beat(rr_prev_ms: float, rr_median_ms: float, qrs_width_ms: float) -> str:
+        if rr_prev_ms > 2000:
+            return 'Pause'
+        hr_prev = 60000.0 / max(rr_prev_ms, 1.0)
+        if hr_prev < 50:
+            return 'Brady'
+        if hr_prev > 130:
+            return 'Tachy'
+        if qrs_width_ms >= 130 and rr_prev_ms <= rr_median_ms * 0.95:
+            return 'VE'
+        if rr_prev_ms < rr_median_ms * 0.8 and qrs_width_ms < 130:
+            return 'SVE'
+        return 'N'
+
+    @staticmethod
+    def _event_label_from_class(label: str) -> str:
+        mapping = {
+            'VE': 'PVC Candidate',
+            'SVE': 'PAC Candidate',
+            'Brady': 'Brady Episode',
+            'Tachy': 'Tachy Episode',
+            'Pause': 'Pause Episode',
+        }
+        return mapping.get(label, label)
+
+    @staticmethod
+    def _template_key(label: str, segment: np.ndarray, qrs_width_ms: float) -> str:
+        centered = segment - float(np.median(segment))
+        r_sign = '+' if float(np.max(centered)) >= abs(float(np.min(centered))) else '-'
+        width_bucket = int(round(qrs_width_ms / 20.0) * 20)
+        return f"{label}-{r_sign}-QRS{width_bucket:03d}"

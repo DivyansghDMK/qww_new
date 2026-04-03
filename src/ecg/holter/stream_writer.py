@@ -26,8 +26,8 @@ from typing import Optional, List, Dict
 
 from .file_format import ECGHFileWriter, LEAD_NAMES
 
-# Analysis chunk: 30 seconds at 500 Hz
-CHUNK_SECONDS = 30
+# Analysis chunk cadence for live Holter updates.
+CHUNK_SECONDS = 5
 FS_DEFAULT = 500
 LEADS = 12
 DISPLAY_BUFFER_SECONDS = 120   # how much raw data to keep in RAM for display
@@ -42,7 +42,8 @@ class HolterStreamWriter:
     def __init__(self, output_dir: str, patient_info: dict,
                  fs: int = FS_DEFAULT,
                  on_chunk_ready=None,
-                 on_arrhythmia=None):
+                 on_arrhythmia=None,
+                 chunk_seconds: int = CHUNK_SECONDS):
         """
         Args:
             output_dir: Directory to save .ecgh + .jsonl files
@@ -56,6 +57,7 @@ class HolterStreamWriter:
         self.output_dir = output_dir
         self.on_chunk_ready = on_chunk_ready
         self.on_arrhythmia = on_arrhythmia
+        self.chunk_seconds = max(5, int(chunk_seconds))
 
         # State
         self._running = False
@@ -74,7 +76,7 @@ class HolterStreamWriter:
         self._display_ptr = 0    # next write position
 
         # 30-second analysis accumulator
-        self._chunk_size = CHUNK_SECONDS * fs
+        self._chunk_size = self.chunk_seconds * fs
         self._chunk_buf = np.zeros((LEADS, self._chunk_size), dtype=np.float32)
         self._chunk_ptr = 0
 
@@ -84,6 +86,31 @@ class HolterStreamWriter:
         # Live stats (updated by analysis worker via callbacks)
         self._live_bpm: float = 0.0
         self._live_arrhythmias: List[str] = []
+        self._metrics_history: List[dict] = []
+        self._summary_cache: Dict[str, object] = {
+            'duration_sec': 0.0,
+            'total_beats': 0,
+            'avg_hr': 0.0,
+            'max_hr': 0.0,
+            'min_hr': 0.0,
+            'sdnn': 0.0,
+            'rmssd': 0.0,
+            'pnn50': 0.0,
+            'avg_quality': 1.0,
+            'arrhythmia_counts': {},
+            'longest_rr_ms': 0.0,
+            'tachy_beats': 0,
+            'brady_beats': 0,
+            'pauses': 0,
+            'avg_st_mv': 0.0,
+            'patient_info': dict(patient_info or {}),
+            'chunks_analyzed': 0,
+            'beat_class_totals': {},
+            've_beats': 0,
+            'sve_beats': 0,
+            'template_count': 0,
+        }
+        self._analysis_seq = 0
         self._lock = threading.Lock()
 
         # Flush timer for disk writes
@@ -116,6 +143,34 @@ class HolterStreamWriter:
         # Reset buffers
         self._display_buf[:] = 0
         self._chunk_buf[:] = 0
+        with self._lock:
+            self._live_bpm = 0.0
+            self._live_arrhythmias = []
+            self._metrics_history = []
+            self._analysis_seq = 0
+            self._summary_cache = {
+                'duration_sec': 0.0,
+                'total_beats': 0,
+                'avg_hr': 0.0,
+                'max_hr': 0.0,
+                'min_hr': 0.0,
+                'sdnn': 0.0,
+                'rmssd': 0.0,
+                'pnn50': 0.0,
+                'avg_quality': 1.0,
+                'arrhythmia_counts': {},
+                'longest_rr_ms': 0.0,
+                'tachy_beats': 0,
+                'brady_beats': 0,
+                'pauses': 0,
+                'avg_st_mv': 0.0,
+                'patient_info': dict(self.patient_info or {}),
+                'chunks_analyzed': 0,
+                'beat_class_totals': {},
+                've_beats': 0,
+                'sve_beats': 0,
+                'template_count': 0,
+            }
 
         print(f"[Holter] Recording started → {self._session_dir}")
         return self._session_dir
@@ -147,6 +202,10 @@ class HolterStreamWriter:
             summary = self._writer.finalize()
             summary['session_dir'] = self._session_dir
             summary['jsonl_path'] = self._jsonl_path
+        with self._lock:
+            summary.update(dict(self._summary_cache))
+            summary['patient_info'] = dict(self.patient_info or {})
+            summary['chunks_analyzed'] = self._summary_cache.get('chunks_analyzed', len(self._metrics_history))
 
         # Signal analysis worker to stop
         try:
@@ -230,6 +289,100 @@ class HolterStreamWriter:
                 for a in arrhythmias:
                     self.on_arrhythmia(a, time.time())
 
+    def update_live_analysis(self, result: dict):
+        """Persist the latest analysis result in memory for live UI panels."""
+        bpm = float(result.get('hr_mean', 0.0) or 0.0)
+        arrhythmias = list(result.get('arrhythmias', []) or [])
+        with self._lock:
+            self._live_bpm = bpm
+            for a in arrhythmias:
+                if a not in self._live_arrhythmias:
+                    self._live_arrhythmias.insert(0, a)
+            self._live_arrhythmias = self._live_arrhythmias[:10]
+            self._metrics_history.append(dict(result))
+            self._analysis_seq += 1
+            self._summary_cache = self._build_summary_locked()
+            seq = self._analysis_seq
+        if self.on_chunk_ready:
+            try:
+                self.on_chunk_ready(dict(result), seq)
+            except Exception:
+                pass
+        if self.on_arrhythmia:
+            for a in arrhythmias:
+                self.on_arrhythmia(a, time.time())
+
+    def _build_summary_locked(self) -> Dict[str, object]:
+        ml = self._metrics_history
+        if not ml:
+            return {
+                'duration_sec': 0.0,
+                'total_beats': 0,
+                'avg_hr': 0.0,
+                'max_hr': 0.0,
+                'min_hr': 0.0,
+                'sdnn': 0.0,
+                'rmssd': 0.0,
+                'pnn50': 0.0,
+                'avg_quality': 1.0,
+                'arrhythmia_counts': {},
+                'longest_rr_ms': 0.0,
+                'tachy_beats': 0,
+                'brady_beats': 0,
+                'pauses': 0,
+                'avg_st_mv': 0.0,
+                'patient_info': dict(self.patient_info or {}),
+                'chunks_analyzed': 0,
+                'beat_class_totals': {},
+                've_beats': 0,
+                'sve_beats': 0,
+                'template_count': 0,
+            }
+
+        hr_vals = [m.get('hr_mean', 0) for m in ml if m.get('hr_mean', 0) > 0]
+        beat_counts = [m.get('beat_count', 0) for m in ml]
+        rr_stds = [m.get('rr_std', 0) for m in ml if m.get('rr_std', 0) > 0]
+        rmssds = [m.get('rmssd', 0) for m in ml if m.get('rmssd', 0) > 0]
+        pnn50s = [m.get('pnn50', 0) for m in ml if m.get('pnn50', 0) >= 0]
+        qualities = [m.get('quality', 0) for m in ml if m.get('quality', 0) > 0]
+        all_rr = [m.get('longest_rr', 0) for m in ml]
+        st_vals = [m.get('st_mv', 0.0) for m in ml]
+        duration_sec = float(sum(m.get('duration', 0.0) or 0.0 for m in ml))
+
+        arrhy_counts: Dict[str, int] = {}
+        beat_class_totals: Dict[str, int] = {}
+        template_counts: List[int] = []
+        for metric in ml:
+            for label in metric.get('arrhythmias', []):
+                arrhy_counts[label] = arrhy_counts.get(label, 0) + 1
+            for cls, count in (metric.get('beat_class_counts', {}) or {}).items():
+                beat_class_totals[cls] = beat_class_totals.get(cls, 0) + int(count or 0)
+            template_counts.append(int(metric.get('template_count', 0) or 0))
+
+        return {
+            'duration_sec': duration_sec,
+            'total_beats': sum(beat_counts),
+            'avg_hr': float(np.mean(hr_vals)) if hr_vals else 0.0,
+            'max_hr': float(np.max(hr_vals)) if hr_vals else 0.0,
+            'min_hr': float(np.min(hr_vals)) if hr_vals else 0.0,
+            'sdnn': float(np.mean(rr_stds)) if rr_stds else 0.0,
+            'rmssd': float(np.mean(rmssds)) if rmssds else 0.0,
+            'pnn50': float(np.mean(pnn50s)) if pnn50s else 0.0,
+            'avg_quality': float(np.mean(qualities)) if qualities else 1.0,
+            'arrhythmia_counts': arrhy_counts,
+            'longest_rr_ms': max(all_rr) if all_rr else 0.0,
+            'tachy_beats': sum(m.get('tachy_beats', 0) for m in ml),
+            'brady_beats': sum(m.get('brady_beats', 0) for m in ml),
+            'pauses': sum(m.get('pauses', 0) for m in ml),
+            'avg_st_mv': float(np.mean(st_vals)) if st_vals else 0.0,
+            'patient_info': dict(self.patient_info or {}),
+            'chunks_analyzed': len(ml),
+            'beat_class_totals': beat_class_totals,
+            've_beats': int(beat_class_totals.get('VE', 0)),
+            'sve_beats': int(beat_class_totals.get('SVE', 0)),
+            'template_count': max(template_counts) if template_counts else 0,
+        }
+
     def get_live_stats(self) -> dict:
         with self._lock:
             return {
@@ -237,6 +390,17 @@ class HolterStreamWriter:
                 'arrhythmias': list(self._live_arrhythmias),
                 'elapsed': self.elapsed_seconds,
                 'frames': self._total_frames,
+                'analysis_seq': self._analysis_seq,
+            }
+
+    def get_live_analysis_snapshot(self, since_seq: int = -1) -> Optional[dict]:
+        with self._lock:
+            if self._analysis_seq <= since_seq:
+                return None
+            return {
+                'seq': self._analysis_seq,
+                'metrics': [dict(m) for m in self._metrics_history],
+                'summary': dict(self._summary_cache),
             }
 
     # ── Properties ────────────────────────────────────────────────────────────
