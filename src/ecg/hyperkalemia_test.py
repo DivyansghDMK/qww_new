@@ -43,6 +43,7 @@ except ImportError:
 from utils.settings_manager import SettingsManager
 from utils.crash_logger import get_crash_logger
 from utils.patient_profile import resolve_patient_profile
+from ecg.ui import display_updates as shared_display_updates
 from dashboard.history_window import append_history_entry
 
 # Import ECGTestPage + helpers to reuse EXACT same calculation + smoothing as 12‑lead test
@@ -513,6 +514,15 @@ class HyperkalemiaTestWindow(QWidget):
             self.ecg_calculator.last_qrs_duration = 0
             self.ecg_calculator.last_qt_interval = 0
             self.ecg_calculator.last_qtc_interval = 0
+            self.ecg_calculator.last_qtcf_interval = 0
+            self.ecg_calculator.last_rr_interval = 0
+            self.ecg_calculator.last_heart_rate = 0
+
+        try:
+            shared_display_updates._last_valid.clear()
+        except Exception:
+            pass
+        self._last_metric_update_ts = 0.0
 
         # Get port from settings or auto-detect
         port_to_use = self.settings_manager.get_serial_port()
@@ -619,6 +629,15 @@ class HyperkalemiaTestWindow(QWidget):
             self.status_label.setText("Status: Capturing from serial port...")
             self.status_label.setStyleSheet("color: #28a745; padding: 5px;")
             self._silent_data_warned = False
+
+            if 'heart_rate' in self.metric_labels:
+                self.metric_labels['heart_rate'].setText("00 BPM")
+            if 'pr_interval' in self.metric_labels:
+                self.metric_labels['pr_interval'].setText("0 ms")
+            if 'qrs_duration' in self.metric_labels:
+                self.metric_labels['qrs_duration'].setText("0 ms")
+            if 'qtc_interval' in self.metric_labels:
+                self.metric_labels['qtc_interval'].setText("0 ms")
             
             # ── Start HolterBPMController ───────────────────────────────────────
             # Bar removed as per user request
@@ -993,15 +1012,12 @@ class HyperkalemiaTestWindow(QWidget):
                     except:
                         return fallback
 
-                # If Holter BPM is active, recompute QTc from waveform QT + stable BPM.
-                # This ensures QTc updates whenever BPM changes, even if QT waveform hasn't changed.
-                if _bpm_active and _current_bpm > 0:
-                    qt_raw = getattr(self.ecg_calculator, 'last_qt_interval', 0)
-                    if qt_raw > 0:
-                        import math
-                        rr_s = 60.0 / _current_bpm
-                        qtc_recomputed = int(round((qt_raw / 1000.0) / math.sqrt(rr_s) * 1000.0))
-                        self.ecg_calculator.last_qtc_interval = qtc_recomputed
+                def _attr_to_num(attr_name, fallback=0):
+                    v = getattr(self.ecg_calculator, attr_name, fallback)
+                    try:
+                        return int(round(float(v))) if v else fallback
+                    except Exception:
+                        return fallback
 
                 # Also call get_current_metrics as a secondary/fallback source
                 metrics = self.ecg_calculator.get_current_metrics()
@@ -1022,17 +1038,40 @@ class HyperkalemiaTestWindow(QWidget):
 
                 print(f"Heart Rate: {hr_val} BPM, PR Interval: {pr_val} ms, QRS Duration: {qrs_val} ms, QTC Interval: {qtc_val} ms")
 
-                if not _bpm_active and 'heart_rate' in self.metric_labels:
-                    self.metric_labels['heart_rate'].setText(f"{hr_val} BPM" if hr_val != '0' else "00 BPM")
+                display_hr = _attr_to_num('last_heart_rate', 0)
+                display_pr = _attr_to_num('pr_interval', 0)
+                display_qrs = _attr_to_num('last_qrs_duration', 0)
+                display_qt = _attr_to_num('last_qt_interval', 0)
+                display_qtc = _attr_to_num('last_qtc_interval', 0)
+                display_rr = _attr_to_num('last_rr_interval', 0)
+                display_qtcf = _attr_to_num('last_qtcf_interval', 0)
+
+                self._last_metric_update_ts = shared_display_updates.update_ecg_metrics_display(
+                    self.metric_labels,
+                    display_hr,
+                    display_pr,
+                    display_qrs,
+                    0,
+                    display_qt,
+                    display_qtc,
+                    display_qtcf,
+                    getattr(self, '_last_metric_update_ts', 0.0),
+                    rr_interval=display_rr,
+                    skip_heart_rate=_bpm_active,
+                )
+
                 if 'pr_interval' in self.metric_labels:
-                    self.metric_labels['pr_interval'].setText(f"{pr_val} ms" if pr_val != '0' else "0 ms")
+                    pr_text = self.metric_labels['pr_interval'].text().strip()
+                    if pr_text and not pr_text.endswith("ms"):
+                        self.metric_labels['pr_interval'].setText(f"{pr_text} ms")
                 if 'qrs_duration' in self.metric_labels:
-                    self.metric_labels['qrs_duration'].setText(f"{qrs_val} ms" if qrs_val != '0' else "0 ms")
+                    qrs_text = self.metric_labels['qrs_duration'].text().strip()
+                    if qrs_text and not qrs_text.endswith("ms"):
+                        self.metric_labels['qrs_duration'].setText(f"{qrs_text} ms")
                 if 'qtc_interval' in self.metric_labels:
-                    if qt_val not in ('', '0') and qtc_val not in ('', '0'):
-                        self.metric_labels['qtc_interval'].setText(f"{qt_val}/{qtc_val} ms")
-                    else:
-                        self.metric_labels['qtc_interval'].setText(f"{qtc_val} ms" if qtc_val not in ('', '0') else "0 ms")
+                    qtqtc_text = self.metric_labels['qtc_interval'].text().strip()
+                    if qtqtc_text and not qtqtc_text.endswith("ms"):
+                        self.metric_labels['qtc_interval'].setText(f"{qtqtc_text} ms")
 
 
         

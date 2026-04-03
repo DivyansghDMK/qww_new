@@ -820,6 +820,61 @@ def load_latest_metrics_entry(reports_dir):
     except Exception as e:
         print(f" Could not read metrics file for HR: {e}")
 
+def _safe_int_metric(value, default=0):
+    try:
+        return int(float(value))
+    except Exception:
+        return default
+
+def _read_live_hrv_metrics_from_ecg_page(page):
+    """
+    Pull finalized HRV metrics from the live calculator/session object passed
+    from the HRV test window so the PDF header can match the on-screen values.
+    """
+    live = {
+        "HR": 0,
+        "PR": 0,
+        "QRS": 0,
+        "QT": 0,
+        "QTc": 0,
+        "ST": 0,
+    }
+    if page is None:
+        return live
+
+    try:
+        live["HR"] = _safe_int_metric(
+            getattr(page, "last_heart_rate", 0)
+            or getattr(page, "heart_rate", 0)
+        )
+        live["PR"] = _safe_int_metric(getattr(page, "pr_interval", 0))
+        live["QRS"] = _safe_int_metric(getattr(page, "last_qrs_duration", 0))
+        live["QT"] = _safe_int_metric(getattr(page, "last_qt_interval", 0))
+        live["QTc"] = _safe_int_metric(getattr(page, "last_qtc_interval", 0))
+        live["ST"] = _safe_int_metric(getattr(page, "last_st_interval", 0))
+
+        if hasattr(page, "get_current_metrics"):
+            try:
+                current = page.get_current_metrics() or {}
+            except Exception:
+                current = {}
+            if live["HR"] <= 0:
+                live["HR"] = _safe_int_metric(current.get("heart_rate", 0))
+            if live["PR"] <= 0:
+                live["PR"] = _safe_int_metric(current.get("pr_interval", 0))
+            if live["QRS"] <= 0:
+                live["QRS"] = _safe_int_metric(current.get("qrs_duration", 0))
+            if live["QT"] <= 0:
+                live["QT"] = _safe_int_metric(current.get("qt_interval", 0))
+            if live["QTc"] <= 0:
+                live["QTc"] = _safe_int_metric(current.get("qtc_interval", 0))
+            if live["ST"] <= 0:
+                live["ST"] = _safe_int_metric(current.get("st_interval", 0))
+    except Exception as e:
+        print(f"⚠️ HRV Report: Could not read live metrics from ecg_test_page: {e}")
+
+    return live
+
     return None
 
 def _add_label_column(drawing, x_pos, y_text_pairs, font_size=10, font_name="Helvetica", text_color=colors.black):
@@ -888,6 +943,58 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
             return int(float(value))
         except Exception:
             return default
+
+    def _read_live_hrv_metrics_from_ecg_page(page):
+        """
+        Pull the finalized HRV metrics from the live calculator/session object
+        that the HRV test passes in as ``ecg_test_page``.
+
+        This keeps the PDF header aligned with the values shown on the HRV UI.
+        """
+        live = {
+            "HR": 0,
+            "PR": 0,
+            "QRS": 0,
+            "QT": 0,
+            "QTc": 0,
+            "ST": 0,
+        }
+        if page is None:
+            return live
+
+        try:
+            live["HR"] = _safe_int(
+                getattr(page, "last_heart_rate", 0)
+                or getattr(page, "heart_rate", 0)
+            )
+            live["PR"] = _safe_int(getattr(page, "pr_interval", 0))
+            live["QRS"] = _safe_int(getattr(page, "last_qrs_duration", 0))
+            live["QT"] = _safe_int(getattr(page, "last_qt_interval", 0))
+            live["QTc"] = _safe_int(getattr(page, "last_qtc_interval", 0))
+            live["ST"] = _safe_int(getattr(page, "last_st_interval", 0))
+
+            # Secondary source if the object exposes a metrics dict API.
+            if hasattr(page, "get_current_metrics"):
+                try:
+                    current = page.get_current_metrics() or {}
+                except Exception:
+                    current = {}
+                if live["HR"] <= 0:
+                    live["HR"] = _safe_int(current.get("heart_rate", 0))
+                if live["PR"] <= 0:
+                    live["PR"] = _safe_int(current.get("pr_interval", 0))
+                if live["QRS"] <= 0:
+                    live["QRS"] = _safe_int(current.get("qrs_duration", 0))
+                if live["QT"] <= 0:
+                    live["QT"] = _safe_int(current.get("qt_interval", 0))
+                if live["QTc"] <= 0:
+                    live["QTc"] = _safe_int(current.get("qtc_interval", 0))
+                if live["ST"] <= 0:
+                    live["ST"] = _safe_int(current.get("st_interval", 0))
+        except Exception as e:
+            print(f"⚠️ HRV Report: Could not read live metrics from ecg_test_page: {e}")
+
+        return live
 
     # ==================== STEP 1: Get HR_bpm from metrics.json (PRIORITY) ====================
     # Priority: metrics.json  latest HR_bpm  (calculation-based beats  )
@@ -2493,27 +2600,27 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
             x_pos = doc.leftMargin  # 30 points from left
             y_pos = doc.height + doc.bottomMargin - 5  # 20 points from top
             
-            # Always draw "Org." label with value
-            org_label = "Org:"
-            canvas.drawString(x_pos, y_pos, org_label)
+            # Draw Date and Time labels instead of Phone No and Org
+            date_label = "Date:"
+            canvas.drawString(x_pos, y_pos, date_label)
             
             # Calculate width of label and add small gap
-            org_label_width = canvas.stringWidth(org_label, "Helvetica-Bold", 10)
+            date_label_width = canvas.stringWidth(date_label, "Helvetica-Bold", 10)
             canvas.setFont("Helvetica", 10)
-            canvas.drawString(x_pos + org_label_width + 5, y_pos, patient_org if patient_org else "")
+            canvas.drawString(x_pos + date_label_width + 5, y_pos, date_part if date_part else "")
             
             y_pos -= 15  # Move down for next line
             
-            # Always draw "Phone No." label with value
+            # Draw Time label
             canvas.setFont("Helvetica-Bold", 10)
             canvas.setFillColor(colors.black)
-            phone_label = "Phone No:"
-            canvas.drawString(x_pos, y_pos, phone_label)
+            time_label = "Time:"
+            canvas.drawString(x_pos, y_pos, time_label)
             
             # Calculate width of label and add small gap
-            phone_label_width = canvas.stringWidth(phone_label, "Helvetica-Bold", 10)
+            time_label_width = canvas.stringWidth(time_label, "Helvetica-Bold", 10)
             canvas.setFont("Helvetica", 10)
-            canvas.drawString(x_pos + phone_label_width + 5, y_pos, patient_doctor_mobile if patient_doctor_mobile else "")
+            canvas.drawString(x_pos + time_label_width + 5, y_pos, time_part if time_part else "")
             
             canvas.restoreState()
         
@@ -2741,94 +2848,79 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
         except Exception:
             return default
     
-    # ==================== STEP 1: Get HR_bpm from metrics.json (PRIORITY) - SAME AS MAIN REPORT ====================
-    latest_metrics = load_latest_metrics_entry(reports_dir)
-    
-    # If last entry has zero values, find last valid (non-zero) entry
-    if latest_metrics and latest_metrics.get("HR_bpm", 0) == 0:
-        try:
-            metrics_path = os.path.join(reports_dir, 'metrics.json')
-            if os.path.exists(metrics_path):
-                with open(metrics_path, 'r') as f:
-                    all_metrics = json.load(f)
-                if isinstance(all_metrics, list) and len(all_metrics) > 0:
-                    # Find last non-zero HR_bpm entry
-                    for i in range(len(all_metrics)-1, -1, -1):
-                        if all_metrics[i].get("HR_bpm", 0) > 0:
-                            latest_metrics = all_metrics[i]
-                            print(f"📊 HRV Report: Found last valid metric entry (index {i}) with HR_bpm > 0")
-                            break
-        except Exception as e:
-            print(f"⚠️ Could not find last valid metric: {e}")
-    
+    # ==================== STEP 1: Use ONLY current HRV session metrics ====================
+    # Prefer the live calculator/session values from the HRV window itself so the
+    # generated PDF matches the metrics visible on the HRV test display.
+    live_session_metrics = _read_live_hrv_metrics_from_ecg_page(ecg_test_page)
+    if any(v > 0 for v in live_session_metrics.values()):
+        print("📊 HRV Report: Live metrics pulled from active HRV session:")
+        print(
+            f"   HR={live_session_metrics['HR']}, PR={live_session_metrics['PR']}, "
+            f"QRS={live_session_metrics['QRS']}, QT={live_session_metrics['QT']}, "
+            f"QTc={live_session_metrics['QTc']}, ST={live_session_metrics['ST']}"
+        )
+
     hr_bpm_value = 0
-    
-    # Priority 1: metrics.json  latest HR_bpm
-    if latest_metrics:
-        hr_bpm_value = _safe_int(latest_metrics.get("HR_bpm"))
-        if hr_bpm_value > 0:
-            print(f"📊 HRV Report: Using HR_bpm from metrics.json: {hr_bpm_value} bpm (timestamp: {latest_metrics.get('timestamp', 'N/A')})")
-    
-    # Priority 2: Fallback to data parameter
-    if hr_bpm_value == 0:
-        hr_candidate = data.get("HR_bpm") or data.get("Heart_Rate") or data.get("HR")
-        hr_bpm_value = _safe_int(hr_candidate)
-        if hr_bpm_value > 0:
-            print(f"📊 HRV Report: Using HR_bpm from data parameter: {hr_bpm_value} bpm")
-    
-    # Priority 3: Fallback to HR_avg
+
+    hr_candidate = (
+        live_session_metrics.get("HR")
+        or data.get("HR_bpm")
+        or data.get("Heart_Rate")
+        or data.get("HR")
+    )
+    hr_bpm_value = _safe_int(hr_candidate)
+    if hr_bpm_value > 0:
+        print(f"📊 HRV Report: Using HR_bpm from current HRV session data: {hr_bpm_value} bpm")
+
     if hr_bpm_value == 0 and data.get("HR_avg"):
         hr_bpm_value = _safe_int(data.get("HR_avg"))
         if hr_bpm_value > 0:
-            print(f"📊 HRV Report: Using HR_bpm from HR_avg: {hr_bpm_value} bpm")
-    
-    # Save original HR_bpm from metrics.json (for reference - will NOT be changed)
-    original_hr_bpm_from_metrics = hr_bpm_value  # This is from metrics.json (12-lead ECG)
-    
-    # Update data dictionary (SAME AS MAIN REPORT)
+            print(f"📊 HRV Report: Using HR_avg from current HRV session data: {hr_bpm_value} bpm")
+
     data["HR_bpm"] = hr_bpm_value
     data["Heart_Rate"] = hr_bpm_value
     data["HR"] = hr_bpm_value
-    if hr_bpm_value > 0:
-        data["RR_ms"] = int(60000 / hr_bpm_value)
-    else:
-        data["RR_ms"] = data.get("RR_ms", 0)
-    
-    # ==================== STEP 2: Get ALL metrics from metrics.json (PRIORITY) - SAME AS MAIN REPORT ====================
-    # Save original metrics.json values BEFORE they might get overwritten by HRV-calculated values
-    # These will be used on Page 2 (ECG waves) to show metrics.json values
-    original_metrics_from_json = {
-        "HR": 0, "PR": 0, "QRS": 0, "QT": 0, "QTc": 0, "ST": 0, "RR_ms": 0
+
+    rr_candidate = _safe_int(data.get("RR_ms", 0))
+    if rr_candidate <= 0 and hr_bpm_value > 0:
+        rr_candidate = int(60000 / hr_bpm_value)
+    data["RR_ms"] = rr_candidate
+
+    # Keep a local normalized metric snapshot for all later pages/header fields.
+    session_metrics = {
+        "HR": _safe_int(data.get("HR", 0)),
+        "PR": _safe_int(data.get("PR", 0)),
+        "QRS": _safe_int(data.get("QRS", 0)),
+        "QT": _safe_int(data.get("QT", 0)),
+        "QTc": _safe_int(data.get("QTc", 0)),
+        "ST": _safe_int(data.get("ST", 0)),
+        "RR_ms": _safe_int(data.get("RR_ms", 0)),
     }
-    if latest_metrics:
-        # ALWAYS save metrics.json values (for Page 2 - ECG waves)
-        original_metrics_from_json["HR"] = _safe_int(latest_metrics.get("HR_bpm", 0))
-        original_metrics_from_json["PR"] = _safe_int(latest_metrics.get("PR_ms", 0))
-        original_metrics_from_json["QRS"] = _safe_int(latest_metrics.get("QRS_ms", 0))
-        original_metrics_from_json["QT"] = _safe_int(latest_metrics.get("QT_ms", 0))
-        original_metrics_from_json["QTc"] = _safe_int(latest_metrics.get("QTc_ms", 0))
-        original_metrics_from_json["ST"] = _safe_int(latest_metrics.get("ST_ms", 0))
-        original_metrics_from_json["RR_ms"] = _safe_int(latest_metrics.get("RR_ms", 0))
-        if original_metrics_from_json["HR"] > 0 and original_metrics_from_json["RR_ms"] == 0:
-            original_metrics_from_json["RR_ms"] = int(60000 / original_metrics_from_json["HR"])
-        
-        print(f"📊 HRV Report: Saved metrics.json values for Page 2 (ECG waves):")
-        print(f"   HR={original_metrics_from_json['HR']}, PR={original_metrics_from_json['PR']}, QRS={original_metrics_from_json['QRS']}")
-        print(f"   QT={original_metrics_from_json['QT']}, QTc={original_metrics_from_json['QTc']}, ST={original_metrics_from_json['ST']}, RR={original_metrics_from_json['RR_ms']}")
-        
-        # Get all available metrics from metrics.json (SAME AS MAIN REPORT)
-        if data.get("PR", 0) == 0:
-            data["PR"] = original_metrics_from_json["PR"]
-        if data.get("QRS", 0) == 0:
-            data["QRS"] = original_metrics_from_json["QRS"]
-        if data.get("QT", 0) == 0:
-            data["QT"] = original_metrics_from_json["QT"]
-        if data.get("QTc", 0) == 0:
-            data["QTc"] = original_metrics_from_json["QTc"]
-        if data.get("ST", 0) == 0:
-            data["ST"] = original_metrics_from_json["ST"]
-        
-        print(f"📊 HRV Report: Loaded metrics from metrics.json: HR={data['HR']}, PR={data['PR']}, QRS={data['QRS']}, QT={data['QT']}, QTc={data['QTc']}, ST={data['ST']}")
+
+    # Override with live HRV-session metrics wherever available so the PDF
+    # reflects exactly what the completed HRV screen showed.
+    for key in ("HR", "PR", "QRS", "QT", "QTc", "ST"):
+        if live_session_metrics.get(key, 0) > 0:
+            session_metrics[key] = _safe_int(live_session_metrics[key])
+
+    data["HR"] = session_metrics["HR"]
+    data["Heart_Rate"] = session_metrics["HR"]
+    data["HR_bpm"] = session_metrics["HR"]
+    if data.get("beat", 0) == 0 or session_metrics["HR"] > 0:
+        data["beat"] = session_metrics["HR"]
+    data["PR"] = session_metrics["PR"]
+    data["QRS"] = session_metrics["QRS"]
+    data["QT"] = session_metrics["QT"]
+    data["QTc"] = session_metrics["QTc"]
+    data["ST"] = session_metrics["ST"]
+
+    if session_metrics["RR_ms"] <= 0 and session_metrics["HR"] > 0:
+        session_metrics["RR_ms"] = int(60000 / session_metrics["HR"])
+        data["RR_ms"] = session_metrics["RR_ms"]
+
+    print("📊 HRV Report: Using session-only metrics in generator:")
+    print(f"   HR={session_metrics['HR']}, PR={session_metrics['PR']}, QRS={session_metrics['QRS']}")
+    print(f"   QT={session_metrics['QT']}, QTc={session_metrics['QTc']}, ST={session_metrics['ST']}, RR={session_metrics['RR_ms']}")
     
     # Update beat value for observation table (SAME AS MAIN REPORT)
     if data.get("beat", 0) == 0:
@@ -2970,34 +3062,34 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
             avg_hr_from_5_minutes = 0
         
         print(f"📊 HRV-Specific Heart Rate Calculation (mean of per-minute HR values):")
-        print(f"   Original HR_bpm from metrics.json (12-lead ECG): {original_hr_bpm_from_metrics} bpm (NOT CHANGED)")
+        print(f"   Current session display HR_bpm: {session_metrics.get('HR', 0)} bpm")
         print(f"   ─────────────────────────────────────────────────────────────")
         print(f"   Per-minute HR values:")
         for i, hr_val in enumerate(hr_per_minute_for_report):
             print(f"   Min {i+1}: {hr_val:.2f} bpm")
         print(f"   ─────────────────────────────────────────────────────────────")
         print(f"   Calculation: mean(per-minute HR values) = {avg_hr_from_5_minutes:.2f} bpm")
-        print(f"   ✅ HRV-Specific BPM: {round(avg_hr_from_5_minutes) if avg_hr_from_5_minutes > 0 else 0} bpm (WILL BE SAVED to metrics.json as HR_bpm)")
-        print(f"   ✅ Original 12-lead ECG HR_bpm: {original_hr_bpm_from_metrics} bpm (saved as Original_HR_bpm for reference)\n")
+        print(f"   ✅ HRV-Specific BPM: {round(avg_hr_from_5_minutes) if avg_hr_from_5_minutes > 0 else 0} bpm (WILL BE SAVED as HRV session HR_bpm)")
+        print(f"   ✅ Current session display HR_bpm retained for report header: {session_metrics.get('HR', 0)} bpm\n")
     else:
         avg_hr_from_5_minutes = 0
         print(f"⚠️ No valid per-minute HR values available for HRV-specific BPM calculation")
-        print(f"   Original HR_bpm from metrics.json (12-lead ECG): {original_hr_bpm_from_metrics} bpm (NOT CHANGED)\n")
+        print(f"   Current session display HR_bpm retained for report header: {session_metrics.get('HR', 0)} bpm\n")
     
     # Save HRV-specific BPM separately (for Page 3 only)
     hrv_specific_bpm = round(avg_hr_from_5_minutes)
     
-    # Use original HR_bpm from metrics.json (saved earlier, NOT to change it)
-    # original_hr_bpm_from_metrics was already saved above from metrics.json
-    
-    # Keep data dictionary with metrics.json values for Page 1 and Page 2
-    # Only Page 3 will use HRV-specific values
-    # DO NOT overwrite data["HR_avg"], data["beat"] here - keep original metrics.json values
+    # Keep data dictionary with current HRV session values for Page 1 and Page 2.
+    # Only the HRV analysis section uses the 5-minute aggregate values.
     
     # ==================== PAGE SETUP (MIXED: Page 1 Portrait, Page 2 Landscape) ====================
     
     # Patient org and phone for logo/footer callback
-    patient_org = patient.get("Org.", "") if patient else ""
+    patient_org = (
+        patient.get("Org. Name", "") or
+        patient.get("Org.", "")
+    ) if patient else ""
+    patient_org_address = patient.get("Org. Address", "") if patient else ""
     patient_doctor_mobile = patient.get("doctor_mobile", "") if patient else ""
     
     # Define callback function for headers/footers BEFORE creating templates
@@ -3070,51 +3162,17 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
                 canvas.line(0, y, page_width, y)
                 y += box_height_pts
         
-        # STEP 1.5: Draw Org. and Phone No. on Page 1 (POSITIONED BELOW DATE/TIME, NEAR LOGO)
-        if canvas.getPageNumber() == 1:
-            canvas.saveState()
-            # Position on right side, below Date/Time labels, near logo position
-            # Logo is at (page_width - 155, 565), Date/Time at (685, 540/525)
-            x_pos = 685  # Same X as Date/Time labels (right side)
-            
-            # Org label: 15 points below Time label (525 - 15 = 510) + 15 points up = 525
-            y_pos = 525
-            
-            canvas.setFont("Helvetica-Bold", 10)
-            canvas.setFillColor(colors.black)
-            org_label = "Org:"
-            canvas.drawString(x_pos, y_pos, org_label)
-            
-            org_label_width = canvas.stringWidth(org_label, "Helvetica-Bold", 10)
-            canvas.setFont("Helvetica", 10)
-            canvas.drawString(x_pos + org_label_width + 5, y_pos, patient_org if patient_org else "")
-            
-            # Phone No label: 15 points below Org label (525 + 15 = 540)
-            y_pos = 540
-            
-            canvas.setFont("Helvetica-Bold", 10)
-            canvas.setFillColor(colors.black)
-            phone_label = "Phone No:"
-            canvas.drawString(x_pos, y_pos, phone_label)
-            
-            phone_label_width = canvas.stringWidth(phone_label, "Helvetica-Bold", 10)
-            canvas.setFont("Helvetica", 10)
-            canvas.drawString(x_pos + phone_label_width + 5, y_pos, patient_doctor_mobile if patient_doctor_mobile else "")
-            
-            canvas.restoreState()
-        
-        # STEP 2: Draw logo (REPOSITIONED - lower from top)
+        # STEP 2: Draw logo (skip on landscape Page 1 so header uses org details instead)
         # Use resource_path helper for PyInstaller compatibility
         png_path = _get_resource_path("assets/Deckmountimg.png")
         webp_path = _get_resource_path("assets/Deckmount.webp")
         logo_path = png_path if os.path.exists(png_path) else webp_path
         
-        if os.path.exists(logo_path):
+        if os.path.exists(logo_path) and canvas.getPageNumber() != 1:
             canvas.saveState()
-            if canvas.getPageNumber() in [1, 2]:  # Landscape pages
+            if canvas.getPageNumber() in [2]:  # Landscape page 2
                 logo_w, logo_h = 120, 40
                 page_width, page_height = canvas._pagesize
-                # Align with 12:1 format positioning
                 x = page_width - logo_w - 35
                 y = page_height - logo_h
             else:
@@ -3186,16 +3244,19 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     age = patient.get("age", "")
     gender = patient.get("gender", "")
     date_time = patient.get("date_time", "")
+    org_name = patient.get("Org. Name", "") or patient.get("Org.", "") or ""
+    org_address = patient.get("Org. Address", "") or ""
+    doctor_mobile = patient.get("doctor_mobile", "") or ""
     full_name = f"{first_name} {last_name}".strip()
     date_time_str = date_time
     
-    # PR, QRS, QT, QTc, RR, RV5+SV1 etc. from original_metrics_from_json
-    hr_val = original_metrics_from_json.get("HR", 0)
-    rr_val = original_metrics_from_json.get("RR_ms", 0)
-    pr_val = original_metrics_from_json.get("PR", 0)
-    qrs_val = original_metrics_from_json.get("QRS", 0)
-    qt_val = original_metrics_from_json.get("QT", 0)
-    qtc_val = original_metrics_from_json.get("QTc", 0)
+    # PR, QRS, QT, QTc, RR etc. from current HRV session values only
+    hr_val = session_metrics.get("HR", 0)
+    rr_val = session_metrics.get("RR_ms", 0)
+    pr_val = session_metrics.get("PR", 0)
+    qrs_val = session_metrics.get("QRS", 0)
+    qt_val = session_metrics.get("QT", 0)
+    qtc_val = session_metrics.get("QTc", 0)
     
     # ==================== CALCULATE CONCLUSIONS (NEEDED FOR ECG GRAPHS PAGE) ====================
     # Conclusions are still needed for the conclusion box on the ECG graphs page (now Page 1)
@@ -3295,20 +3356,16 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
         box_width = 5.0 * mm_unit  # 1 major box = 5mm = 14.173228 points
         minor_box_width = 1.0 * mm_unit  # 1 minor box = 1mm = 2.834646 points
         
-        # NEW POSITION: Just 1mm from left edge (shifted 2 boxes left from previous 11mm)
-        # Previous: 11mm (2 boxes + 1mm), Now: 1mm (no boxes, just 1mm offset)
-        x_pos = minor_box_width  # Just 1mm from left = 2.83 points
+        # Keep the notch fully inside the strip and begin the waveform after it
+        x_pos = (2.0 * box_width) + minor_box_width  # 2 large boxes + 1mm offset
         
         right_gap_boxes = 2  # 2 boxes gap from right
-        left_gap_boxes = 0  # No full box gap
-        
-        # Width: Use maximum available - 1mm (left offset) - 2 boxes (right gap)
-        # Total landscape width ≈ 59 boxes, so: 59 - 0.2 (1mm) - 2 (right) = 56.8 boxes
-        plotting_boxes = 56.8  # Maximum plotting area
-        ecg_width = plotting_boxes * box_width  # 56.8 boxes ≈ 804.6 points
+        right_gap_width = right_gap_boxes * box_width
+        available_width = max(50.0, total_width - x_pos - right_gap_width)
+        ecg_width = available_width
         ecg_height = 75  # Fits 5 graphs in landscape height with 80pt spacing
         
-        print(f"📐 Strip {segment_idx + 1}: 1mm from left (x={x_pos:.2f}), Width={ecg_width:.2f} (56.8 boxes), End={x_pos+ecg_width:.2f}")
+        print(f"📐 Strip {segment_idx + 1}: x={x_pos:.2f}, Width={ecg_width:.2f}, End={x_pos+ecg_width:.2f}")
         
         # ==================== ADD CALIBRATION NOTCH (FOR ALL STRIPS - ALWAYS) ====================
         # Notch appears at the beginning of each strip, regardless of data availability
@@ -3325,8 +3382,9 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
         notch_height_mm = 1.0 * wave_gain_mm_mv  # 1mV × gain
         notch_height = notch_height_mm * mm_unit  # Convert to points
         
-        # Position: 2mm from left edge (always positive, never clips)
-        notch_x = 2.0 * mm_unit  # 2mm = 5.67 pts (guaranteed inside drawing)
+        # Position notch inside the strip area like the reference report.
+        first_box_width = 5.0 * mm_unit
+        notch_x = x_pos - (1.5 * first_box_width)
         
         # Y position: Center of the strip baseline - SHIFTED DOWN 25 points
         center_y = y_pos + (ecg_height / 2.0)  # Center of the graph in points
@@ -3350,8 +3408,8 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
         notch_path.lineTo(notch_x + notch_width, notch_y_base + notch_height)
         # Go down back to baseline
         notch_path.lineTo(notch_x + notch_width, notch_y_base)
-        # Connect notch end to ECG starting point (baseline continuation) - SHIFTED DOWN 25 points
-        notch_path.lineTo(x_pos + mm_unit, center_y + 25)
+        # Small forward baseline tick after the notch, same style as clean ECG reports.
+        notch_path.lineTo(notch_x + notch_width + (2.0 * mm_unit), notch_y_base)
         
         # Add notch to drawing (ALWAYS, regardless of data)
         master_drawing.add(notch_path)
@@ -3390,14 +3448,37 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
             # Get ECG data for this segment
             if len(segment_data) > 0:
                 values = np.array([d['value'] for d in segment_data], dtype=float)
+
+                # The generated PDF reflects the same filtered signal quality.
+                adc_data = np.array(values, dtype=float)
+                try:
+                    from ecg.ecg_filters import apply_dft_filter, apply_emg_filter, apply_ac_filter, stabilize_report_edges
+                    dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
+                    emg_setting = str(settings_manager.get_setting("filter_emg", "off")).strip()
+                    ac_setting = str(settings_manager.get_setting("filter_ac", "off")).strip()
+
+                    if dft_setting not in ("off", ""):
+                        adc_data = apply_dft_filter(adc_data, float(sampling_rate), dft_setting)
+                    if emg_setting not in ("off", ""):
+                        adc_data = apply_emg_filter(adc_data, float(sampling_rate), emg_setting)
+                    if ac_setting in ("50", "60"):
+                        adc_data = apply_ac_filter(adc_data, float(sampling_rate), ac_setting)
+                    adc_data = stabilize_report_edges(adc_data, float(sampling_rate))
+                except Exception as filter_err:
+                    print(f"⚠️ HRV report filter apply failed for strip {segment_idx + 1}: {filter_err}")
+
+                # Keep the final strip visually aligned with the live display path.
+                try:
+                    if len(adc_data) > 5:
+                        from scipy.ndimage import gaussian_filter1d
+                        adc_data = gaussian_filter1d(adc_data, sigma=2)
+                except Exception as smooth_err:
+                    print(f"⚠️ HRV gaussian smoothing failed for strip {segment_idx + 1}: {smooth_err}")
                 
                 from reportlab.lib.units import mm as mm_unit
-                t = np.linspace(x_pos + mm_unit, x_pos + ecg_width, len(values))
+                t = np.linspace(x_pos, x_pos + ecg_width, len(adc_data))
                 
                 # ========== EXACT SAME SCALING LOGIC AS MAIN REPORT (Lines 2665-2740) ==========
-                
-                # Step 1: Convert ADC data to numpy array (SAME AS MAIN REPORT)
-                adc_data = np.array(values, dtype=float)
                 
                 # Step 1: Apply baseline correction for Lead II
                 data_mean = np.mean(adc_data)
@@ -3413,6 +3494,31 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
                 # Chahe baseline wander kitna bhi ho (respiration mode, Fluke data, etc.)
                 # This ensures waveform is exactly centered on grid line regardless of baseline wander
                 centered_adc = baseline_corrected - np.mean(baseline_corrected)
+
+                # Final strip-edge settling:
+                # gently taper the strip edges back to the centered baseline so
+                # the printed strip starts/ends flat like the reference reports.
+                try:
+                    edge_n = max(12, int(0.18 * float(sampling_rate)))
+                except Exception:
+                    edge_n = 90
+                edge_n = min(edge_n, max(12, len(centered_adc) // 8))
+                if len(centered_adc) > (edge_n * 3):
+                    settled_adc = centered_adc.copy()
+                    baseline_target = 0.0
+
+                    head_ramp = np.linspace(0.0, 1.0, edge_n, endpoint=True)
+                    tail_ramp = np.linspace(0.0, 1.0, edge_n, endpoint=True)
+
+                    # Start from baseline and smoothly release into the waveform.
+                    settled_adc[:edge_n] = ((1.0 - head_ramp) * baseline_target) + (head_ramp * settled_adc[:edge_n])
+                    # Force the tail to settle back onto baseline at the final sample.
+                    settled_adc[-edge_n:] = ((1.0 - tail_ramp) * settled_adc[-edge_n:]) + (tail_ramp * baseline_target)
+
+                    # Give the final ~80 ms an extra clamp to remove any visible tail kick.
+                    hard_tail_n = max(4, edge_n // 3)
+                    settled_adc[-hard_tail_n:] = np.linspace(settled_adc[-hard_tail_n], baseline_target, hard_tail_n, endpoint=True)
+                    centered_adc = settled_adc
                 
                 # Step 3: Calculate ADC per box (EXACT SAME AS MAIN REPORT line 2689-2714)
                 # LEAD-SPECIFIC ADC PER BOX CONFIGURATION
@@ -3509,11 +3615,15 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     filter_line = f"{wave_speed_mm_s} mm/s   {filter_band}   AC : {ac_frequency}   {wave_gain_mm_mv} mm/mV"
 
     # ── ROW 1 — Patient identity (top-left) ──────────────────────────────────
-    _fs9 = 9
-    master_drawing.add(String(0, 525, f"Name: {full_name}",
-                               fontSize=_fs9, fontName="Helvetica-Bold", fillColor=colors.black))
-    master_drawing.add(String(0, 513, f"Age: {age}   Gender: {gender}   Type: Standard",
-                               fontSize=_fs9, fontName="Helvetica", fillColor=colors.black))
+    patient_name_label = String(5, 525, f"Name: {full_name}",
+                                fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    master_drawing.add(patient_name_label)
+    patient_age_label = String(5, 511, f"Age: {age}",
+                               fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    master_drawing.add(patient_age_label)
+    patient_gender_label = String(5, 497, f"Gender: {gender}",
+                                  fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    master_drawing.add(patient_gender_label)
 
     # ── LEFT metrics block (x=210) — uses ONLY HRV-computed values ───────────
     _LX = 210; _fs = 10
@@ -3529,12 +3639,18 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     # master_drawing.add(String(_RX, 525, f"P/QRS/T : {p_axis}/{qrs_axis_str}/{t_axis_str}\u00b0", fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
     # master_drawing.add(String(_RX, 511, f"RV5/SV1 : {rv5:.3f}/{sv1:.3f} mV",                    fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
     # master_drawing.add(String(_RX, 497, f"RV5+SV1 : {rv5_sv1_sum:.3f} mV",                      fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
-    master_drawing.add(String(_RX, 483, f"QTCF     : {qtcf_text}",                               fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
-    master_drawing.add(String(_RX, 469, filter_line,                                             fontSize=8,   fontName="Helvetica", fillColor=colors.black))
+    master_drawing.add(String(_RX, 525, f"QTCF     : {qtcf_text}",                               fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
+    master_drawing.add(String(_RX, 511, filter_line,                                             fontSize=8,   fontName="Helvetica", fillColor=colors.black))
 
-    # ── Date/Time (far right, small text) ────────────────────────────────────
-    master_drawing.add(String(655, 525, f"Date: {date_part}", fontSize=8, fontName="Helvetica", fillColor=colors.grey))
-    master_drawing.add(String(655, 514, f"Time: {time_part}", fontSize=8, fontName="Helvetica", fillColor=colors.grey))
+    # ── Date/Time (top-right) ────────────────────────────────────────────────
+    master_drawing.add(String(_RX, 486, f"Date & Time: {date_part} {time_part}",
+                              fontSize=10, fontName="Helvetica", fillColor=colors.black))
+    master_drawing.add(String(690, 525, f"Org. Name: {org_name}",
+                              fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black))
+    master_drawing.add(String(690, 511, f"Org. Address: {org_address}",
+                              fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black))
+    master_drawing.add(String(690, 497, f"Phone No: {doctor_mobile}",
+                              fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black))
 
     # ── Lead label (just above the first strip) ───────────────────────────────
     # Removed the global Lead label because it overlaps with the "Lead II (First minute)" label per strip.
@@ -4091,8 +4207,10 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
         import traceback
         traceback.print_exc()
     
-    # Create Radar Chart - Standard professional colors
-    fig_radar, ax_radar = plt.subplots(figsize=(5, 5), subplot_kw=dict(projection='polar'))  # Increased size
+    # Create Radar Chart - polished report styling
+    fig_radar, ax_radar = plt.subplots(figsize=(4.8, 4.5), subplot_kw=dict(projection='polar'))
+    fig_radar.patch.set_facecolor('#f7f7f5')
+    ax_radar.set_facecolor('#fbfbfa')
     
     # Radar chart parameters (normalize to 0-100 scale for display)
     
@@ -4117,18 +4235,37 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     values += values[:1]  # Close the plot
     angles += angles[:1]
     
-    # Plot - Standard report colors (professional green)
-    ax_radar.plot(angles, values, 'o-', linewidth=2.5, color='#228B22', markersize=6)
-    ax_radar.fill(angles, values, alpha=0.3, color='#32CD32')
+    # Orient the chart for a cleaner report look.
+    ax_radar.set_theta_offset(np.pi / 2.0)
+    ax_radar.set_theta_direction(-1)
+
+    # Plot - stronger outline, softer fill, cleaner markers
+    ax_radar.plot(
+        angles, values,
+        color='#1f6f43',
+        linewidth=2.2,
+        marker='o',
+        markersize=4.8,
+        markerfacecolor='#2fbf71',
+        markeredgecolor='#13462c',
+        markeredgewidth=0.7,
+        zorder=3
+    )
+    ax_radar.fill(angles, values, alpha=0.20, color='#78d69b', zorder=2)
     ax_radar.set_xticks(angles[:-1])
-    ax_radar.set_xticklabels(categories, fontsize=9)
+    ax_radar.set_xticklabels(categories, fontsize=8, fontweight='bold', color='#374151')
     ax_radar.set_ylim(0, 100)
-    ax_radar.set_title('Radar chart ', fontsize=12, fontweight='bold', pad=20)
-    ax_radar.grid(True)
+    ax_radar.set_yticks([20, 40, 60, 80, 100])
+    ax_radar.set_yticklabels(['20', '40', '60', '80', '100'], fontsize=6.5, color='#6b7280')
+    ax_radar.set_rlabel_position(92)
+    ax_radar.set_title('Radar Chart', fontsize=11, fontweight='bold', color='#1f2937', pad=14)
+    ax_radar.grid(color='#cbd5e1', alpha=0.8, linewidth=0.7)
+    ax_radar.spines['polar'].set_color('#4b5563')
+    ax_radar.spines['polar'].set_linewidth(0.9)
     
     # Save radar chart
     temp_radar_chart_path = os.path.join(hrv_charts_dir, f'radar_chart_{timestamp}.png')
-    fig_radar.savefig(temp_radar_chart_path, dpi=100, facecolor='white')
+    fig_radar.savefig(temp_radar_chart_path, dpi=120, facecolor=fig_radar.get_facecolor(), bbox_inches='tight')
     plt.close(fig_radar)
     
     # HRV CLASSIFICATION FIX (Issue 3): Add evidence-based interpretation labels.
@@ -4185,14 +4322,9 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     metrics_table_data = [
         # Row 1: Metric values
         [Paragraph(f"<b>SDANN:</b> {sdann_display}", styles['Normal']),
-         Paragraph(f"<b>SDNN:</b> {sdnn_display} <font color='{sdnn_color}'>({sdnn_label})</font>", styles['Normal']),
-         Paragraph(f"<b>RMSSD:</b> {rmssd_display} <font color='{rmssd_color}'>({rmssd_label})</font>", styles['Normal']),
-         Paragraph(f"<b>NN50:</b> {nn50_display}", styles['Normal'])],
-        # Row 2: Interpretation summary (spans all columns)
-        [Paragraph(f"<b>Interpretation:</b> <font color='{hrv_status_color}'>{hrv_status}</font>"
-                   f" &nbsp;|&nbsp; Reference: SDNN ≥50ms, RMSSD ≥20ms = Normal (ESC/AHA Task Force 1996)",
-                   styles['Normal']),
-         "", "", ""],
+         Paragraph(f"<b>SDNN:</b> {sdnn_display}", styles['Normal']),
+         Paragraph(f"<b>RMSSD:</b> {rmssd_display}", styles['Normal']),
+         Paragraph(f"<b>NN50:</b> {nn50_display}", styles['Normal'])]
     ]
     
     # Further increased column widths for MORE gap between metrics (to fill entire container width)
@@ -4216,7 +4348,7 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     time_domain_table = Table([
         [Image(temp_rr_chart_path, width=245, height=200),
          Image(temp_hr_chart_path, width=245, height=200),
-         Image(temp_radar_chart_path, width=245, height=200)]
+         Image(temp_radar_chart_path, width=220, height=180)]
     ], colWidths=[260, 260, 260])
     
     time_domain_table.setStyle(TableStyle([
@@ -4382,16 +4514,15 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
                 plot_psd = np.interp(plot_freqs, freqs, psd_smooth, right=0)
                 decay = np.exp(-plot_freqs * 2.0)
                 plot_psd = plot_psd * decay + (np.max(psd_smooth) * 0.01 * decay)
+                # Never allow the rendered PSD curve to fall below the baseline.
+                plot_psd = np.clip(plot_psd, 0, None)
                 
                 # Plot the smooth curve
                 ax_psd.plot(plot_freqs, plot_psd, color='black', linewidth=1.2, alpha=0.9)
                 
-                # Highlight LF and HF areas (on the actual frequency range)
+                # Highlight LF and HF areas
                 lf_plot_idx = np.logical_and(plot_freqs >= 0.04, plot_freqs <= 0.15)
                 hf_plot_idx = np.logical_and(plot_freqs >= 0.15, plot_freqs <= 0.40)
-                
-                ax_psd.fill_between(plot_freqs[lf_plot_idx], plot_psd[lf_plot_idx], color='#6497b1', alpha=0.4)
-                ax_psd.fill_between(plot_freqs[hf_plot_idx], plot_psd[hf_plot_idx], color='#b16464', alpha=0.4)
                 
                 # Formatting
                 ax_psd.set_xlim(0, 0.5) # Focus on the active HRV range
@@ -4400,8 +4531,15 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
                 ax_psd.set_xticks([0, 0.1, 0.2, 0.3, 0.4, 0.5])
                 ax_psd.set_xticklabels(['0Hz', '0.1Hz', '0.2Hz', '0.3Hz', '0.4Hz', '0.5Hz'], fontsize=8)
                 ax_psd.set_yticks([])
-                
-                for spine in ax_psd.spines.values(): spine.set_visible(False)
+
+                # Draw a clear black baseline so the chart floor is visible in the PDF.
+                ax_psd.axhline(0, color='black', linewidth=1.0, zorder=0)
+                ax_psd.spines['bottom'].set_visible(True)
+                ax_psd.spines['bottom'].set_color('black')
+                ax_psd.spines['bottom'].set_linewidth(1.0)
+                for side in ('left', 'right', 'top'):
+                    ax_psd.spines[side].set_visible(False)
+                ax_psd.tick_params(axis='x', colors='black', width=0.8, length=4)
                 
                 plt.tight_layout()
                 temp_psd_chart_path = os.path.join(hrv_charts_dir, f'psd_chart_{timestamp}.png')
@@ -4515,7 +4653,7 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
             "QRS_ms": data.get("QRS", 0),
             "QT_ms": data.get("QT", 0),
             "QTc_ms": data.get("QTc", 0),
-            "ST_ms": original_metrics_from_json.get("ST", 0),
+            "ST_ms": session_metrics.get("ST", 0),
             "RR_ms": hrv_rr_ms,  # Calculated from HRV-specific HR
             # Additional HRV-specific metrics
             "HRV_SDNN_ms": float(sdnn) if sdnn else 0,
@@ -4526,8 +4664,8 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
             "HRV_LF_power": float(lf_power) if 'lf_power' in locals() else 0,
             "HRV_HF_power": float(hf_power) if 'hf_power' in locals() else 0,
             "HRV_LF_HF_ratio": float(lf_hf_ratio) if 'lf_hf_ratio' in locals() else 0,
-            # Original 12-lead ECG HR for reference
-            "Original_HR_bpm": original_metrics_from_json.get("HR", 0),  # 12-lead ECG HR (for reference)
+            # Retain the current session header HR for reference/debugging.
+            "Original_HR_bpm": session_metrics.get("HR", 0),
         }
         
         hrv_metrics_path = os.path.join(reports_dir, 'hrv_metric.json')
