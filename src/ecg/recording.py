@@ -797,7 +797,7 @@ class ECGMenu(QGroupBox):
                                       max(8, min(15, int(margin_size * 0.3))), 
                                       max(8, min(15, int(margin_size * 0.3))))
         
-        labels = ["Org.", "Doctor", "Phone No.", "Patient Name"]
+        labels = ["Org. Name", "Org. Address", "Doctor", "Phone No.", "Patient Name"]
         entries = {}
 
         # Responsive form fields
@@ -851,6 +851,8 @@ class ECGMenu(QGroupBox):
             form_layout.addLayout(row)
             entries[label] = entry
         
+        entries["Org. Name"].setMaxLength(24)
+        entries["Org. Address"].setMaxLength(24)
         entries["Doctor"].setMaxLength(20)
         entries["Phone No."].setMaxLength(10)
         entries["Patient Name"].setMaxLength(20) 
@@ -964,9 +966,14 @@ class ECGMenu(QGroupBox):
                 pd = prefill
 
                 
-                # Org. (optional in cached data)
+                # Org. Name (optional in cached data)
                 if "Org." in pd and pd["Org."]:
-                    entries["Org."].setText(pd["Org."]) 
+                    entries["Org. Name"].setText(pd["Org."])
+                elif "Org. Name" in pd and pd["Org. Name"]:
+                    entries["Org. Name"].setText(pd["Org. Name"])
+                # Org. Address (optional in cached data)
+                if "Org. Address" in pd and pd["Org. Address"]:
+                    entries["Org. Address"].setText(pd["Org. Address"])
                 # Doctor
                 if "doctor" in pd and pd["doctor"]:
                     entries["Doctor"].setText(pd["doctor"])
@@ -1026,7 +1033,7 @@ class ECGMenu(QGroupBox):
         return widget
 
     def submit_ecg_details(self, entries, gender_menu):
-        values = {label: entries[label].text().strip() for label in ["Org.", "Doctor", "Phone No.", "Patient Name", "Age"]}
+        values = {label: entries[label].text().strip() for label in ["Org. Name", "Org. Address", "Doctor", "Phone No.", "Patient Name", "Age"]}
         values["Gender"] = gender_menu.currentText()
 
         if any(v == "" for v in values.values()) or values["Gender"] == "Select":
@@ -1045,7 +1052,9 @@ class ECGMenu(QGroupBox):
                 "gender": values["Gender"],
                 "doctor": values["Doctor"],
                 "doctor_mobile": values["Phone No."],
-                "Org.": values.get("Org.", ""),
+                "Org.": values.get("Org. Name", ""),
+                "Org. Name": values.get("Org. Name", ""),
+                "Org. Address": values.get("Org. Address", ""),
                 "patient_name": values.get("Patient Name", ""),
                 "date_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             }

@@ -3302,20 +3302,13 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
         webp_path = _get_resource_path("assets/Deckmount.webp")
         logo_path = png_path if os.path.exists(png_path) else webp_path
         
-        if os.path.exists(logo_path):
+        if os.path.exists(logo_path) and canvas.getPageNumber() != 1:
             canvas.saveState()
-            if canvas.getPageNumber() in [1]:
-                # Page 1 is LANDSCAPE - logo at top right
-                logo_w, logo_h = 120, 40
-                page_width, page_height = canvas._pagesize
-                x = page_width - logo_w - 35
-                y = page_height - logo_h
-            else:
-                # Page 1 is PORTRAIT - position at top right (very close to top)
-                logo_w, logo_h = 120, 40
-                page_height = 842  # A4 portrait height
-                x = 595 - logo_w - 30  # 595 = A4 width, 30 = right margin
-                y = page_height - 35  # 35 points from top 
+            # Non-landscape pages keep the existing top-right logo placement
+            logo_w, logo_h = 120, 40
+            page_height = 842  # A4 portrait height
+            x = 595 - logo_w - 30  # 595 = A4 width, 30 = right margin
+            y = page_height - 35  # 35 points from top
             try:
                 canvas.drawImage(logo_path, x, y, width=logo_w, height=logo_h, preserveAspectRatio=True, mask='auto')
             except Exception:
@@ -3412,12 +3405,14 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     from datetime import datetime
     date_time_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     date_time = date_time_now
-    doctor = pick("doctor") or "—"
-    doctor_mobile = pick("doctor_mobile") or "—"
-    org_name = pick("Org.") or pick("org") or "—"
+    doctor = pick("doctor") or ""
+    doctor_mobile = pick("doctor_mobile") or ""
+    org_name = pick("Org. Name") or pick("Org.") or pick("org") or ""
+    org_address = pick("Org. Address") or ""
     
     # For canvas labels (top-left)
     patient_org = org_name
+    patient_org_address = org_address
     patient_doctor_mobile = doctor_mobile
     full_name = f"{first_name} {last_name}".strip()
     date_time_str = date_time
@@ -3607,8 +3602,17 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
         ecg_width = (54.0 if lead_name == "II" else 27.0) * box_width_points
         if ecg_width <= 0:
             return None
-        gap = mm_unit if lead_name in ["V1", "V2", "V3", "II"] else 0
-        t = np.linspace(x_pos + gap, x_pos + ecg_width, len(adc_data))
+
+        notched_leads = ["V1", "V2", "V3", "II"]
+        trace_start_x = x_pos
+        if lead_name in notched_leads:
+            # Leave visible room for the calibration pulse and a short baseline before the waveform begins.
+            notch_start_offset = 1.0 * mm_unit
+            notch_width = 5.0 * mm_unit
+            notch_tail = 2.0 * mm_unit
+            post_notch_gap = 0.4 * mm_unit
+            trace_start_x = x_pos + notch_start_offset + notch_width + notch_tail + post_notch_gap
+        t = np.linspace(trace_start_x, x_pos + ecg_width, len(adc_data))
         
         # Draw ECG waveform
         ecg_path = Path(fillColor=None, 
@@ -3621,17 +3625,21 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
         for i in range(1, len(t)):
             ecg_path.lineTo(t[i], ecg_normalized[i])
                 
-        # Calibration notch (only for V1, V2, V3, II)
+        # Calibration notch styled like the test report for the requested leads only.
         notch_path = None
-        if lead_name in ["V1", "V2", "V3", "II"]:
-            notch_width_mm = 5.0   # width 5mm
-            notch_height_mm = 10.0 # height 10mm
+        if lead_name in notched_leads:
+            try:
+                notch_boxes = settings_manager.get_calibration_notch_boxes()
+            except Exception:
+                notch_boxes = 2.0
+
+            notch_width_mm = 5.0
+            notch_height_mm = notch_boxes * 5.0
             notch_width = notch_width_mm * mm_unit
             notch_height = notch_height_mm * mm_unit
-            
-            # Place notch inside first box, shifted left (near first-half)
-            first_box_width = 5.0 * mm_unit
-            notch_x = x_pos + (first_box_width * -1.5)
+
+            # Draw the notch inside the strip instead of hanging outside the page margin.
+            notch_x = x_pos + (1.0 * mm_unit)
             notch_y_base = center_y
             
             notch_path = Path(
@@ -3645,7 +3653,7 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
             notch_path.lineTo(notch_x, notch_y_base + notch_height)
             notch_path.lineTo(notch_x + notch_width, notch_y_base + notch_height)
             notch_path.lineTo(notch_x + notch_width, notch_y_base)
-            # Small forward tick to the right (extra 2mm) for clearer notch end
+            # Small forward tail to match the clinical calibration pulse look.
             notch_path.lineTo(notch_x + notch_width + (2.0 * mm_unit), notch_y_base)
         
         # Dotted continuation / markers
@@ -3731,7 +3739,7 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
             graph_width = column_width - 40
             
             # Add lead label
-            lead_label = String(left_col_x + 5, y_pos + lead_height - 10, lead_name,
+            lead_label = String(left_col_x + 5, y_pos + lead_height + 4, lead_name,
                                fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
             master_drawing.add(lead_label)
             
@@ -3760,7 +3768,7 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
             
             # Add lead label, also shifted 20mm to the right
             lead_label_x = right_col_x + 5 + v4_v5_v6_shift  # Shift label 20mm to the right
-            lead_label = String(lead_label_x, y_pos + lead_height - 10, lead_name,
+            lead_label = String(lead_label_x, y_pos + lead_height + 4, lead_name,
                                fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
             master_drawing.add(lead_label)
             
@@ -3786,7 +3794,7 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
         graph_width = lead_ii_width - 40
         
         # Add Lead II label
-        lead_ii_label = String(lead_ii_x + 5, lead_ii_y + lead_ii_height - 10, "Lead II",
+        lead_ii_label = String(lead_ii_x + 5, lead_ii_y + lead_ii_height + 4, "Lead II",
                               fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
         master_drawing.add(lead_ii_label)
         
@@ -3829,20 +3837,16 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     else:
         date_part, time_part = "____", "____"
     
-    date_label = String(680, 540, f"Date: {date_part}",
-                       fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(date_label)
-    
-    time_label = String(680, 525, f"Time: {time_part}",
-                       fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(time_label)
-
-    # Org. and Phone No. labels below Date/Time
-    org_label = String(680, 510, f"Org: {patient_org}",
+    # Right-side contact block on landscape page
+    org_name_label = String(680, 540, f"Org. Name: {patient_org}",
                     fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
-    master_drawing.add(org_label)
+    master_drawing.add(org_name_label)
     
-    phone_label = String(680, 495, f"Phone No: {patient_doctor_mobile}",
+    org_address_label = String(680, 525, f"Org. Address: {patient_org_address}",
+                      fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
+    master_drawing.add(org_address_label)
+
+    phone_label = String(680, 510, f"Phone No: {patient_doctor_mobile}",
                       fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
     master_drawing.add(phone_label)
     
@@ -3977,17 +3981,17 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     qtc_label = String(210, 465, f"QTc   : {QTc} ms", fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(qtc_label)
     
-    # RIGHT COLUMN - P/QRS/T, RV5/SV1, RV5+SV1, QTcF, ST
-    p_qrs_label = String(420, 540, f"P/QRS/T  : {p_axis_str}/{qrs_axis_str}/{t_axis_str}", fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(p_qrs_label)
+    # RIGHT COLUMN - temporarily hidden per request
+    # p_qrs_label = String(420, 540, f"P/QRS/T  : {p_axis_str}/{qrs_axis_str}/{t_axis_str}", fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    # master_drawing.add(p_qrs_label)
     
-    rv5_sv_label = String(420, 525, f"RV5/SV1  : {rv5_mv:.3f} mV/{sv1_mv:.3f} mV", fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(rv5_sv_label)
+    # rv5_sv_label = String(420, 525, f"RV5/SV1  : {rv5_mv:.3f} mV/{sv1_mv:.3f} mV", fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    # master_drawing.add(rv5_sv_label)
     
-    rv5_sv1_sum_label = String(420, 510, f"RV5+SV1 : {rv5_sv1_sum:.3f} mV", fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(rv5_sv1_sum_label)
+    # rv5_sv1_sum_label = String(420, 510, f"RV5+SV1 : {rv5_sv1_sum:.3f} mV", fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    # master_drawing.add(rv5_sv1_sum_label)
     
-    qtcf_label = String(420, 495, f"QTCF       : {qtcf_ms} ms" if qtcf_ms > 0 else "QTCF       : --", fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    qtcf_label = String(420, 540, f"QTCF       : {qtcf_ms} ms" if qtcf_ms > 0 else "QTCF       : --", fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(qtcf_label)
     
     # ST removed per user request
@@ -4006,8 +4010,15 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     else:
         filter_band = "Filter: Off"
     master_drawing.add(String(
-        420, 465,
+        420, 525,
         f"{wave_speed_mm_s} mm/s   {filter_band}   AC : {ac_frequency}   {wave_gain_mm_mv} mm/mV",
+        fontSize=10,
+        fontName="Helvetica",
+        fillColor=colors.black,
+    ))
+    master_drawing.add(String(
+        420, 492,
+        f"Date & Time: {date_part} {time_part}",
         fontSize=10,
         fontName="Helvetica",
         fillColor=colors.black,
@@ -4018,23 +4029,23 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     doctor = doctor or ""
     label_text = "Doctor Name: "
     
-    doctor_name_label = String(10, 50, "Doctor Name: ",  # X=10 (visible, inside drawing)
+    doctor_name_label = String(10, 74, "Doctor Name: ",  # shifted further up to clear footer
                               fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
     master_drawing.add(doctor_name_label)
     
     if doctor:
         value_x = 10 + stringWidth(label_text, "Helvetica-Bold", 10) + 6
-        doctor_name_value = String(value_x, 50, doctor,  # Starts after "Doctor Name: " label
+        doctor_name_value = String(value_x, 74, doctor,  # Starts after "Doctor Name: " label
                                 fontSize=10, fontName="Helvetica", fillColor=colors.black)
         master_drawing.add(doctor_name_value)
     
-    doctor_sign_label = String(10, 35, "Doctor Sign: ",  # X=10 (visible, inside drawing)
+    doctor_sign_label = String(10, 59, "Doctor Sign: ",  # shifted further up to clear footer
                               fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
     master_drawing.add(doctor_sign_label)
     
     # ==================== CONCLUSION BOX ON PAGE 2 (LANDSCAPE MODE - ADJUSTED FOR 780 WIDTH) ====================
     
-    conclusion_y_start = 45.0  # Positioned to avoid overlap with graphs
+    conclusion_y_start = 69.0  # Shifted further up to clear footer
     conclusion_x_start = 280  # Shifted right for better positioning
     
     # Conclusion box (WIDER for landscape - adjusted for 780 total width)
