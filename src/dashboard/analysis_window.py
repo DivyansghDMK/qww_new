@@ -3,10 +3,10 @@ ECG Analysis Window — Professional Clinical Edition
 ====================================================
 Enhanced with:
   • Interactive Tool Modes:  Select | Ruler | Caliper | Magnifier | Annotate
-  • Floating magnifier lens (2–5× zoom, follows cursor)
   • Measurement ruler (drag → shows Δt ms, Δ amplitude mV)
   • Dual-caliper (PP/RR interval measurement like a real ECG machine)
   • Crosshair cursor + live readout (time, amplitude)
+  • Floating magnifier lens (2–5× zoom, follows cursor)
   • Right-click context-menu annotation on any lead
   • Double-click a lead → full-width expanded view
   • All original JSON-load, API-fetch, frame-nav, PDF-gen features kept intact
@@ -57,25 +57,16 @@ except ImportError:
             PQRSTAnalyzer = None
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  TOOL CONSTANTS
-# ─────────────────────────────────────────────────────────────────────────────
-TOOL_SELECT    = "select"
-TOOL_RULER     = "ruler"
-TOOL_CALIPER   = "caliper"
-TOOL_MAGNIFIER = "magnifier"
-TOOL_ANNOTATE  = "annotate"
-
-TOOL_CURSORS = {
-    TOOL_SELECT:    Qt.ArrowCursor,
-    TOOL_RULER:     Qt.CrossCursor,
-    TOOL_CALIPER:   Qt.SplitHCursor,
-    TOOL_MAGNIFIER: Qt.CrossCursor,
-    TOOL_ANNOTATE:  Qt.PointingHandCursor,
-}
-
-# ECG display scale: ADC 0-4096, show in mV (1 mV ≈ 200 ADC at typical gain)
-ADC_TO_MV = 1.0 / 200.0      # approx — adjust per device calibration
+try:
+    from ecg.holter.theme import ADC_TO_MV, COL_CROSSHAIR, TOOL_ANNOTATE, TOOL_CALIPER, TOOL_MAGNIFY, TOOL_RULER, TOOL_SELECT
+    from ecg.holter.tool_engine import caliper_label, cursor as tool_cursor, hint as tool_hint, ruler_label, tool_specs
+except ImportError:
+    try:
+        from src.ecg.holter.theme import ADC_TO_MV, COL_CROSSHAIR, TOOL_ANNOTATE, TOOL_CALIPER, TOOL_MAGNIFY, TOOL_RULER, TOOL_SELECT
+        from src.ecg.holter.tool_engine import caliper_label, cursor as tool_cursor, hint as tool_hint, ruler_label, tool_specs
+    except ImportError:
+        from ..ecg.holter.theme import ADC_TO_MV, COL_CROSSHAIR, TOOL_ANNOTATE, TOOL_CALIPER, TOOL_MAGNIFY, TOOL_RULER, TOOL_SELECT
+        from ..ecg.holter.tool_engine import caliper_label, cursor as tool_cursor, hint as tool_hint, ruler_label, tool_specs
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -109,7 +100,6 @@ class InteractiveLeadCanvas(FigureCanvas):
         self._drag_end   = None
         self._caliper_x  = [None, None]  # two vertical positions (data x)
         self._mag_pos    = None          # cursor pos for magnifier (widget coords)
-
         # Overlay items (matplotlib artists we redraw)
         self._ruler_patch    = None
         self._caliper_lines  = [None, None]
@@ -166,8 +156,12 @@ class InteractiveLeadCanvas(FigureCanvas):
         tool = self.tool
         xd, yd = self._data_coords(event)
         if xd is None:
-            if tool != TOOL_MAGNIFIER:
-                self._clear_overlay('_crosshair_v', '_crosshair_h', '_readout_text')
+            self._clear_overlay('_crosshair_v', '_crosshair_h', '_readout_text')
+            self.draw_idle()
+            return
+
+        if not self.parent_window.lead_has_visible_data(self.lead_name):
+            self._clear_overlay('_crosshair_v', '_crosshair_h', '_readout_text')
             self.draw_idle()
             return
 
@@ -183,15 +177,14 @@ class InteractiveLeadCanvas(FigureCanvas):
         if tool == TOOL_CALIPER and self._caliper_x[0] is not None and self._caliper_x[1] is None:
             self._draw_caliper_preview(self._caliper_x[0], xd)
 
-        # Magnifier: store cursor pos for overlay repaint
-        if tool == TOOL_MAGNIFIER:
+        if tool == TOOL_MAGNIFY:
             self._mag_pos = QPoint(int(event.x), self.height() - int(event.y))
-            self.update()   # triggers paintEvent for magnifier glass
+            self.update()
 
         self.draw_idle()
 
     def mouseMoveEvent(self, event):
-        if self.tool == TOOL_MAGNIFIER:
+        if self.tool == TOOL_MAGNIFY:
             self._mag_pos = event.pos()
             self.update()
         super().mouseMoveEvent(event)
@@ -240,9 +233,6 @@ class InteractiveLeadCanvas(FigureCanvas):
         elif event.button == 3:  # Right click — context menu
             self._show_context_menu(xd, yd, event)
 
-        elif event.dblclick and event.button == 1:
-            self.expand_requested.emit(self.lead_name)
-
     def _on_mouse_release(self, event):
         tool = self.tool
         xd, yd = self._data_coords(event)
@@ -254,6 +244,13 @@ class InteractiveLeadCanvas(FigureCanvas):
             self._finalise_ruler()
             self._drag_start = None
 
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.expand_requested.emit(self.lead_name)
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
     # ── drawing helpers ───────────────────────────────────────────────────────
     def _draw_crosshair(self, xd, yd):
         self._clear_overlay('_crosshair_v', '_crosshair_h', '_readout_text')
@@ -261,17 +258,17 @@ class InteractiveLeadCanvas(FigureCanvas):
         ylim = self.ax.get_ylim()
 
         self._crosshair_v, = self.ax.plot(
-            [xd, xd], ylim, color='#00e5ff', linewidth=0.7,
+            [xd, xd], ylim, color=COL_CROSSHAIR, linewidth=0.7,
             linestyle='--', alpha=0.85, zorder=10)
         self._crosshair_h, = self.ax.plot(
-            xlim, [yd, yd], color='#00e5ff', linewidth=0.7,
+            xlim, [yd, yd], color=COL_CROSSHAIR, linewidth=0.7,
             linestyle='--', alpha=0.85, zorder=10)
 
         # Convert ADC to mV for display
         mv = (yd - 2048) * ADC_TO_MV
         txt = f" t={xd*1000:.1f}ms  {mv:+.2f}mV"
         self._readout_text = self.ax.text(
-            xd, ylim[1] * 0.97, txt, fontsize=7, color='#00e5ff',
+            xd, ylim[1] * 0.97, txt, fontsize=7, color=COL_CROSSHAIR,
             va='top', ha='left', zorder=11,
             bbox=dict(boxstyle='round,pad=0.15', fc='#000000', alpha=0.55, ec='none'))
 
@@ -296,7 +293,7 @@ class InteractiveLeadCanvas(FigureCanvas):
         mx = (lx + rx) / 2
         my = ry
         ylim = self.ax.get_ylim()
-        label = f"Δt={dt_ms:.1f}ms  Δ={dv_mv:.2f}mV"
+        label = ruler_label(dt_ms, dv_mv)
         self.ax.text(mx, min(my + (ylim[1] - ylim[0]) * 0.05, ylim[1] * 0.95),
                      label, fontsize=7.5, color='#ffdd00', ha='center',
                      va='bottom', fontweight='bold', zorder=12,
@@ -311,7 +308,7 @@ class InteractiveLeadCanvas(FigureCanvas):
             dy = abs(y1 - y0)
             dt_ms = dx * 1000.0
             dv_mv = dy * ADC_TO_MV
-            label = f"Δt={dt_ms:.1f}ms  Δ={dv_mv:.2f}mV"
+            label = ruler_label(dt_ms, dv_mv)
             self.ruler_measured.emit(label)
         self.draw_idle()
 
@@ -333,7 +330,7 @@ class InteractiveLeadCanvas(FigureCanvas):
         x0, x1 = sorted(self._caliper_x)
         dt_ms = abs(x1 - x0) * 1000.0
         bpm   = 60000.0 / dt_ms if dt_ms > 0 else 0
-        label = f"RR/PP = {dt_ms:.1f} ms  →  {bpm:.0f} bpm"
+        label = caliper_label(dt_ms)
         # draw bracket
         self._draw_caliper_preview(x0, x1)
         # mid-span label
@@ -388,60 +385,114 @@ class InteractiveLeadCanvas(FigureCanvas):
     # ── Magnifier paintEvent overlay ─────────────────────────────────────────
     def paintEvent(self, event):
         super().paintEvent(event)
-        if self.tool != TOOL_MAGNIFIER or self._mag_pos is None:
+        if self.tool != TOOL_MAGNIFY or self._mag_pos is None:
+            return
+        if not self.parent_window.lead_has_visible_data(self.lead_name):
             return
 
-        # Draw magnifier glass over the widget
         cx, cy = self._mag_pos.x(), self._mag_pos.y()
-        r = 70   # radius of lens
+        panel_w = 280
+        panel_h = 180
         zoom = self.parent_window.magnifier_zoom
+        xd, yd = self._widget_to_data(cx, cy)
+        if xd is None or yd is None:
+            return
 
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        # Clip circle region
-        clip_path = __import__('PyQt5.QtGui', fromlist=['QPainterPath']).QPainterPath()
-        clip_path.addEllipse(QPointF(cx, cy), r, r)
-        painter.setClipPath(clip_path)
+        left = cx + 24
+        top = cy - panel_h - 24
+        if left + panel_w > self.width() - 8:
+            left = cx - panel_w - 24
+        if left < 8:
+            left = 8
+        if top < 8:
+            top = cy + 24
+        if top + panel_h > self.height() - 8:
+            top = max(8, self.height() - panel_h - 8)
 
-        # Source rect from current rendered canvas
-        src_w = int(self.width() / zoom)
-        src_h = int(self.height() / zoom)
-        src_x = max(0, min(cx - src_w // 2, self.width()  - src_w))
-        src_y = max(0, min(cy - src_h // 2, self.height() - src_h))
-        src_rect = QRect(src_x, src_y, src_w, src_h)
-        dst_rect = QRect(cx - r, cy - r, 2 * r, 2 * r)
+        dst_rect = QRect(int(left), int(top), panel_w, panel_h)
+        inner_rect = dst_rect.adjusted(10, 10, -10, -10)
 
-        try:
-            buf = np.asarray(self.buffer_rgba())
-            h, w, _ = buf.shape
-            img = QImage(buf.data, w, h, 4 * w, QImage.Format_RGBA8888)
-            px = QPixmap.fromImage(img.copy())
-            painter.drawPixmap(dst_rect, px, src_rect)
-        except Exception:
-            painter.setBrush(QColor(255, 255, 255, 30))
-            painter.setPen(Qt.NoPen)
-            painter.drawEllipse(QPointF(cx, cy), r - 2, r - 2)
-        painter.setClipping(False)
+        painter.setBrush(QColor(7, 10, 18, 240))
+        painter.setPen(Qt.NoPen)
+        painter.drawRoundedRect(dst_rect, 12, 12)
 
-        # Lens border
-        grad = QRadialGradient(QPointF(cx, cy), r)
-        grad.setColorAt(0.0, QColor(255, 255, 255, 35))
-        grad.setColorAt(0.82, QColor(255, 255, 255, 8))
-        grad.setColorAt(1.0,  QColor(255, 140, 24, 170))
-        painter.setBrush(QBrush(grad))
-        painter.setPen(QPen(QColor(255, 166, 77), 2.4))
-        painter.drawEllipse(QPointF(cx, cy), r, r)
+        painter.setBrush(QColor(10, 14, 24, 28))
+        painter.setPen(QPen(QColor(255, 176, 92), 3.2))
+        painter.drawRoundedRect(dst_rect, 12, 12)
 
-        # Crosshair inside lens
+        x_min, x_max = self.ax.get_xlim()
+        y_min, y_max = self.ax.get_ylim()
+        x_span = max(1e-6, (x_max - x_min) / max(zoom, 1))
+        y_span = max(1.0, abs(y_max - y_min) / max(zoom, 1))
+
+        view_x0 = max(x_min, xd - x_span / 2.0)
+        view_x1 = min(x_max, xd + x_span / 2.0)
+        if view_x1 <= view_x0:
+            view_x0, view_x1 = x_min, x_max
+
+        center_y = yd
+        if self.lead_name == 'aVR':
+            view_y0 = max(min(y_min, y_max), center_y - y_span / 2.0)
+            view_y1 = min(max(y_min, y_max), center_y + y_span / 2.0)
+        else:
+            view_y0 = max(0.0, center_y - y_span / 2.0)
+            view_y1 = min(4096.0, center_y + y_span / 2.0)
+        if view_y1 <= view_y0:
+            view_y0, view_y1 = min(y_min, y_max), max(y_min, y_max)
+
+        grid_pen = QPen(QColor(36, 68, 36, 160), 1)
+        painter.setPen(grid_pen)
+        for frac in (0.25, 0.5, 0.75):
+            gx = int(inner_rect.left() + inner_rect.width() * frac)
+            gy = int(inner_rect.top() + inner_rect.height() * frac)
+            painter.drawLine(gx, inner_rect.top(), gx, inner_rect.bottom())
+            painter.drawLine(inner_rect.left(), gy, inner_rect.right(), gy)
+
+        data = self.parent_window.lead_data.get(self.lead_name, np.array([]))
+        if len(data) > 1 and self.parent_window.sampling_rate > 0:
+            start_idx = max(0, int(np.floor(view_x0 * self.parent_window.sampling_rate)))
+            end_idx = min(len(data), int(np.ceil(view_x1 * self.parent_window.sampling_rate)) + 1)
+            segment = data[start_idx:end_idx]
+            if len(segment) > 1:
+                xs = np.arange(start_idx, end_idx, dtype=float) / self.parent_window.sampling_rate
+                if self.lead_name == 'aVR':
+                    seg_y = -segment
+                else:
+                    seg_y = segment
+
+                points = []
+                x_range = max(1e-6, view_x1 - view_x0)
+                y_range = max(1e-6, view_y1 - view_y0)
+                for px_t, py_v in zip(xs, seg_y):
+                    nx = (px_t - view_x0) / x_range
+                    ny = (py_v - view_y0) / y_range
+                    qx = inner_rect.left() + nx * inner_rect.width()
+                    qy = inner_rect.bottom() - ny * inner_rect.height()
+                    points.append(QPointF(qx, qy))
+
+                if len(points) > 1:
+                    path = __import__('PyQt5.QtGui', fromlist=['QPainterPath']).QPainterPath()
+                    path.moveTo(points[0])
+                    for pt in points[1:]:
+                        path.lineTo(pt)
+                    painter.setClipRect(inner_rect)
+                    painter.setPen(QPen(QColor(0, 255, 32), 2.2))
+                    painter.drawPath(path)
+                    painter.setClipping(False)
+
+        focus_x = inner_rect.left() + ((xd - view_x0) / max(1e-6, view_x1 - view_x0)) * inner_rect.width()
+        focus_y = inner_rect.bottom() - ((yd - view_y0) / max(1e-6, view_y1 - view_y0)) * inner_rect.height()
+
         painter.setPen(QPen(QColor(255, 255, 255, 180), 1))
-        painter.drawLine(cx - r, cy, cx + r, cy)
-        painter.drawLine(cx, cy - r, cx, cy + r)
+        painter.drawLine(int(focus_x), inner_rect.top(), int(focus_x), inner_rect.bottom())
+        painter.drawLine(inner_rect.left(), int(focus_y), inner_rect.right(), int(focus_y))
 
-        # Zoom label
         painter.setPen(QPen(QColor(255, 244, 232)))
-        painter.setFont(QFont("Consolas", 7))
-        painter.drawText(cx - r + 6, cy + r - 8, f"{zoom}x")
+        painter.setFont(QFont("Consolas", 10, QFont.Bold))
+        painter.drawText(dst_rect.left() + 12, dst_rect.bottom() - 12, f"{zoom}x")
         painter.end()
 
 
@@ -461,8 +512,7 @@ class ECGAnalysisWindow(QDialog):
 
         # ── Tool state ──────────────────────────────────────────────────
         self.current_tool  = TOOL_SELECT
-        self.magnifier_zoom = 3
-
+        self.magnifier_zoom = 4
         # ── Data state ──────────────────────────────────────────────────
         self.reports             = []
         self.current_report      = None
@@ -778,18 +828,12 @@ class ECGAnalysisWindow(QDialog):
     def _build_tool_sidebar(self):
         frame = QFrame()
         frame.setObjectName("toolbar_frame")
-        frame.setFixedWidth(52)
+        frame.setFixedWidth(88)
         lay = QVBoxLayout(frame)
         lay.setContentsMargins(6, 10, 6, 10)
         lay.setSpacing(6)
 
-        tool_data = [
-            (TOOL_SELECT,    "S", "Select / Pan\n(S)"),
-            (TOOL_RULER,     "R", "Measurement Ruler\nDrag to measure dt & dmV\n(R)"),
-            (TOOL_CALIPER,   "C", "Interval Caliper\nClick x2 -> RR/PP bpm\n(C)"),
-            (TOOL_MAGNIFIER, "Z", "Magnifier Lens\nHover to zoom in\n(M)"),
-            (TOOL_ANNOTATE,  "A", "Quick Annotate\nClick start->end on lead\n(A)"),
-        ]
+        tool_data = tool_specs(include_annotate=True)
 
         self._tool_btns = {}
         self._tool_btn_group = QButtonGroup(self)
@@ -800,7 +844,8 @@ class ECGAnalysisWindow(QDialog):
             btn.setText(icon)
             btn.setToolTip(tip)
             btn.setCheckable(True)
-            btn.setFont(QFont("Arial", 11, QFont.Bold))
+            btn.setFont(QFont("Arial", 9, QFont.Bold))
+            btn.setMinimumHeight(42)
             if tool_id == TOOL_SELECT:
                 btn.setChecked(True)
             btn.clicked.connect(lambda checked, t=tool_id: self.set_tool(t))
@@ -810,7 +855,6 @@ class ECGAnalysisWindow(QDialog):
 
         lay.addSpacing(10)
 
-        # Separator
         sep = QFrame()
         sep.setFrameShape(QFrame.HLine)
         sep.setStyleSheet("background:#5b4525;border:none;max-height:1px;")
@@ -818,18 +862,17 @@ class ECGAnalysisWindow(QDialog):
 
         lay.addSpacing(4)
 
-        # Zoom level for magnifier
         zoom_lbl = QLabel("Zoom")
         zoom_lbl.setAlignment(Qt.AlignCenter)
         zoom_lbl.setStyleSheet("color:#ffd7b0;font-size:9px;font-weight:bold;")
         lay.addWidget(zoom_lbl)
 
         self.zoom_combo = QComboBox()
-        self.zoom_combo.addItems(["2x", "3x", "4x", "5x"])
-        self.zoom_combo.setCurrentIndex(1)
+        self.zoom_combo.addItems([f"{level}x" for level in [2, 3, 4, 5, 6]])
+        self.zoom_combo.setCurrentText("4x")
         self.zoom_combo.currentIndexChanged.connect(
             lambda i: setattr(self, 'magnifier_zoom', i + 2))
-        self.zoom_combo.setFixedWidth(40)
+        self.zoom_combo.setFixedWidth(62)
         self.zoom_combo.setStyleSheet("""
             font-size:10px;
             padding:2px;
@@ -854,18 +897,10 @@ class ECGAnalysisWindow(QDialog):
 
     def set_tool(self, tool_id):
         self.current_tool = tool_id
-        cursor = TOOL_CURSORS.get(tool_id, Qt.ArrowCursor)
+        cursor = tool_cursor(tool_id)
         for canvas in self._lead_canvases.values():
             canvas.setCursor(cursor)
-        # Update measure label hint
-        hints = {
-            TOOL_SELECT:    "",
-            TOOL_RULER:     "Ruler active. Drag on any lead to measure time and amplitude.",
-            TOOL_CALIPER:   "Caliper active. Click once for line 1, again for line 2.",
-            TOOL_MAGNIFIER: "Magnifier active. Hover over waveform to zoom. Use sidebar power.",
-            TOOL_ANNOTATE:  "Annotate active. Click start point, then click end point.",
-        }
-        self.measure_lbl.setText(hints.get(tool_id, ""))
+        self.measure_lbl.setText(tool_hint(tool_id))
 
     def _clear_all_overlays(self):
         for canvas in self._lead_canvases.values():
@@ -1190,8 +1225,8 @@ class ECGAnalysisWindow(QDialog):
             self.set_tool(TOOL_CALIPER)
             self._tool_btns[TOOL_CALIPER].setChecked(True)
         elif key == Qt.Key_M:
-            self.set_tool(TOOL_MAGNIFIER)
-            self._tool_btns[TOOL_MAGNIFIER].setChecked(True)
+            self.set_tool(TOOL_MAGNIFY)
+            self._tool_btns[TOOL_MAGNIFY].setChecked(True)
         elif key == Qt.Key_A:
             self.set_tool(TOOL_ANNOTATE)
             self._tool_btns[TOOL_ANNOTATE].setChecked(True)
@@ -1494,6 +1529,14 @@ class ECGAnalysisWindow(QDialog):
 
             fig.tight_layout(pad=0)
             canvas.draw_idle()
+
+    def lead_has_visible_data(self, lead_name):
+        data = self.lead_data.get(lead_name, np.array([]))
+        if len(data) == 0:
+            return False
+        st = self.frame_start_sample
+        en = min(len(data), st + self._window_samples())
+        return en > st and len(data[st:en]) > 0
 
     # ─────────────────────────────────────────────────────────────────────────
     #  MANUAL ANNOTATIONS  (identical to original)

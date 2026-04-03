@@ -61,6 +61,7 @@ from scipy.signal import find_peaks, iirnotch, filtfilt
 from scipy.ndimage import gaussian_filter1d
 from scipy.interpolate import interp1d
 from utils.settings_manager import SettingsManager
+from utils.patient_profile import resolve_patient_profile
 from utils.localization import translate_text
 from .demo_manager import DemoManager
 from PyQt5.QtWidgets import QGraphicsDropShadowEffect
@@ -6413,19 +6414,18 @@ class ECGTestPage(QWidget):
                 'assets', 'DeckmountLogo.png'),
         }
 
-        # Patient info
-        patient = {}
+        username = ''
         try:
-            import json as _j
-            base = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-            db   = os.path.join(base, 'all_patients.json')
-            if os.path.exists(db):
-                d = _j.load(open(db))
-                if d.get('patients'):
-                    patient = dict(d['patients'][-1])
+            if hasattr(self, 'dashboard_instance') and self.dashboard_instance:
+                username = getattr(self.dashboard_instance, 'username', '') or ''
         except Exception:
             pass
-        patient['date_time'] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        patient = resolve_patient_profile(
+            explicit_patient=getattr(getattr(self, 'dashboard_instance', None), 'patient_details', None),
+            username=username,
+            user_details=getattr(getattr(self, 'dashboard_instance', None), 'user_details', {}) or {},
+        )
 
         # Conclusions (max 5)
         conc_list = []
@@ -6457,13 +6457,6 @@ class ECGTestPage(QWidget):
             os.path.join(os.path.dirname(__file__), '..', '..', 'reports'))
         os.makedirs(rpt_dir, exist_ok=True)
         filename = os.path.join(rpt_dir, f"ECG_Report_{fmt}_{stamp}.pdf")
-
-        username = ''
-        try:
-            if hasattr(self, 'dashboard_instance') and self.dashboard_instance:
-                username = getattr(self.dashboard_instance, 'username', '') or ''
-        except Exception:
-            pass
 
         # Worker thread
         class _Worker(QObject):

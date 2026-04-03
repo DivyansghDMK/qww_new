@@ -31,6 +31,7 @@ from dashboard.chatbot_dialog import ChatbotDialog
 from utils.settings_manager import SettingsManager
 from utils.localization import translate_text
 from utils.crash_logger import get_crash_logger, CrashLogDialog
+from utils.patient_profile import resolve_patient_profile
 from dashboard.admin_reports import AdminLoginDialog, AdminReportsDialog
 
 # Try to import configuration, fallback to defaults if not available
@@ -3412,25 +3413,11 @@ class Dashboard(QWidget):
         os.makedirs(downloads_dir, exist_ok=True)
         filename = os.path.join(downloads_dir, default_name)
 
-        # Load patient data (fast, JSON read — OK on main thread)
-        patient = None
-        try:
-            base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-            patients_db_file = os.path.join(base_dir, "all_patients.json")
-            if os.path.exists(patients_db_file):
-                import json
-                with open(patients_db_file, "r") as jf:
-                    all_patients = json.load(jf)
-                    if all_patients.get("patients") and len(all_patients["patients"]) > 0:
-                        patient = all_patients["patients"][-1]
-        except Exception as e:
-            print(f" Error loading patient data: {e}")
-            patient = None
-
-        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        if not patient:
-            patient = {}
-        patient["date_time"] = now_str
+        patient = resolve_patient_profile(
+            explicit_patient=getattr(self, "patient_details", None),
+            username=getattr(self, "username", "") or "",
+            user_details=getattr(self, "user_details", {}) or {},
+        )
         frozen_patient = copy.deepcopy(patient)
 
         # Snapshot user details
