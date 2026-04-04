@@ -1916,6 +1916,9 @@ class ECGAnalysisWindow(QDialog):
                 'first_name': pat.get('name', 'Unknown'), 'last_name': '',
                 'age': pat.get('age', ''), 'gender': pat.get('gender', ''),
                 'date_time': pat.get('report_date') or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                'doctor_name': pat.get('doctor', ''),
+                'org': pat.get('Org.', ''),
+                'phone': pat.get('phone', '') or pat.get('doctor_mobile', ''),
             }
             extra_figs = []
             if self.manual_annotations:
