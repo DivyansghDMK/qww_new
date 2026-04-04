@@ -18,6 +18,12 @@ import numpy as np
 # Set matplotlib to use non-interactive backend
 matplotlib.use('Agg')
 
+FONT_TYPE = "Helvetica"
+FONT_TYPE_BOLD = "Helvetica-Bold"
+ECG_PAPER_BG = "#fffdfd"
+ECG_GRID_MINOR = "#f7dede"
+ECG_GRID_MAJOR = "#efb9b9"
+
 ECG_HEIGHT_MM = 210.0
 ECG_WIDTH_MM = 297.0
 ECG_LARGE_BOX_MM_HEIGHT = ECG_HEIGHT_MM / 40.0
@@ -54,6 +60,25 @@ def _get_resource_path(relative_path):
     except Exception:
         # Fallback to relative path
         return os.path.join(os.path.abspath(os.path.dirname(__file__)), "..", "..", relative_path)
+
+
+def format_indian_phone(phone_value):
+    """Return phone number as +91-XXXXXXXXXX for report display."""
+    if phone_value is None:
+        return ""
+
+    text = str(phone_value).strip()
+    if not text:
+        return ""
+
+    digits_only = "".join(ch for ch in text if ch.isdigit())
+    if digits_only.startswith("91") and len(digits_only) > 10:
+        digits_only = digits_only[2:]
+    if len(digits_only) > 10:
+        digits_only = digits_only[-10:]
+    if not digits_only:
+        return text
+    return f"+91-{digits_only}"
 
 # ==================== ECG DATA SAVE/LOAD FUNCTIONS ====================
 
@@ -127,15 +152,13 @@ def save_ecg_data_to_file(ecg_test_page, output_file=None):
                     ptr = ecg_test_page.ptrs[i]
                     window_size = getattr(ecg_test_page, 'window_size', 1000)
                     
-                    # For report generation: use FULL buffer (5000 samples), not just window_size (1000)
-                    # Get all available data from buffer, starting from ptr
-                    if ptr + len(buffer) <= len(buffer):
-                        # No wrap needed: get from ptr to end, then from start to ptr
+                    # For report generation, unwrap the circular buffer so the saved
+                    # sequence is chronological instead of ending with an old segment.
+                    if 0 <= ptr < len(buffer):
                         part1 = buffer[ptr:].tolist()
                         part2 = buffer[:ptr].tolist()
-                        data_to_save = part1 + part2  # Full circular buffer
+                        data_to_save = part1 + part2
                     else:
-                        # Simple case: use all buffer data
                         data_to_save = buffer.tolist()
                 else:
                     # No ptrs: use ALL available data (full buffer)
@@ -276,13 +299,13 @@ def create_ecg_grid_with_waveform(ecg_data, lead_name, width=6, height=2):
     Returns: matplotlib figure with pink ECG grid background
     """
     # Create figure with pink background
-    fig, ax = plt.subplots(figsize=(width, height), facecolor='#ffe6e6', frameon=True)
+    fig, ax = plt.subplots(figsize=(width, height), facecolor=ECG_PAPER_BG, frameon=True)
     
     # STEP 1: Create pink ECG grid background
     # ECG grid colors (even lighter pink/red like medical ECG paper)
-    light_grid_color = '#ffd1d1'  # Darker minor grid
-    major_grid_color = '#ffb3b3'  # Darker major grid
-    bg_color = '#ffe6e6'  # Very light pink background
+    light_grid_color = ECG_GRID_MINOR
+    major_grid_color = ECG_GRID_MAJOR
+    bg_color = ECG_PAPER_BG
     
     # Set both figure and axes background to pink
     fig.patch.set_facecolor(bg_color)  # Figure background pink
@@ -358,13 +381,13 @@ def create_reportlab_ecg_drawing(lead_name, width=460, height=45):
     drawing = Drawing(width, height)
     
     # STEP 1: Create solid pink background rectangle
-    bg_color = colors.HexColor("#ffe6e6")  # Light pink background
+    bg_color = colors.HexColor(ECG_PAPER_BG)
     bg_rect = Rect(0, 0, width, height, fillColor=bg_color, strokeColor=None)
     drawing.add(bg_rect)
     
     # STEP 2: Draw pink ECG grid lines (even lighter colors)
-    light_grid_color = colors.HexColor("#ffd1d1")  # Darker minor grid
-    major_grid_color = colors.HexColor("#ffb3b3")   # Darker major grid
+    light_grid_color = colors.HexColor(ECG_GRID_MINOR)
+    major_grid_color = colors.HexColor(ECG_GRID_MAJOR)
     
     # Minor grid lines (1mm spacing equivalent)
     minor_spacing_x = width / 60  # 60 divisions across width
@@ -592,13 +615,13 @@ def create_reportlab_ecg_drawing_with_real_data(lead_name, ecg_data, width=460, 
     drawing = Drawing(width, height)
     
     # STEP 1: Create solid pink background rectangle
-    bg_color = colors.HexColor("#ffe6e6")  # Light pink background
+    bg_color = colors.HexColor(ECG_PAPER_BG)
     bg_rect = Rect(0, 0, width, height, fillColor=bg_color, strokeColor=None)
     drawing.add(bg_rect)
     
     # STEP 2: Draw pink ECG grid lines (even lighter colors)
-    light_grid_color = colors.HexColor("#ffd1d1")  # Darker minor grid
-    major_grid_color = colors.HexColor("#ffb3b3")   # Darker major grid
+    light_grid_color = colors.HexColor(ECG_GRID_MINOR)
+    major_grid_color = colors.HexColor(ECG_GRID_MAJOR)
     
     # Minor grid lines (1mm spacing equivalent)
     minor_spacing_x = width / 60  # 60 divisions across width
@@ -694,21 +717,21 @@ def create_clean_ecg_image(lead_name, width=6, height=2):
     import matplotlib.pyplot as plt
     
     # STEP 1: Create figure with FORCED pink background
-    fig = plt.figure(figsize=(width, height), facecolor='#ffe6e6', frameon=True)
+    fig = plt.figure(figsize=(width, height), facecolor=ECG_PAPER_BG, frameon=True)
     
     # FORCE figure background to pink
-    fig.patch.set_facecolor('#ffe6e6')
+    fig.patch.set_facecolor(ECG_PAPER_BG)
     fig.patch.set_alpha(1.0)  # Full opacity
     
     # Create axes with FORCED pink background
     ax = fig.add_subplot(111)
-    ax.set_facecolor('#ffe6e6')  # FORCE axes background pink
-    ax.patch.set_facecolor('#ffe6e6')  # FORCE axes patch pink
+    ax.set_facecolor(ECG_PAPER_BG)
+    ax.patch.set_facecolor(ECG_PAPER_BG)
     ax.patch.set_alpha(1.0)  # Full opacity
     
     # STEP 2: Draw pink ECG grid lines OVER pink background (darker for clarity)
-    light_grid_color = '#ffd1d1'  # Darker minor grid
-    major_grid_color = '#ffb3b3'  # Darker major grid
+    light_grid_color = ECG_GRID_MINOR
+    major_grid_color = ECG_GRID_MAJOR
     
     # Minor grid lines (1mm equivalent spacing)
     minor_spacing_x = width / 60  # 60 minor divisions
@@ -1074,7 +1097,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
                            dpi=200, 
                            bbox_inches='tight', 
                            pad_inches=0.05,
-                           facecolor='#ffe6e6',  # PINK background
+                           facecolor=ECG_PAPER_BG,
                            edgecolor='none',
                            format='png')
                 plt.close(fig)
@@ -2470,20 +2493,28 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     except Exception:
         doctor = ""
   
-    # Doctor Name (below V6 lead)
-    doctor_name_label = String(-30, -10, "Doctor Name: ", 
-                              fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
+    reference_y = 5
+    doctor_name_y = -12
+    doctor_sign_y = -29
+
+    reference_label = String(-30, reference_y, "Reference Report Confirmed by:",
+                             fontSize=10, fontName=FONT_TYPE_BOLD, fillColor=colors.black)
+    master_drawing.add(reference_label)
+
+    # Doctor Name (shifted down below reference text)
+    doctor_name_label = String(-30, doctor_name_y, "Doctor Name: ", 
+                              fontSize=10, fontName=FONT_TYPE_BOLD, fillColor=colors.black)
     master_drawing.add(doctor_name_label)
     
     if doctor:
-        value_x = -30 + stringWidth("Doctor Name: ", "Helvetica-Bold", 10) + 5
-        doctor_name_value = String(value_x, -10, doctor,
-                                fontSize=10, fontName="Helvetica", fillColor=colors.black)
+        value_x = -30 + stringWidth("Doctor Name: ", FONT_TYPE_BOLD, 10) + 5
+        doctor_name_value = String(value_x, doctor_name_y, doctor,
+                                fontSize=10, fontName=FONT_TYPE, fillColor=colors.black)
         master_drawing.add(doctor_name_value)
 
-    # Doctor Signature (below Doctor Name)
-    doctor_sign_label = String(-30, -25, "Doctor Sign: ", 
-                              fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
+    # Doctor Signature (shifted down below Doctor Name)
+    doctor_sign_label = String(-30, doctor_sign_y, "Doctor Sign: ", 
+                              fontSize=10, fontName=FONT_TYPE_BOLD, fillColor=colors.black)
     master_drawing.add(doctor_sign_label)
 
     # Add RIGHT-SIDE Conclusion Box (moved to the right) - NOW DYNAMIC FROM DASHBOARD (12 conclusions max) - MADE SMALLER
@@ -2588,13 +2619,13 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
             minor_spacing = ECG_SMALL_BOX_MM_WIDTH * mm
             
             # Fill entire page with pink background
-            canvas.setFillColor(colors.HexColor("#ffe6e6"))
+            canvas.setFillColor(colors.HexColor(ECG_PAPER_BG))
             canvas.rect(0, 0, page_width, page_height, fill=1, stroke=0)
             
             # ECG grid colors - darker for better visibility
-            light_grid_color = colors.HexColor("#ffd1d1")  
+            light_grid_color = colors.HexColor(ECG_GRID_MINOR)
             
-            major_grid_color = colors.HexColor("#ffb3b3")   
+            major_grid_color = colors.HexColor(ECG_GRID_MAJOR)
             
             # Minor grid lines (spacing derived from 56 boxes across width)
             canvas.setStrokeColor(light_grid_color)
@@ -2699,7 +2730,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
         canvas.saveState()
         canvas.setFont("Helvetica", 8)
         canvas.setFillColor(colors.black)  # Ensure text is black on pink background
-        footer_text = "Deckmount Electronics, Plot No. 683, Phase V, Udyog Vihar, Sector 19, Gurugram, Haryana 122016"
+        footer_text = "Deckmount Electronics Pvt Ltd | Rhythm Ultra Max | IEC 60601 | Made in India"
         # Center the footer text at bottom of page
         text_width = canvas.stringWidth(footer_text, "Helvetica", 8)
         x = (doc.width + doc.leftMargin + doc.rightMargin - text_width) / 2
@@ -3195,7 +3226,7 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     
     # Patient org and phone for logo/footer callback
     patient_org = patient.get("Org.", "") if patient else ""
-    patient_doctor_mobile = patient.get("doctor_mobile", "") if patient else ""
+    patient_doctor_mobile = format_indian_phone(patient.get("doctor_mobile", "") if patient else "")
     
     # Define callback function for headers/footers BEFORE creating templates
     def _draw_logo_and_footer_callback(canvas, doc_obj):
@@ -3210,11 +3241,11 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
             box_width_mm = page_width_mm / num_boxes_width
             box_width_pts = box_width_mm * mm
             
-            canvas.setFillColor(colors.HexColor("#ffe6e6"))
+            canvas.setFillColor(colors.HexColor(ECG_PAPER_BG))
             canvas.rect(0, 0, page_width, page_height, fill=1, stroke=0)
             
-            light_grid_color = colors.HexColor("#ffd1d1")
-            major_grid_color = colors.HexColor("#ffb3b3")
+            light_grid_color = colors.HexColor(ECG_GRID_MINOR)
+            major_grid_color = colors.HexColor(ECG_GRID_MAJOR)
             
             minor_spacing_mm = box_width_mm / 5.0
             minor_spacing_pts = minor_spacing_mm * mm
@@ -3260,23 +3291,23 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
             x_pos = 15  # More to the left (was 30, now 15)
             y_pos = page_height - 30  \
             
-            canvas.setFont("Helvetica-Bold", 10)
+            canvas.setFont(FONT_TYPE_BOLD, 10)
             canvas.setFillColor(colors.black)
             org_label = "Org:"
             canvas.drawString(x_pos, y_pos, org_label)
             
-            org_label_width = canvas.stringWidth(org_label, "Helvetica-Bold", 10)
-            canvas.setFont("Helvetica", 10)
+            org_label_width = canvas.stringWidth(org_label, FONT_TYPE_BOLD, 10)
+            canvas.setFont(FONT_TYPE, 10)
             canvas.drawString(x_pos + org_label_width + 5, y_pos, patient_org if patient_org else "")
             
             y_pos -= 15
             
-            canvas.setFont("Helvetica-Bold", 10)
+            canvas.setFont(FONT_TYPE_BOLD, 10)
             phone_label = "Phone No:"
             canvas.drawString(x_pos, y_pos, phone_label)
             
-            phone_label_width = canvas.stringWidth(phone_label, "Helvetica-Bold", 10)
-            canvas.setFont("Helvetica", 10)
+            phone_label_width = canvas.stringWidth(phone_label, FONT_TYPE_BOLD, 10)
+            canvas.setFont(FONT_TYPE, 10)
             canvas.drawString(x_pos + phone_label_width + 5, y_pos, patient_doctor_mobile if patient_doctor_mobile else "")
             
             canvas.restoreState()
@@ -3302,10 +3333,10 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
         
         # STEP 3: Footer
         canvas.saveState()
-        canvas.setFont("Helvetica", 8)
+        canvas.setFont(FONT_TYPE, 8)
         canvas.setFillColor(colors.black)
-        footer_text = "Deckmount Electronics, Plot No. 683, Phase V, Udyog Vihar, Sector 19, Gurugram, Haryana 122016"
-        text_width = canvas.stringWidth(footer_text, "Helvetica", 8)
+        footer_text = "Deckmount Electronics Pvt Ltd | Rhythm Ultra Max | IEC 60601 | Made in India"
+        text_width = canvas.stringWidth(footer_text, FONT_TYPE, 8)
         
         # Use the actual page width for centering
         page_width, page_height = canvas._pagesize
@@ -3398,7 +3429,7 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     # For canvas labels (top-left)
     patient_org = org_name
     patient_org_address = org_address
-    patient_doctor_mobile = doctor_mobile
+    patient_doctor_mobile = format_indian_phone(doctor_mobile)
     full_name = f"{first_name} {last_name}".strip()
     date_time_str = date_time
     
@@ -3549,7 +3580,7 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
 
         # Apply report filters (DFT -> EMG -> AC) on lead data
         try:
-            from ecg.ecg_filters import apply_dft_filter, apply_emg_filter, apply_ac_filter
+            from ecg.ecg_filters import apply_dft_filter, apply_emg_filter, apply_ac_filter, stabilize_report_edges
             dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
             emg_setting = str(settings_manager.get_setting("filter_emg", "off")).strip()
             ac_setting = str(settings_manager.get_setting("filter_ac", "off")).strip()
@@ -3559,6 +3590,7 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
                 adc_data = apply_emg_filter(adc_data, float(report_sampling_rate), emg_setting)
             if ac_setting in ("50", "60"):
                 adc_data = apply_ac_filter(adc_data, float(report_sampling_rate), ac_setting)
+            adc_data = stabilize_report_edges(adc_data, float(report_sampling_rate))
         except Exception as filter_err:
             print(f" Report filter apply failed for {lead_name}: {filter_err}")
                 
@@ -3595,7 +3627,7 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
             notch_start_offset = 1.0 * mm_unit
             notch_width = 5.0 * mm_unit
             notch_tail = 2.0 * mm_unit
-            post_notch_gap = 0.4 * mm_unit
+            post_notch_gap = 4.0 * mm_unit
             trace_start_x = x_pos + notch_start_offset + notch_width + notch_tail + post_notch_gap
         t = np.linspace(trace_start_x, x_pos + ecg_width, len(adc_data))
         
@@ -3640,7 +3672,7 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
             notch_path.lineTo(notch_x + notch_width, notch_y_base)
             # Small forward tail to match the clinical calibration pulse look.
             notch_path.lineTo(notch_x + notch_width + (2.0 * mm_unit), notch_y_base)
-        
+
         # Dotted continuation / markers
         dotted_path = None
         if lead_name in ["V1", "V2", "V3"]:
@@ -3800,19 +3832,22 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     print(f" Created {successful_graphs} ECG graphs: V1-V6 ({len([l for l in left_leads + right_leads if l in v_leads_data])}) + Lead II")
     
     # ==================== ADD PATIENT INFO TO PAGE 2 (LANDSCAPE MODE - POSITIONED PROPERLY) ====================
+    header_y_shift = 5.2 * mm_unit
     
     # LEFT SIDE: Patient Info (SHIFTED LEFT + UP)
-    patient_name_label = String(5, 540, f"Name: {full_name}",
-                                fontSize=9, fontName="Helvetica", fillColor=colors.black)
+    patient_name_label = String(13.85, 545.50 + header_y_shift, f"Name: {full_name}",
+                                fontSize=9, fontName=FONT_TYPE, fillColor=colors.black)
     master_drawing.add(patient_name_label)
     
-    patient_age_label = String(5, 525, f"Age: {age}",
-                               fontSize=9, fontName="Helvetica", fillColor=colors.black)
+    patient_age_label = String(13.85, 530.99 + header_y_shift, f"Age: {age}",
+                               fontSize=9, fontName=FONT_TYPE, fillColor=colors.black)
     master_drawing.add(patient_age_label)
     
-    patient_gender_label = String(5, 510, f"Gender: {gender}",
-                                  fontSize=9, fontName="Helvetica", fillColor=colors.black)
+    patient_gender_label = String(13.85, 516.05 + header_y_shift, f"Gender: {gender}",
+                                  fontSize=9, fontName=FONT_TYPE, fillColor=colors.black)
     master_drawing.add(patient_gender_label)
+    master_drawing.add(String(13.85, 501.32 + header_y_shift, "Report Type: Hyperkalemia Test",
+                              fontSize=9, fontName=FONT_TYPE, fillColor=colors.black))
     
     # RIGHT SIDE: Date/Time
     if date_time_str:
@@ -3820,20 +3855,27 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
         date_part = parts[0] if parts else ""
         time_part = parts[1] if len(parts) > 1 else ""
     else:
-        date_part, time_part = "____", "____"
+        date_part, time_part = "", ""
+    master_drawing.add(String(13.85, 486.15 + header_y_shift, f"Date & Time: {date_part} {time_part}".rstrip(),
+                              fontSize=9, fontName=FONT_TYPE, fillColor=colors.black))
     
-    # Right-side contact block on landscape page
-    org_name_label = String(680, 540, f"Org. Name: {patient_org}",
-                    fontSize=9, fontName="Helvetica-Bold", fillColor=colors.black)
-    master_drawing.add(org_name_label)
+    # contact block on landscape page
+    contact_block_x = 590
+    contact_block_top_y = 545.90 + header_y_shift
+    if patient_org:
+        org_name_label = String(contact_block_x, contact_block_top_y, patient_org,
+                        fontSize=9, fontName=FONT_TYPE_BOLD, fillColor=colors.black)
+        master_drawing.add(org_name_label)
     
-    org_address_label = String(680, 525, f"Org. Address: {patient_org_address}",
-                      fontSize=9, fontName="Helvetica-Bold", fillColor=colors.black)
-    master_drawing.add(org_address_label)
+    if patient_org_address:
+        org_address_label = String(contact_block_x, contact_block_top_y - 14, patient_org_address,
+                          fontSize=9, fontName=FONT_TYPE_BOLD, fillColor=colors.black)
+        master_drawing.add(org_address_label)
 
-    phone_label = String(680, 510, f"Phone No: {patient_doctor_mobile}",
-                      fontSize=9, fontName="Helvetica-Bold", fillColor=colors.black)
-    master_drawing.add(phone_label)
+    if patient_doctor_mobile:
+        phone_label = String(contact_block_x, contact_block_top_y - 28, patient_doctor_mobile,
+                          fontSize=9, fontName=FONT_TYPE_BOLD, fillColor=colors.black)
+        master_drawing.add(phone_label)
     
     # ==================== VITAL PARAMETERS (LANDSCAPE MODE - 2 COLUMNS SIDE BY SIDE) ====================
     # Page 2: Use metrics from hyper_metric.json
@@ -3947,24 +3989,21 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     except Exception as _err:
         print(f" Axis calc error: {_err}")
     
-    # LEFT COLUMN - HR, PR, QRS, RR, QT, QTc
-    hr_label = String(210, 540, f"HR    : {HR} bpm", fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    # LEFT COLUMN - HR, PR, QRS, RR, QT
+    hr_label = String(309.29, 545.83 + header_y_shift, f"HR   : {HR} bpm", fontSize=9, fontName=FONT_TYPE, fillColor=colors.black)
     master_drawing.add(hr_label)
     
-    pr_label = String(210, 525, f"PR    : {PR} ms", fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    pr_label = String(309.29, 530.66 + header_y_shift, f"PR   : {PR} ms", fontSize=9, fontName=FONT_TYPE, fillColor=colors.black)
     master_drawing.add(pr_label)
     
-    qrs_label = String(210, 510, f"QRS : {QRS} ms", fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    qrs_label = String(309.29, 516.49 + header_y_shift, f"QRS : {QRS} ms", fontSize=9, fontName=FONT_TYPE, fillColor=colors.black)
     master_drawing.add(qrs_label)
     
-    rr_label = String(210, 495, f"RR    : {RR} ms", fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    rr_label = String(309.29, 500.88 + header_y_shift, f"RR   : {RR} ms", fontSize=9, fontName=FONT_TYPE, fillColor=colors.black)
     master_drawing.add(rr_label)
     
-    qt_label = String(210, 480, f"QT    : {QT} ms", fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    qt_label = String(309.29, 486.25 + header_y_shift, f"QT   : {QT} ms", fontSize=9, fontName=FONT_TYPE, fillColor=colors.black)
     master_drawing.add(qt_label)
-    
-    qtc_label = String(210, 465, f"QTc   : {QTc} ms", fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(qtc_label)
     
     # RIGHT COLUMN - temporarily hidden per request
     # p_qrs_label = String(420, 540, f"P/QRS/T  : {p_axis_str}/{qrs_axis_str}/{t_axis_str}", fontSize=10, fontName="Helvetica", fillColor=colors.black)
@@ -3976,7 +4015,10 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     # rv5_sv1_sum_label = String(420, 510, f"RV5+SV1 : {rv5_sv1_sum:.3f} mV", fontSize=10, fontName="Helvetica", fillColor=colors.black)
     # master_drawing.add(rv5_sv1_sum_label)
     
-    qtcf_label = String(420, 540, f"QTCF       : {qtcf_ms} ms" if qtcf_ms > 0 else "QTCF       : --", fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    qtc_label = String(442.10, 545.90 + header_y_shift, f"QTc  : {QTc} ms", fontSize=9, fontName=FONT_TYPE, fillColor=colors.black)
+    master_drawing.add(qtc_label)
+
+    qtcf_label = String(442.37, 530.66 + header_y_shift, f"QTCF : {qtcf_ms} ms" if qtcf_ms > 0 else "QTCF : --", fontSize=9, fontName=FONT_TYPE, fillColor=colors.black)
     master_drawing.add(qtcf_label)
     
     # ST removed per user request
@@ -3995,17 +4037,10 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     else:
         filter_band = "Filter: Off"
     master_drawing.add(String(
-        420, 525,
+        13.85, 471.98 + header_y_shift,
         f"{wave_speed_mm_s} mm/s   {filter_band}   AC : {ac_frequency}   {wave_gain_mm_mv} mm/mV",
-        fontSize=10,
-        fontName="Helvetica",
-        fillColor=colors.black,
-    ))
-    master_drawing.add(String(
-        420, 492,
-        f"Date & Time: {date_part} {time_part}",
-        fontSize=10,
-        fontName="Helvetica",
+        fontSize=9,
+        fontName=FONT_TYPE,
         fillColor=colors.black,
     ))
     
@@ -4019,18 +4054,26 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
                               fontSize=8, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(confirmed_label)
     
-    doctor_name_label = String(10, 74, "Doctor Name: ",  # shifted further up to clear footer
-                              fontSize=8, fontName="Helvetica", fillColor=colors.black)
+    reference_y = 86
+    doctor_name_y = 70
+    doctor_sign_y = 56
+
+    reference_label = String(13, reference_y, "Reference Report Confirmed by:",
+                              fontSize=10, fontName=FONT_TYPE, fillColor=colors.black)
+    master_drawing.add(reference_label)
+
+    doctor_name_label = String(13, doctor_name_y, "Doctor Name: ",
+                              fontSize=10, fontName=FONT_TYPE, fillColor=colors.black)
     master_drawing.add(doctor_name_label)
     
     if doctor:
-        value_x = 10 + stringWidth("Doctor Name: ", "Helvetica", 8) + 6
-        doctor_name_value = String(value_x, 74, doctor,  # Starts after "Doctor Name: " label
-                                fontSize=8, fontName="Helvetica", fillColor=colors.black)
+        value_x = 13 + stringWidth(label_text, FONT_TYPE, 10) + 6
+        doctor_name_value = String(value_x, doctor_name_y, doctor,
+                                fontSize=10, fontName=FONT_TYPE, fillColor=colors.black)
         master_drawing.add(doctor_name_value)
     
-    doctor_sign_label = String(10, 59, "Doctor Sign: ",  # shifted further up to clear footer
-                              fontSize=8, fontName="Helvetica", fillColor=colors.black)
+    doctor_sign_label = String(13, doctor_sign_y, "Doctor Sign: ",
+                              fontSize=10, fontName=FONT_TYPE, fillColor=colors.black)
     master_drawing.add(doctor_sign_label)
     
     # ==================== CONCLUSION BOX ON PAGE 2 (LANDSCAPE MODE - ADJUSTED FOR 780 WIDTH) ====================
@@ -4044,8 +4087,8 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     master_drawing.add(conclusion_box)
     
     # Conclusion header (CENTER adjusted for new X position and width)
-    conclusion_header = String(conclusion_x_start + 245, conclusion_y_start + 8, "✦ CONCLUSION ✦", 
-                              fontSize=9, fontName="Helvetica-Bold",
+    conclusion_header = String(conclusion_x_start + 245, conclusion_y_start + 8, "CONCLUSION", 
+                              fontSize=9, fontName=FONT_TYPE_BOLD,
                               fillColor=colors.HexColor("#2c3e50"),
                               textAnchor="middle")
     master_drawing.add(conclusion_header)
@@ -4070,7 +4113,7 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
             conc_text = f"{conclusion_num}. {display_conclusion}"
             x_pos = conclusion_x_start + 10 + (col_idx * 230)  # Adjusted: start from box x + margin
             conc = String(x_pos, row_y, conc_text, 
-                         fontSize=9, fontName="Helvetica", fillColor=colors.black)
+                         fontSize=9, fontName=FONT_TYPE, fillColor=colors.black)
             master_drawing.add(conc)
             conclusion_num += 1
     

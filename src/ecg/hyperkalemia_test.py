@@ -1369,12 +1369,14 @@ class HyperkalemiaTestWindow(QWidget):
             )
             if not patient.get("first_name") and not patient.get("patient_name"):
                 patient = {
-                    "first_name": "Patient",
-                    "last_name": "Hyperkalemia",
+                    "first_name": "",
+                    "last_name": "",
                     "age": "",
                     "gender": "",
                     "date_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     "Org.": "",
+                    "Org. Name": "",
+                    "Org. Address": "",
                     "doctor_mobile": "",
                     "doctor": "",
                 }
