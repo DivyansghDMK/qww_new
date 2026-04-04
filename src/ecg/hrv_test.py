@@ -534,7 +534,8 @@ class HRVTestWindow(QWidget):
             # Update UI
             self.start_btn.setEnabled(False)
             self.stop_btn.setEnabled(True)
-            self.report_btn.setEnabled(False)
+            # Testing mode: allow report generation immediately after acquisition starts.
+            self.report_btn.setEnabled(True)
             self.lead_combo.setEnabled(False)
 
             # Reset the visible metric labels immediately at capture start so the
@@ -954,12 +955,14 @@ class HRVTestWindow(QWidget):
             )
             if not patient.get("first_name") and not patient.get("patient_name"):
                 patient = {
-                    "first_name": "HRV",
-                    "last_name": "Patient",
+                    "first_name": "",
+                    "last_name": "",
                     "age": "",
                     "gender": "",
                     "date_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     "Org.": "",
+                    "Org. Name": "",
+                    "Org. Address": "",
                     "doctor_mobile": "",
                     "doctor": "",
                 }

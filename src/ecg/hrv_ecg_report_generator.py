@@ -18,6 +18,12 @@ import numpy as np
 # Set matplotlib to use non-interactive backend
 matplotlib.use('Agg')
 
+FONT_TYPE = "Helvetica"
+FONT_TYPE_BOLD = "Helvetica-Bold"
+ECG_PAPER_BG = "#fffdfd"
+ECG_GRID_MINOR = "#f7dede"
+ECG_GRID_MAJOR = "#efb9b9"
+
 ECG_BASELINE_ADC = 2000.0
 
 # ------------------------ Resource path helper for PyInstaller compatibility ------------------------
@@ -39,6 +45,25 @@ def _get_resource_path(relative_path):
     except Exception:
         # Fallback to relative path
         return os.path.join(os.path.abspath(os.path.dirname(__file__)), "..", "..", relative_path)
+
+
+def format_indian_phone(phone_value):
+    """Return phone number as +91-XXXXXXXXXX for report display."""
+    if phone_value is None:
+        return ""
+
+    text = str(phone_value).strip()
+    if not text:
+        return ""
+
+    digits_only = "".join(ch for ch in text if ch.isdigit())
+    if digits_only.startswith("91") and len(digits_only) > 10:
+        digits_only = digits_only[2:]
+    if len(digits_only) > 10:
+        digits_only = digits_only[-10:]
+    if not digits_only:
+        return text
+    return f"+91-{digits_only}"
 
 # ==================== ECG DATA SAVE/LOAD FUNCTIONS ====================
 
@@ -251,13 +276,13 @@ def create_ecg_grid_with_waveform(ecg_data, lead_name, width=6, height=2):
     Returns: matplotlib figure with pink ECG grid background
     """
     # Create figure with pink background
-    fig, ax = plt.subplots(figsize=(width, height), facecolor='#ffe6e6', frameon=True)
+    fig, ax = plt.subplots(figsize=(width, height), facecolor=ECG_PAPER_BG, frameon=True)
     
     # STEP 1: Create pink ECG grid background
     # ECG grid colors (even lighter pink/red like medical ECG paper)
-    light_grid_color = '#ffd1d1'  # Darker minor grid
-    major_grid_color = '#ffb3b3'  # Darker major grid
-    bg_color = '#ffe6e6'  # Very light pink background
+    light_grid_color = ECG_GRID_MINOR
+    major_grid_color = ECG_GRID_MAJOR
+    bg_color = ECG_PAPER_BG
     
     # Set both figure and axes background to pink
     fig.patch.set_facecolor(bg_color)  # Figure background pink
@@ -333,13 +358,13 @@ def create_reportlab_ecg_drawing(lead_name, width=460, height=45):
     drawing = Drawing(width, height)
     
     # STEP 1: Create solid pink background rectangle
-    bg_color = colors.HexColor("#ffe6e6")  # Light pink background
+    bg_color = colors.HexColor(ECG_PAPER_BG)
     bg_rect = Rect(0, 0, width, height, fillColor=bg_color, strokeColor=None)
     drawing.add(bg_rect)
     
     # STEP 2: Draw pink ECG grid lines (even lighter colors)
-    light_grid_color = colors.HexColor("#ffd1d1")  # Darker minor grid
-    major_grid_color = colors.HexColor("#ffb3b3")   # Darker major grid
+    light_grid_color = colors.HexColor(ECG_GRID_MINOR)
+    major_grid_color = colors.HexColor(ECG_GRID_MAJOR)
     
     # Minor grid lines (1mm spacing equivalent)
     minor_spacing_x = width / 60  # 60 divisions across width
@@ -557,13 +582,13 @@ def create_reportlab_ecg_drawing_with_real_data(lead_name, ecg_data, width=460, 
     drawing = Drawing(width, height)
     
     # STEP 1: Create solid pink background rectangle
-    bg_color = colors.HexColor("#ffe6e6")  # Light pink background
+    bg_color = colors.HexColor(ECG_PAPER_BG)
     bg_rect = Rect(0, 0, width, height, fillColor=bg_color, strokeColor=None)
     drawing.add(bg_rect)
     
     # STEP 2: Draw pink ECG grid lines (even lighter colors)
-    light_grid_color = colors.HexColor("#ffd1d1")  # Darker minor grid
-    major_grid_color = colors.HexColor("#ffb3b3")   # Darker major grid
+    light_grid_color = colors.HexColor(ECG_GRID_MINOR)
+    major_grid_color = colors.HexColor(ECG_GRID_MAJOR)
     
     # Minor grid lines (1mm spacing equivalent)
     minor_spacing_x = width / 60  # 60 divisions across width
@@ -659,21 +684,21 @@ def create_clean_ecg_image(lead_name, width=6, height=2):
     import matplotlib.pyplot as plt
     
     # STEP 1: Create figure with FORCED pink background
-    fig = plt.figure(figsize=(width, height), facecolor='#ffe6e6', frameon=True)
+    fig = plt.figure(figsize=(width, height), facecolor=ECG_PAPER_BG, frameon=True)
     
     # FORCE figure background to pink
-    fig.patch.set_facecolor('#ffe6e6')
+    fig.patch.set_facecolor(ECG_PAPER_BG)
     fig.patch.set_alpha(1.0)  # Full opacity
     
     # Create axes with FORCED pink background
     ax = fig.add_subplot(111)
-    ax.set_facecolor('#ffe6e6')  # FORCE axes background pink
-    ax.patch.set_facecolor('#ffe6e6')  # FORCE axes patch pink
+    ax.set_facecolor(ECG_PAPER_BG)
+    ax.patch.set_facecolor(ECG_PAPER_BG)
     ax.patch.set_alpha(1.0)  # Full opacity
     
     # STEP 2: Draw pink ECG grid lines OVER pink background (darker for clarity)
-    light_grid_color = '#ffd1d1'  # Darker minor grid
-    major_grid_color = '#ffb3b3'  # Darker major grid
+    light_grid_color = ECG_GRID_MINOR
+    major_grid_color = ECG_GRID_MAJOR
     
     # Minor grid lines (1mm equivalent spacing)
     minor_spacing_x = width / 60  # 60 minor divisions
@@ -1176,7 +1201,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
                            dpi=200, 
                            bbox_inches='tight', 
                            pad_inches=0.05,
-                           facecolor='#ffe6e6',  # PINK background
+                           facecolor=ECG_PAPER_BG,
                            edgecolor='none',
                            format='png')
                 plt.close(fig)
@@ -1878,26 +1903,29 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     # POSITIONED ABOVE ECG GRAPH (not mixed inside graph)
     from reportlab.graphics.shapes import String
 
-    # LEFT SIDE: Patient Info (ABOVE ECG GRAPH - shifted further up)
-    patient_name_label = String(-30, 740, f"Name: {full_name}",  # Moved up from 700 to 710
-                               fontSize=9, fontName="Helvetica", fillColor=colors.black)
+    # LEFT SIDE: Patient Info
+    patient_name_label = String(-29, 738, f"Name: {full_name}",
+                           fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(patient_name_label)
-    
-    patient_age_label = String(-30, 720, f"Age: {age}",  # Moved up from 680 to 690
-                              fontSize=9, fontName="Helvetica", fillColor=colors.black)
+
+    patient_age_label = String(-29, 718, f"Age: {age}",  
+                          fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(patient_age_label)
-    
-    patient_gender_label = String(-30, 700, f"Gender: {gender}",  # Moved up from 660 to 670
-                                 fontSize=9, fontName="Helvetica", fillColor=colors.black)
+
+    patient_gender_label = String(-29, 698, f"Gender: {gender}",
+                             fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(patient_gender_label)
+    master_drawing.add(String(9, 496, "Report Type: HRV Test", fontSize=9, fontName=FONT_TYPE, fillColor=colors.black))
+    master_drawing.add(String(9, 482, f"Date & Time: {date_part} {time_part}".rstrip(), fontSize=9, fontName=FONT_TYPE, fillColor=colors.black))
+    master_drawing.add(String(9, 468, filter_line, fontSize=9, fontName=FONT_TYPE, fillColor=colors.black))
     
-    # RIGHT SIDE: Date/Time (ABOVE ECG GRAPH - shifted further up)
+    # RIGHT SIDE: Date/Time 
     if date_time_str:
         parts = date_time_str.split()
         date_part = parts[0] if parts else ""
         time_part = parts[1] if len(parts) > 1 else ""
     else:
-        date_part, time_part = "____", "____"
+        date_part, time_part = "", ""
     
     # RIGHT SIDE: Vital Parameters at SAME LEVEL as patient info (ABOVE ECG GRAPH)
     hr_val = data.get('HR') or data.get('HR_bpm') or data.get('Heart_Rate') or data.get('HR_avg', )
@@ -1912,32 +1940,32 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
    
     # Add vital parameters in TWO COLUMNS (ABOVE ECG GRAPH - shifted further up)
     # FIRST COLUMN (Left side - x=175)
-    hr_label = String(250, 740, f"HR    : {HR} bpm",
+    hr_label = String(256, 740, f"HR    : {HR} bpm",
                      fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(hr_label)
 
-    pr_label = String(250, 720, f"PR    : {PR} ms",
+    pr_label = String(256, 720, f"PR    : {PR} ms",
                      fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(pr_label)
 
-    qrs_label = String(250, 700, f"QRS : {QRS} ms",
+    qrs_label = String(256, 700, f"QRS : {QRS} ms",
                       fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(qrs_label)
     
-    rr_label = String(250, 682, f"RR    : {RR} ms",
+    rr_label = String(256, 682, f"RR    : {RR} ms",
                      fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(rr_label)
 
-    qt_label = String(250, 664, f"QT    : {int(round(QT))} ms",
+    qt_label = String(256, 664, f"QT    : {int(round(QT))} ms",
                      fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(qt_label)
 
-    qtc_label = String(250, 646, f"QTc  : {int(round(QTc))} ms",
-                      fontSize=10, fontName="Helvetica", fillColor=colors.black)
+    qtc_label = String(256, 646, f"QTc  : {int(round(QTc))} ms",
+                      fontSize=10, fontName=FONT_TYPE, fillColor=colors.black)
     master_drawing.add(qtc_label)
 
     # SECOND COLUMN (Right side - x=240)
-    st_label = String(240, 664, f"ST            : {int(round(ST))} ms",  
+    st_label = String(256, 664, f"ST            : {int(round(ST))} ms",  
                      fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(st_label)
 
@@ -2363,7 +2391,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     # Dummy value for QTCF label (remove real calculation)
     qtcf_val = None
     qtcf_text = "QTCF       : --"
-    qtcf_label = String(240, 682, qtcf_text,  # Moved up from 642 to 652
+    qtcf_label = String(254, 682, qtcf_text,  # Moved up from 642 to 652
                         fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(qtcf_label)
 
@@ -2404,20 +2432,28 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     except Exception:
         doctor = ""
   
-    # Doctor Name (below V6 lead)
-    doctor_name_label = String(-30, -10, "Doctor Name: ", 
-                              fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
+    reference_y = 5
+    doctor_name_y = -12
+    doctor_sign_y = -29
+
+    reference_label = String(-30, reference_y, "Reference Report Confirmed by:",
+                             fontSize=10, fontName=FONT_TYPE, fillColor=colors.black)
+    master_drawing.add(reference_label)
+
+    # Doctor Name (shifted down below reference text)
+    doctor_name_label = String(-30, doctor_name_y, "Doctor Name: ",
+                              fontSize=10, fontName=FONT_TYPE, fillColor=colors.black)
     master_drawing.add(doctor_name_label)
     
     if doctor:
-        value_x = -30 + stringWidth("Doctor Name: ", "Helvetica-Bold", 10) + 5
-        doctor_name_value = String(value_x, -10, doctor,
-                                fontSize=10, fontName="Helvetica", fillColor=colors.black)
+        value_x = -30 + stringWidth("Doctor Name: ", FONT_TYPE, 10) + 5
+        doctor_name_value = String(value_x, doctor_name_y, doctor,
+                                fontSize=10, fontName=FONT_TYPE, fillColor=colors.black)
         master_drawing.add(doctor_name_value)
 
-    # Doctor Signature (below Doctor Name)
-    doctor_sign_label = String(-30, -25, "Doctor Sign: ", 
-                              fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
+    # Doctor Signature (shifted down below Doctor Name)
+    doctor_sign_label = String(-30, doctor_sign_y, "Doctor Sign: ", 
+                              fontSize=10, fontName=FONT_TYPE, fillColor=colors.black)
     master_drawing.add(doctor_sign_label)
 
     # Add RIGHT-SIDE Conclusion Box (moved to the right) - NOW DYNAMIC FROM DASHBOARD (12 conclusions max) - MADE SMALLER
@@ -2434,7 +2470,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     # CENTERED and STYLISH "Conclusion" header - DYNAMIC - SMALLER (AT TOP OF CONTAINER - CLOSE TO TOP LINE)
     # Box center: 200 + (325/2) = 362.5, so text should be centered around 362.5
     # Box top is at conclusion_y_start - 55, so header should be very close to top line
-    conclusion_header = String(362.5, conclusion_y_start + 8, "✦ CONCLUSION ✦",  # Moved very close to top line: y=0→-53 (just below top edge at -55)
+    conclusion_header = String(362.5, conclusion_y_start + 8, "CONCLUSION",  # Moved very close to top line: y=0→-53 (just below top edge at -55)
                               fontSize=9, fontName="Helvetica-Bold",  # Reduced from 11 to 9
                               fillColor=colors.HexColor("#2c3e50"),
                               textAnchor="middle")  # This centers the text
@@ -2511,7 +2547,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
 
     # Extract patient data for use in canvas drawing
     patient_org = patient.get("Org.", "") if patient else ""
-    patient_doctor_mobile = patient.get("doctor_mobile", "") if patient else ""
+    patient_doctor_mobile = format_indian_phone(patient.get("doctor_mobile", "") if patient else "")
     
     # Helper: draw logo on every page AND ALIGNED pink grid background on Page 2
     def _draw_logo_and_footer(canvas, doc):
@@ -2523,13 +2559,13 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
             page_width, page_height = canvas._pagesize
             
             # Fill entire page with pink background
-            canvas.setFillColor(colors.HexColor("#ffe6e6"))
+            canvas.setFillColor(colors.HexColor(ECG_PAPER_BG))
             canvas.rect(0, 0, page_width, page_height, fill=1, stroke=0)
             
             # ECG grid colors - darker for better visibility
-            light_grid_color = colors.HexColor("#ffd1d1")  
+            light_grid_color = colors.HexColor(ECG_GRID_MINOR)
             
-            major_grid_color = colors.HexColor("#ffb3b3")   
+            major_grid_color = colors.HexColor(ECG_GRID_MAJOR)
             
             # Draw minor grid lines (1mm spacing) - 59 boxes complete (0 to 295mm)
             canvas.setStrokeColor(light_grid_color)
@@ -2649,11 +2685,11 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
         
         # STEP 3: Add footer with company address on all pages
         canvas.saveState()
-        canvas.setFont("Helvetica", 8)
+        canvas.setFont(FONT_TYPE, 8)
         canvas.setFillColor(colors.black)  # Ensure text is black on pink background
-        footer_text = "Deckmount Electronics, Plot No. 683, Phase V, Udyog Vihar, Sector 19, Gurugram, Haryana 122016"
+        footer_text = "Deckmount Electronics Pvt Ltd | Rhythm Ultra Max | IEC 60601 | Made in India"
         # Center the footer text at bottom of page
-        text_width = canvas.stringWidth(footer_text, "Helvetica", 8)
+        text_width = canvas.stringWidth(footer_text, FONT_TYPE, 8)
         x = (doc.width + doc.leftMargin + doc.rightMargin - text_width) / 2
         y = 10  # 20 points from bottom
         canvas.drawString(x, y, footer_text)
@@ -3079,7 +3115,7 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
         patient.get("Org.", "")
     ) if patient else ""
     patient_org_address = patient.get("Org. Address", "") if patient else ""
-    patient_doctor_mobile = patient.get("doctor_mobile", "") if patient else ""
+    patient_doctor_mobile = format_indian_phone(patient.get("doctor_mobile", "") if patient else "")
     
     # Define callback function for headers/footers BEFORE creating templates
     def _draw_logo_and_footer_callback(canvas, doc_obj):
@@ -3099,12 +3135,12 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
             box_width_pts = box_width_mm * mm
             
             # Pink background - FULL PAGE (297mm width, no white space)
-            canvas.setFillColor(colors.HexColor("#ffe6e6"))
+            canvas.setFillColor(colors.HexColor(ECG_PAPER_BG))
             canvas.rect(0, 0, page_width, page_height, fill=1, stroke=0)
             
             # Grid colors
-            light_grid_color = colors.HexColor("#ffd1d1")
-            major_grid_color = colors.HexColor("#ffb3b3")
+            light_grid_color = colors.HexColor(ECG_GRID_MINOR)
+            major_grid_color = colors.HexColor(ECG_GRID_MAJOR)
             
             # Minor grid lines - 5 minor boxes per major box (scaled proportionally)
             # Width: 57 boxes across 297mm → 5.2105mm per box → minor = 1.042mm
@@ -3151,36 +3187,12 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
                 canvas.line(0, y, page_width, y)
                 y += box_height_pts
         
-        # STEP 2: Draw logo (skip on landscape Page 1 so header uses org details instead)
-        # Use resource_path helper for PyInstaller compatibility
-        png_path = _get_resource_path("assets/Deckmountimg.png")
-        webp_path = _get_resource_path("assets/Deckmount.webp")
-        logo_path = png_path if os.path.exists(png_path) else webp_path
-        
-        if os.path.exists(logo_path) and canvas.getPageNumber() != 1:
-            canvas.saveState()
-            if canvas.getPageNumber() in [2]:  # Landscape page 2
-                logo_w, logo_h = 120, 40
-                page_width, page_height = canvas._pagesize
-                x = page_width - logo_w - 35
-                y = page_height - logo_h
-            else:
-                logo_w, logo_h = 120, 40
-                page_width, page_height = canvas._pagesize
-                x = page_width - logo_w - 35
-                y = page_height - logo_h
-            try:
-                canvas.drawImage(logo_path, x, y, width=logo_w, height=logo_h, preserveAspectRatio=True, mask='auto')
-            except Exception:
-                pass
-            canvas.restoreState()
-        
-        # STEP 3: Footer
+        # STEP 2: Footer
         canvas.saveState()
-        canvas.setFont("Helvetica", 8)
+        canvas.setFont(FONT_TYPE, 8)
         canvas.setFillColor(colors.black)
-        footer_text = "Deckmount Electronics, Plot No. 683, Phase V, Udyog Vihar, Sector 19, Gurugram, Haryana 122016"
-        text_width = canvas.stringWidth(footer_text, "Helvetica", 8)
+        footer_text = "Deckmount Electronics Pvt Ltd | Rhythm Ultra Max | IEC 60601 | Made in India"
+        text_width = canvas.stringWidth(footer_text, FONT_TYPE, 8)
         
         # All pages in this report are LANDSCAPE by default
         page_width, page_height = canvas._pagesize
@@ -3235,7 +3247,7 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     date_time = patient.get("date_time", "")
     org_name = patient.get("Org. Name", "") or patient.get("Org.", "") or ""
     org_address = patient.get("Org. Address", "") or ""
-    doctor_mobile = patient.get("doctor_mobile", "") or ""
+    doctor_mobile = format_indian_phone(patient.get("doctor_mobile", "") or "")
     full_name = f"{first_name} {last_name}".strip()
     date_time_str = date_time
     
@@ -3284,14 +3296,14 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     # First graph y=400 means top at 400+75=475, safely below settings at 490 (15pt gap)
     y_positions = [350, 270, 190, 110, 30]  # 5 graphs (80pt spacing) with proper spacing from params - SHIFTED DOWN 50 points total (25+25)
     
-    # 🎯 Configuration: Fixed 6400 ADC samples per strip (device standard)
-    samples_per_strip = 6400
+    # 🎯 Configuration: Match 6:2 Lead II strip density for each HRV minute strip.
+    samples_per_strip = 5500
     segment_duration = (samples_per_strip / float(sampling_rate)) if 'sampling_rate' in locals() else 11.0
     num_segments = 5  # Always 5 strips
     
     print(f"📊 HRV Report Configuration:")
     print(f"   Samples per strip: {samples_per_strip} ADC samples (sampling_rate={sampling_rate} Hz)")
-    print(f"   Duration per strip: {segment_duration}s (first 11 seconds)")
+    print(f"   Duration per strip: {segment_duration}s")
     print(f"   Total strips: {num_segments}")
      
     # HRV report supports ONLY these leads (same as HRV UI lead combo)
@@ -3343,15 +3355,16 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
         # Grid calculation: 1 box = 5mm, 1mm = minor box
         from reportlab.lib.units import mm as mm_unit
         box_width = 5.0 * mm_unit  # 1 major box = 5mm = 14.173228 points
-        minor_box_width = 1.0 * mm_unit  # 1 minor box = 1mm = 2.834646 points
         
-        # Keep the notch fully inside the strip and begin the waveform after it
-        x_pos = (2.0 * box_width) + minor_box_width  # 2 large boxes + 1mm offset
-        
-        right_gap_boxes = 2  # 2 boxes gap from right
-        right_gap_width = right_gap_boxes * box_width
-        available_width = max(50.0, total_width - x_pos - right_gap_width)
-        ecg_width = available_width
+        # Match the hyperkalemia Lead II strip geometry as closely as possible:
+        # wide strip, notch inside the strip, and waveform starting after the notch gap.
+        x_pos = 0.0
+        plot_start_gap = 4.0 * mm_unit
+        notch_start_offset = 1.0 * mm_unit
+        notch_width_points = 5.0 * mm_unit
+        notch_tail = 2.0 * mm_unit
+        plot_start_x = x_pos + notch_start_offset + notch_width_points + notch_tail + plot_start_gap
+        ecg_width = min(54.0 * box_width, total_width - x_pos)
         ecg_height = 75  # Fits 5 graphs in landscape height with 80pt spacing
         
         print(f"📐 Strip {segment_idx + 1}: x={x_pos:.2f}, Width={ecg_width:.2f}, End={x_pos+ecg_width:.2f}")
@@ -3372,8 +3385,7 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
         notch_height = notch_height_mm * mm_unit  # Convert to points
         
         # Position notch inside the strip area like the reference report.
-        first_box_width = 5.0 * mm_unit
-        notch_x = x_pos - (1.5 * first_box_width)
+        notch_x = x_pos + notch_start_offset
         
         # Y position: Center of the strip baseline - SHIFTED DOWN 25 points
         center_y = y_pos + (ecg_height / 2.0)  # Center of the graph in points
@@ -3398,18 +3410,18 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
         # Go down back to baseline
         notch_path.lineTo(notch_x + notch_width, notch_y_base)
         # Small forward baseline tick after the notch, same style as clean ECG reports.
-        notch_path.lineTo(notch_x + notch_width + (2.0 * mm_unit), notch_y_base)
-        
+        notch_path.lineTo(notch_x + notch_width + notch_tail, notch_y_base)
+
         # Add notch to drawing (ALWAYS, regardless of data)
         master_drawing.add(notch_path)
-        
+
         # Calculate connection details for logging
         notch_end_x = notch_x + notch_width
-        connection_distance_mm = (x_pos - notch_end_x) / mm_unit
+        connection_distance_mm = (plot_start_x - (notch_x + notch_width + notch_tail)) / mm_unit
         print(f"✅ Strip {segment_idx + 1}: Calibration notch added (ALWAYS)")
         print(f"   📏 Notch: Width={notch_width_mm}mm, Height={notch_height_mm}mm (1mV @ {wave_gain_mm_mv}mm/mV)")
-        print(f"   🔗 Connection line: {connection_distance_mm:.2f}mm from notch end to ECG start")
-        print(f"   📍 Positions: Notch@{notch_x:.2f}pt → ECG@{x_pos:.2f}pt")
+        print(f"   📏 Plot gap: {connection_distance_mm:.2f}mm from notch end to ECG start")
+        print(f"   📍 Positions: Notch@{notch_x:.2f}pt → ECG@{plot_start_x:.2f}pt")
 
         from reportlab.graphics.shapes import String as TextString
         minute_labels = ["(First minute)", "(Second minute)", "(Third minute)", "(Fourth minute)", "(Fifth minute)"]
@@ -3465,7 +3477,7 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
                     print(f"⚠️ HRV gaussian smoothing failed for strip {segment_idx + 1}: {smooth_err}")
                 
                 from reportlab.lib.units import mm as mm_unit
-                t = np.linspace(x_pos, x_pos + ecg_width, len(adc_data))
+                t = np.linspace(plot_start_x, x_pos + ecg_width, len(adc_data))
                 
                 # ========== EXACT SAME SCALING LOGIC AS MAIN REPORT (Lines 2665-2740) ==========
                 
@@ -3548,7 +3560,7 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
                 
                 successful_graphs += 1
                 
-                print(f" Drew {len(segment_data)} ECG data points for Strip {segment_idx + 1} ({int(segment_start)}s-{int(segment_end)}s, 6400 max samples)")
+                print(f" Drew {len(segment_data)} ECG data points for Strip {segment_idx + 1} ({int(segment_start)}s-{int(segment_end)}s, 2500 max samples)")
         
         except Exception as e:
             print(f" Error adding Strip {segment_idx + 1}: {e}")
@@ -3602,44 +3614,52 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
         date_part, time_part = "____", "____"
 
     filter_line = f"{wave_speed_mm_s} mm/s   {filter_band}   AC : {ac_frequency}   {wave_gain_mm_mv} mm/mV"
+    header_shift_y = -12.0
 
     # ── ROW 1 — Patient identity (top-left) ──────────────────────────────────
-    patient_name_label = String(5, 525, f"Name: {full_name}",
-                                fontSize=9, fontName="Helvetica", fillColor=colors.black)
+    patient_name_label = String(14.15, 543.75 + header_shift_y, f"Name: {full_name}",
+                                fontSize=9, fontName=FONT_TYPE, fillColor=colors.black)
     master_drawing.add(patient_name_label)
-    patient_age_label = String(5, 511, f"Age: {age}",
-                               fontSize=9, fontName="Helvetica", fillColor=colors.black)
+    patient_age_label = String(14.15, 529.03 + header_shift_y, f"Age: {age}",
+                               fontSize=9, fontName=FONT_TYPE, fillColor=colors.black)
     master_drawing.add(patient_age_label)
-    patient_gender_label = String(5, 497, f"Gender: {gender}",
-                                  fontSize=9, fontName="Helvetica", fillColor=colors.black)
+    patient_gender_label = String(14.15, 513.80 + header_shift_y, f"Gender: {gender}",
+                                  fontSize=9, fontName=FONT_TYPE, fillColor=colors.black)
     master_drawing.add(patient_gender_label)
+    master_drawing.add(String(14.15, 499.32 + header_shift_y, "Report Type: HRV Test",
+                              fontSize=9, fontName=FONT_TYPE, fillColor=colors.black))
+    master_drawing.add(String(14.15, 484.15 + header_shift_y, f"Date & Time: {date_part} {time_part}".rstrip(),
+                              fontSize=9, fontName=FONT_TYPE, fillColor=colors.black))
+    master_drawing.add(String(14.15, 470.05 + header_shift_y, filter_line,
+                              fontSize=9, fontName=FONT_TYPE, fillColor=colors.black))
 
     # ── LEFT metrics block (x=210) — uses ONLY HRV-computed values ───────────
-    _LX = 210; _fs = 9
-    master_drawing.add(String(_LX, 525, f"HR   : {HR} bpm",   fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
-    master_drawing.add(String(_LX, 511, f"PR   : {PR} ms",    fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
-    master_drawing.add(String(_LX, 497, f"QRS : {QRS_H} ms",  fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
-    master_drawing.add(String(_LX, 483, f"RR   : {RR} ms",    fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
-    master_drawing.add(String(_LX, 469, f"QT   : {QT} ms",    fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
-    master_drawing.add(String(_LX, 455, f"QTc : {QTc} ms",    fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
+    _fs = 9
+    master_drawing.add(String(293.00, 542.83 + header_shift_y, f"HR   : {HR} bpm",   fontSize=_fs, fontName=FONT_TYPE, fillColor=colors.black))
+    master_drawing.add(String(293.00, 528.33 + header_shift_y, f"PR   : {PR} ms",    fontSize=_fs, fontName=FONT_TYPE, fillColor=colors.black))
+    master_drawing.add(String(293.00, 513.49 + header_shift_y, f"QRS : {QRS_H} ms",  fontSize=_fs, fontName=FONT_TYPE, fillColor=colors.black))
+    master_drawing.add(String(293.00, 498.82 + header_shift_y, f"RR   : {RR} ms",    fontSize=_fs, fontName=FONT_TYPE, fillColor=colors.black))
+    master_drawing.add(String(293.00, 484.15 + header_shift_y, f"QT   : {QT} ms",    fontSize=_fs, fontName=FONT_TYPE, fillColor=colors.black))
 
     # ── RIGHT metrics block (x=420) ───────────────────────────────────────────
-    _RX = 420
-    # master_drawing.add(String(_RX, 525, f"P/QRS/T : {p_axis}/{qrs_axis_str}/{t_axis_str}\u00b0", fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
-    # master_drawing.add(String(_RX, 511, f"RV5/SV1 : {rv5:.3f}/{sv1:.3f} mV",                    fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
-    # master_drawing.add(String(_RX, 497, f"RV5+SV1 : {rv5_sv1_sum:.3f} mV",                      fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
-    master_drawing.add(String(_RX, 525, f"QTCF     : {qtcf_text}",                               fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
-    master_drawing.add(String(_RX, 511, filter_line,                                             fontSize=8,   fontName="Helvetica", fillColor=colors.black))
+    # master_drawing.add(String(420, 525, f"P/QRS/T : {p_axis}/{qrs_axis_str}/{t_axis_str}\u00b0", fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
+    # master_drawing.add(String(420, 511, f"RV5/SV1 : {rv5:.3f}/{sv1:.3f} mV", fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
+    # master_drawing.add(String(420, 497, f"RV5+SV1 : {rv5_sv1_sum:.3f} mV", fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
+    master_drawing.add(String(441.37, 542.83 + header_shift_y, f"QTc  : {QTc} ms", fontSize=_fs, fontName=FONT_TYPE, fillColor=colors.black))
+    master_drawing.add(String(441.37, 528.66 + header_shift_y, f"QTCF : {qtcf_text}", fontSize=_fs, fontName=FONT_TYPE, fillColor=colors.black))
 
     # ── Date/Time (top-right) ────────────────────────────────────────────────
-    master_drawing.add(String(_RX, 486, f"Date & Time: {date_part} {time_part}",
-                              fontSize=9, fontName="Helvetica", fillColor=colors.black))
-    master_drawing.add(String(690, 525, f"Org. Name: {org_name}",
-                              fontSize=9, fontName="Helvetica-Bold", fillColor=colors.black))
-    master_drawing.add(String(690, 511, f"Org. Address: {org_address}",
-                              fontSize=9, fontName="Helvetica-Bold", fillColor=colors.black))
-    master_drawing.add(String(690, 497, f"Phone No: {doctor_mobile}",
-                              fontSize=9, fontName="Helvetica-Bold", fillColor=colors.black))
+    contact_block_x = 604
+    contact_block_top_y = 542.83 + header_shift_y
+    if org_name:
+        master_drawing.add(String(contact_block_x, contact_block_top_y, org_name,
+                                  fontSize=9, fontName=FONT_TYPE_BOLD, fillColor=colors.black))
+    if org_address:
+        master_drawing.add(String(contact_block_x, contact_block_top_y - 14, org_address,
+                                  fontSize=9, fontName=FONT_TYPE_BOLD, fillColor=colors.black))
+    if doctor_mobile:
+        master_drawing.add(String(contact_block_x, contact_block_top_y - 28, doctor_mobile,
+                                  fontSize=9, fontName=FONT_TYPE_BOLD, fillColor=colors.black))
 
     # ── Lead label (just above the first strip) ───────────────────────────────
     # Removed the global Lead label because it overlaps with the "Lead II (First minute)" label per strip.
@@ -3655,18 +3675,26 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
                               fontSize=8, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(confirmed_label)
     
-    doctor_name_label = String(10, 50, "Doctor Name: ",  # X=10 (visible, inside drawing)
-                              fontSize=8, fontName="Helvetica", fillColor=colors.black)
+    reference_y = 55
+    doctor_name_y = 40
+    doctor_sign_y = 26
+
+    reference_label = String(13, reference_y, "Reference Report Confirmed by:",
+                              fontSize=10, fontName=FONT_TYPE, fillColor=colors.black)
+    master_drawing.add(reference_label)
+
+    doctor_name_label = String(13, doctor_name_y, "Doctor Name: ",  # X=10 (visible, inside drawing)
+                              fontSize=10, fontName=FONT_TYPE, fillColor=colors.black)
     master_drawing.add(doctor_name_label)
     
     if doctor:
-        value_x = 10 + stringWidth("Doctor Name: ", "Helvetica", 8) + 6
-        doctor_name_value = String(value_x, 50, doctor,  # Starts after "Doctor Name: " label
-                                fontSize=8, fontName="Helvetica", fillColor=colors.black)
+        value_x = 13 + stringWidth(label_text, FONT_TYPE, 10) + 6
+        doctor_name_value = String(value_x, doctor_name_y, doctor,  # Starts after "Doctor Name: " label
+                                fontSize=10, fontName=FONT_TYPE, fillColor=colors.black)
         master_drawing.add(doctor_name_value)
     
-    doctor_sign_label = String(10, 35, "Doctor Sign: ",  # X=10 (visible, inside drawing)
-                              fontSize=8, fontName="Helvetica", fillColor=colors.black)
+    doctor_sign_label = String(13, doctor_sign_y, "Doctor Sign: ",  # X=10 (visible, inside drawing)
+                              fontSize=10, fontName=FONT_TYPE, fillColor=colors.black)
     master_drawing.add(doctor_sign_label)
     
     # ==================== CONCLUSION BOX ON PAGE 1 (LANDSCAPE MODE - ADJUSTED FOR 780 WIDTH) ====================
@@ -3681,7 +3709,7 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     
     # Conclusion header (CENTER adjusted for new X position and width)
     conclusion_header = String(conclusion_x_start + 245, conclusion_y_start + 8, "✦ CONCLUSION ✦",  # Center: 280 + 490/2 = 525
-                              fontSize=9, fontName="Helvetica-Bold",
+                              fontSize=9, fontName=FONT_TYPE_BOLD,
                               fillColor=colors.HexColor("#2c3e50"),
                               textAnchor="middle")
     master_drawing.add(conclusion_header)
@@ -3706,7 +3734,7 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
             conc_text = f"{conclusion_num}. {display_conclusion}"
             x_pos = conclusion_x_start + 10 + (col_idx * 230)  # Adjusted: start from box x + margin
             conc = String(x_pos, row_y, conc_text, 
-                         fontSize=9, fontName="Helvetica", fillColor=colors.black)
+                         fontSize=9, fontName=FONT_TYPE, fillColor=colors.black)
             master_drawing.add(conc)
             conclusion_num += 1
     
@@ -3744,6 +3772,7 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     rr_per_minute = []
     hr_per_minute = []
     rr_all_for_hrv = []
+    rr_time_min_for_hrv = []
     
     # Helper function to calculate RR intervals from segment data
     def calculate_rr_from_segment(segment_data, sampling_rate=500.0):
@@ -3863,16 +3892,23 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
             peaks = pan_tompkins(vals, fs=sampling_rate)
             if len(peaks) < 2:
                 continue
-            rr_ms = np.diff(peaks) * (1000.0 / sampling_rate)
-            rr_ms = rr_ms[(rr_ms >= 200.0) & (rr_ms <= 3000.0)]
+            rr_ms_raw = np.diff(peaks) * (1000.0 / sampling_rate)
+            rr_time_sec_raw = (peaks[1:] / sampling_rate) + (seg_idx * 60.0)
+            valid_mask = (rr_ms_raw >= 200.0) & (rr_ms_raw <= 3000.0)
+            rr_ms = rr_ms_raw[valid_mask]
+            rr_time_sec = rr_time_sec_raw[valid_mask]
             if rr_ms.size < 1:
                 continue
-            rr_all_for_hrv.extend(rr_ms.tolist())
             low = float(np.percentile(rr_ms, 5))
             high = float(np.percentile(rr_ms, 95))
-            rr_final = rr_ms[(rr_ms >= low) & (rr_ms <= high)]
+            final_mask = (rr_ms >= low) & (rr_ms <= high)
+            rr_final = rr_ms[final_mask]
+            rr_time_final_sec = rr_time_sec[final_mask]
             if rr_final.size < 2:
                 rr_final = rr_ms
+                rr_time_final_sec = rr_time_sec
+            rr_all_for_hrv.extend(rr_final.tolist())
+            rr_time_min_for_hrv.extend((rr_time_final_sec / 60.0).tolist())
             avg_rr = float(np.mean(rr_final))
             hr_val = 60000 / avg_rr if avg_rr > 0 else data.get('HR_avg', 0)
             rr_per_minute.append(avg_rr)

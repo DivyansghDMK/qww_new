@@ -851,8 +851,8 @@ class ECGMenu(QGroupBox):
             form_layout.addLayout(row)
             entries[label] = entry
         
-        entries["Org. Name"].setMaxLength(24)
-        entries["Org. Address"].setMaxLength(24)
+        entries["Org. Name"].setMaxLength(28)
+        entries["Org. Address"].setMaxLength(45)
         entries["Doctor"].setMaxLength(20)
         entries["Phone No."].setMaxLength(10)
         entries["Patient Name"].setMaxLength(20) 
@@ -966,12 +966,12 @@ class ECGMenu(QGroupBox):
                 pd = prefill
 
                 
-                # Org. Name (optional in cached data)
+                # Org. Name
                 if "Org." in pd and pd["Org."]:
                     entries["Org. Name"].setText(pd["Org."])
                 elif "Org. Name" in pd and pd["Org. Name"]:
                     entries["Org. Name"].setText(pd["Org. Name"])
-                # Org. Address (optional in cached data)
+                # Org. Address
                 if "Org. Address" in pd and pd["Org. Address"]:
                     entries["Org. Address"].setText(pd["Org. Address"])
                 # Doctor
