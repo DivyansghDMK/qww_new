@@ -65,18 +65,27 @@ def _find_user_record(username: str = "", user_details: Optional[Dict[str, Any]]
     return {}
 
 
+def _is_valid_name(name: str) -> bool:
+    """Return True only if the name contains at least one alphabetic character.
+    This prevents raw numeric usernames (e.g. '12', '007') from being
+    displayed as patient names in ECG reports."""
+    return bool(name) and any(c.isalpha() for c in name)
+
+
 def patient_from_user_profile(username: str = "", user_details: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     record = _find_user_record(username=username, user_details=user_details)
     if not record:
         return {}
 
-    full_name = (
+    raw_name = (
         str(record.get("patient_name", "")).strip()
         or str(record.get("full_name", "")).strip()
         or " ".join(
             part for part in [str(record.get("first_name", "")).strip(), str(record.get("last_name", "")).strip()] if part
         ).strip()
     )
+    # Reject purely numeric names (login IDs masquerading as patient names)
+    full_name = raw_name if _is_valid_name(raw_name) else ""
     name_parts = _split_name(full_name)
 
     patient = {

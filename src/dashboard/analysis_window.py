@@ -145,11 +145,26 @@ class InteractiveLeadCanvas(FigureCanvas):
         for name in names:
             obj = getattr(self, name, None)
             if obj is not None:
-                try:
-                    obj.remove()
-                except Exception:
-                    pass
-                setattr(self, name, None)
+                if isinstance(obj, list):
+                    # Handle list of artists (like _caliper_lines)
+                    for item in obj:
+                        if item is not None:
+                            try:
+                                item.remove()
+                            except Exception:
+                                pass
+                    # Reset the list to its original state [None, None] or []
+                    if name == '_caliper_lines':
+                        setattr(self, name, [None, None])
+                    else:
+                        setattr(self, name, [])
+                else:
+                    # Handle single artist
+                    try:
+                        obj.remove()
+                    except Exception:
+                        pass
+                    setattr(self, name, None)
 
     # ── matplotlib event handlers ─────────────────────────────────────────────
     def _on_mouse_move(self, event):
@@ -907,9 +922,7 @@ class ECGAnalysisWindow(QDialog):
             canvas._caliper_x     = [None, None]
             canvas._drag_start    = None
             canvas._clear_overlay('_ruler_patch', '_crosshair_v', '_crosshair_h',
-                                   '_readout_text')
-            for i in range(2):
-                canvas._clear_overlay(f'_caliper_lines')
+                                   '_readout_text', '_caliper_lines')
             canvas.draw_idle()
         self.measure_lbl.setText("")
 

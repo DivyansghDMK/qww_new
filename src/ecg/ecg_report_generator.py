@@ -51,8 +51,12 @@ LEAD_SEQUENCES = {
     "Cabrera": ["aVL", "I", "-aVR", "II", "aVF", "III", "V1", "V2", "V3", "V4", "V5", "V6"]
 }
 Y_POSITIONS_MM = [263.2, 242.6, 222.1, 201.5, 180.9, 160.3, 139.8, 119.2, 98.6, 78.0, 57.5, 36.9]
-def _add_patient_header(master_drawing, full_name, age, gender, patient, date_time_str):
+def _add_patient_header(master_drawing, full_name, age, gender, patient, date_time_str, data, settings_manager):
     from reportlab.graphics.shapes import String
+    from reportlab.lib.units import mm
+    from reportlab.lib import colors
+    
+    # 1. Prepare Date and Time
     if date_time_str:
         parts = date_time_str.split()
         date_part = parts[0] if parts else ""
@@ -62,22 +66,115 @@ def _add_patient_header(master_drawing, full_name, age, gender, patient, date_ti
         now = datetime.now()
         date_part = now.strftime("%d/%m/%Y")
         time_part = now.strftime("%H:%M:%S")
-    name_label = String(-5.6 * mm, 284.1 * mm, f"Name: {full_name}", fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(name_label)
-    age_label = String(-5.6 * mm, 277.0 * mm, f"Age: {age}", fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(age_label)
-    gender_label = String(-5.6 * mm, 269.9 * mm, f"Gender: {gender}", fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(gender_label)
-    date_label = String(161.7 * mm, 269.5 * mm, f"Date: {date_part}", fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(date_label)
-    time_label = String(161.7 * mm, 264.2 * mm, f"Time: {time_part}", fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(time_label)
-    org_value = patient.get('Org.', '') if patient else ''
-    org_label = String(161.7 * mm, 258.9 * mm, f"Org: {org_value}", fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
-    master_drawing.add(org_label)
-    phone_value = patient.get('doctor_mobile', '') if patient else ''
-    phone_label = String(161.7 * mm, 253.6 * mm, f"Phone No: {phone_value}", fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
-    master_drawing.add(phone_label)
+    
+    # 2. Prepare Metrics Column 2
+    HR = data.get('HR_avg') or data.get('HR') or 0
+    PR = data.get('PR') or 0
+    QRS = data.get('QRS') or 0
+    QT = _safe_float(data.get('QT'), 0.0)
+    QTc = _safe_float(data.get('QTc'), 0.0)
+    RR = int(60000 / float(HR)) if HR and float(HR) > 0 else 0
+    
+    # 3. Prepare Metrics Column 3
+    _qtcf_val = data.get('QTc_Fridericia') or data.get('QTcF_ms') or data.get('QTcF') or data.get('QTcF_interval')
+    qtcf_display = f"{int(round(float(_qtcf_val)))} ms" if _qtcf_val and float(_qtcf_val) > 0 else "-- ms"
+    
+    # RV5/SV1
+    rv5_mv = data.get('rv5_mv')
+    sv1_mv = data.get('sv1_mv')
+    rv5_text = f"{rv5_mv:.3f} mV" if rv5_mv is not None else "--"
+    sv1_text = f"{sv1_mv:.3f} mV" if sv1_mv is not None else "--"
+    
+    # RV5+SV1
+    rv5_sv1_sum = (rv5_mv - abs(sv1_mv)) if rv5_mv is not None and sv1_mv is not None else None
+    rv5_sv1_sum_text = f"{rv5_sv1_sum:.3f} mV" if rv5_sv1_sum is not None else "--"
+    
+    # P/QRS/T Axis
+    p_axis = data.get('p_axis', '--')
+    qrs_axis = data.get('QRS_axis', '--')
+    t_axis = data.get('t_axis', '--')
+    def _fmt_axis(v):
+        if v is None or v == '--': return '--'
+        try:
+            val = str(v).replace('°','')
+            return f"{int(round(float(val)))}°"
+        except: return '--'
+    p_qrs_t_text = f"{_fmt_axis(p_axis)}/{_fmt_axis(qrs_axis)}/{_fmt_axis(t_axis)}"
+
+    # 4. Prepare Filter Info
+    emg_setting = str(settings_manager.get_setting("filter_emg", "off")).strip()
+    dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
+    ac_setting = str(settings_manager.get_setting("filter_ac", "off")).strip()
+    ac_frequency = f"{ac_setting}Hz" if ac_setting in ("50", "60") else "Off"
+    if dft_setting not in ("off", "") and emg_setting not in ("off", ""):
+        filter_band = f"{dft_setting}-{emg_setting}Hz"
+    elif dft_setting not in ("off", ""):
+        filter_band = f"HP: {dft_setting}Hz"
+    elif emg_setting not in ("off", ""):
+        filter_band = f"LP: {emg_setting}Hz"
+    else:
+        filter_band = "Filter: Off"
+    filter_info = f"25.0 mm/s   {filter_band}   AC : {ac_frequency}   10.0 mm/mV"
+
+    # 5. Prepare Org Info
+    org_name = patient.get('Org.', '') if patient else ''
+    org_address = patient.get('org_address', '') if patient else ''
+    phone_no = patient.get('doctor_mobile', '') if patient else ''
+
+    # 6. Define Layout Coordinates
+    y_start = 282.0 * mm
+    y_step = 4.2 * mm
+    
+    col1_x = 0.0 * mm
+    col2_x = 62.0 * mm
+    col3_x = 105.0 * mm
+    col4_x = 152.0 * mm
+
+    # --- COLUMN 1 ---
+    master_drawing.add(String(col1_x, y_start, f"Age: {age}", fontSize=9, fontName="Helvetica", fillColor=colors.black))
+    master_drawing.add(String(col1_x, y_start - y_step, f"Gender: {gender}", fontSize=9, fontName="Helvetica", fillColor=colors.black))
+    master_drawing.add(String(col1_x, y_start - 2*y_step, f"ECG Type: Standard", fontSize=9, fontName="Helvetica", fillColor=colors.black))
+    # Use YYYY-MM-DD format for Date & Time to match Image 2
+    try:
+        from datetime import datetime
+        if date_part and "/" in date_part:
+            d_obj = datetime.strptime(date_part, "%d/%m/%Y")
+            formatted_date = d_obj.strftime("%Y-%m-%d")
+        else:
+            formatted_date = date_part
+    except:
+        formatted_date = date_part
+    
+    master_drawing.add(String(col1_x, y_start - 3*y_step, f"Date & Time: {formatted_date} {time_part}", fontSize=9, fontName="Helvetica", fillColor=colors.black))
+    
+    # Reformat filter_info to match Image 2 (25.0 mm/s  0.5-150Hz  AC:50Hz  10.0 mm/mV)
+    clean_filter_band = filter_band.replace("Filter: ", "").replace("HP: ", "").replace("LP: ", "")
+    clean_ac = ac_frequency.replace("Off", "Off").replace("Hz", "Hz")
+    display_filter_info = f"25.0 mm/s  {clean_filter_band}  AC:{clean_ac}  10.0 mm/mV"
+    master_drawing.add(String(col1_x, y_start - 4*y_step, display_filter_info, fontSize=9, fontName="Helvetica", fillColor=colors.black))
+
+    # --- COLUMN 2 ---
+    master_drawing.add(String(col2_x, y_start, f"Name: {full_name}", fontSize=9, fontName="Helvetica", fillColor=colors.black))
+    master_drawing.add(String(col2_x, y_start - y_step, f"HR: {int(round(float(HR)))} bpm", fontSize=9, fontName="Helvetica", fillColor=colors.black))
+    master_drawing.add(String(col2_x, y_start - 2*y_step, f"RR: {RR} ms", fontSize=9, fontName="Helvetica", fillColor=colors.black))
+    master_drawing.add(String(col2_x, y_start - 3*y_step, f"PR: {PR} ms", fontSize=9, fontName="Helvetica", fillColor=colors.black))
+    master_drawing.add(String(col2_x, y_start - 4*y_step, f"QRS: {QRS} ms", fontSize=9, fontName="Helvetica", fillColor=colors.black))
+    master_drawing.add(String(col2_x, y_start - 5*y_step, f"QT: {int(round(QT))} ms", fontSize=9, fontName="Helvetica", fillColor=colors.black))
+
+    # --- COLUMN 3 ---
+    master_drawing.add(String(col3_x, y_start, f"QTc: {int(round(QTc))} ms", fontSize=9, fontName="Helvetica", fillColor=colors.black))
+    master_drawing.add(String(col3_x, y_start - y_step, f"QTcF: {qtcf_display}", fontSize=9, fontName="Helvetica", fillColor=colors.black))
+    master_drawing.add(String(col3_x, y_start - 2*y_step, f"RV5/SV1: {rv5_text}/{sv1_text}", fontSize=9, fontName="Helvetica", fillColor=colors.black))
+    master_drawing.add(String(col3_x, y_start - 3*y_step, f"RV5+SV1: {rv5_sv1_sum_text}", fontSize=9, fontName="Helvetica", fillColor=colors.black))
+    master_drawing.add(String(col3_x, y_start - 4*y_step, f"P/QRS/T: {p_qrs_t_text}", fontSize=9, fontName="Helvetica", fillColor=colors.black))
+
+    # --- COLUMN 4 ---
+    master_drawing.add(String(col4_x, y_start, org_name, fontSize=9, fontName="Helvetica-Bold", fillColor=colors.black))
+    master_drawing.add(String(col4_x, y_start - y_step, org_address, fontSize=9, fontName="Helvetica-Bold", fillColor=colors.black))
+    master_drawing.add(String(col4_x, y_start - 2*y_step, phone_no, fontSize=9, fontName="Helvetica-Bold", fillColor=colors.black))
+
+
+
 def _build_vital_table(data):
     """Compact report summary: show only HR/PR/QRS/QT/QTc."""
     HR = _safe_float(data.get('HR_avg') or data.get('HR') or data.get('HR_bpm'), 0)
@@ -99,7 +196,7 @@ def _build_vital_table(data):
         ("ALIGN", (0, 0), (-1, -1), "LEFT"),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
-        ("FONTSIZE", (0, 0), (-1, -1), 10),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
         ("TEXTCOLOR", (0, 0), (-1, -1), colors.black),
         ("LEFTPADDING", (0, 0), (-1, -1), 0),
         ("RIGHTPADDING", (0, 0), (-1, -1), 0),
@@ -1652,7 +1749,9 @@ def generate_ecg_report(
 
     # Use ONLY conclusions from last_conclusions.json (loaded above)
     # Strip placeholders so only real conclusions appear in report
-    filtered_conclusions = [c for c in dashboard_conclusions if c and c != "---"]
+    # Per user request: exclude "Rhythm Analysis" from the report and
+    # rely only on the heart-rate clinical conclusions.
+    filtered_conclusions = [c for c in dashboard_conclusions if c and c != "---" and "Rhythm Analysis" not in c]
     # Ensure max 12
     filtered_conclusions = filtered_conclusions[:12]
 
@@ -1809,9 +1908,9 @@ def generate_ecg_report(
     print("Creating SINGLE drawing with all ECG content...")
     
     # Single drawing dimensions - A4 portrait standard (210x297mm), 5mm ECG boxes
-    # 38 boxes × 5mm = 190mm width, 53 boxes × 5mm = 265mm height (within A4 297mm)
+    # 38 boxes × 5mm = 190mm width, 57 boxes × 5mm = 285mm height (within A4 297mm)
     total_width = 190 * mm
-    total_height = 265 * mm
+    total_height = 285 * mm
     # DEBUG: Print actual dimensions being used
     print(f" DEBUG: Drawing dimensions - Width: {total_width/mm:.1f}mm ({total_width/mm/5:.1f} boxes), Height: {total_height/mm:.1f}mm ({total_height/mm/5:.1f} boxes)")
     
@@ -1820,8 +1919,8 @@ def generate_ecg_report(
     
     # STEP 1: NO background rectangle - let page pink grid show through
     
-    # STEP 2: Define positions for all 12 leads based on selected sequence (SHIFTED UP by 80 points total: 40+25+15)
-    y_positions = [229.6 * mm, 212.0 * mm, 194.3 * mm, 176.7 * mm, 159.1 * mm, 141.4 * mm, 123.8 * mm, 106.1 * mm, 88.5 * mm, 70.9 * mm, 53.2 * mm, 35.6 * mm]  
+    # STEP 2: Define positions for all 12 leads based on selected sequence (SHIFTED UP to match Image 2 gap)
+    y_positions = [239.6 * mm, 222.0 * mm, 204.3 * mm, 186.7 * mm, 169.1 * mm, 151.4 * mm, 133.8 * mm, 116.1 * mm, 98.5 * mm, 80.9 * mm, 63.2 * mm, 45.6 * mm]  
     lead_positions = []
     
     for i, lead in enumerate(lead_order):
@@ -1904,7 +2003,8 @@ def generate_ecg_report(
             import traceback
             traceback.print_exc()
     
-    _add_patient_header(master_drawing, full_name, age, gender, patient, date_time_str)
+    # ── CALL RESTRUCTURED HEADER ──────────────────────────────────────────
+    _add_patient_header(master_drawing, full_name, age, gender, patient, date_time_str, data, settings_manager)
 
     # RIGHT SIDE: Vital Parameters at SAME LEVEL as patient info (ABOVE ECG GRAPH)
     # Get real ECG data from dashboard
@@ -2445,18 +2545,17 @@ def generate_ecg_report(
     
     # STEP 4: Add Patient Info, Date/Time and Vital Parameters to master drawing
     # POSITIONED ABOVE ECG GRAPH (not mixed inside graph)
-    _add_patient_header(master_drawing, full_name, age, gender, patient, date_time_str)
+    # ── CALL RESTRUCTURED HEADER ──────────────────────────────────────────
+    _add_patient_header(master_drawing, full_name, age, gender, patient, date_time_str, data, settings_manager)
 
-    # RIGHT SIDE: Vital Parameters at SAME LEVEL as patient info (ABOVE ECG GRAPH)
-    # Get real ECG data from dashboard
+    # RIGHT SIDE: Vital Parameters calculation (Labels now handled by _add_patient_header)
     HR = data.get('HR_avg',)
     PR = data.get('PR',) 
     QRS = data.get('QRS',)
     QT = _safe_float(data.get('QT',), 0.0)
     QTc = _safe_float(data.get('QTc',), 0.0)
     ST = data.get('ST',)
-    # DYNAMIC RR interval calculation from heart rate (instead of hard-coded 857)
-    RR = int(60000 / HR) if HR and HR > 0 else 0  # RR interval in ms from heart rate
+    RR = int(60000 / HR) if HR and HR > 0 else 0 
    
 
     vital_params_table = _build_vital_table(data)
@@ -2923,50 +3022,15 @@ def generate_ecg_report(
             import traceback
             traceback.print_exc()
     
-    _add_patient_header(master_drawing, full_name, age, gender, patient, date_time_str)
-
-    # RIGHT SIDE: Vital Parameters at SAME LEVEL as patient info (ABOVE ECG GRAPH)
-    # Get real ECG data from dashboard
+    # RIGHT SIDE: Vital Parameters calculation
     HR = data.get('HR_avg',)
     PR = data.get('PR',) 
     QRS = data.get('QRS',)
     QT = _safe_float(data.get('QT',), 0.0)
     QTc = _safe_float(data.get('QTc',), 0.0)
     ST = data.get('ST',)
-    # DYNAMIC RR interval calculation from heart rate (instead of hard-coded 857)
-    RR = int(60000 / HR) if HR and HR > 0 else 0  # RR interval in ms from heart rate
-   
-    # Add vital parameters in TWO COLUMNS (ABOVE ECG GRAPH - shifted further up)
-    # FIRST COLUMN (Left side - x=130)
-    hr_label = String(45.9 * mm, 284.1 * mm, f"HR    : {HR} bpm",  
-                     fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(hr_label)
+    RR = int(60000 / HR) if HR and HR > 0 else 0 
 
-    pr_label = String(45.9 * mm, 279.0 * mm, f"PR    : {PR} ms",  
-                     fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(pr_label)
-
-    qrs_label = String(45.9 * mm, 273.9 * mm, f"QRS : {QRS} ms", 
-                      fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(qrs_label)
-    
-    rr_label = String(45.9 * mm, 268.3 * mm, f"RR    : {RR} ms", 
-                     fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(rr_label)
-
-    qt_label = String(45.9 * mm, 262.5 * mm, f"QT    : {int(round(QT))} ms",  
-                     fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(qt_label)
-
-    qtc_label = String(45.9 * mm, 257.4 * mm, f"QTc  : {int(round(QTc))} ms",  
-                      fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(qtc_label)
-    # SECOND COLUMN (Right side) - QTcF replaces ST
-    _qtcf_val = data.get('QTc_Fridericia') or data.get('QTcF_ms') or data.get('QTcF') or data.get('QTcF_interval')
-    _qtcf_display = f"{int(round(float(_qtcf_val)))} ms" if _qtcf_val and float(_qtcf_val) > 0 else "-- ms"
-    qtcf_header_label = String(84.7 * mm, 262.5 * mm, f"QTcF : {_qtcf_display}",
-                               fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(qtcf_header_label)
 
     # CALCULATED wave amplitudes and lead-specific measurements
     # Prefer values passed in data; if missing/zero, compute from live ecg_test_page data (last 10s)
@@ -3477,233 +3541,15 @@ def generate_ecg_report(
     qrs_mm = extract_axis_value(sanitized_qrs_axis)
     t_mm = extract_axis_value(sanitized_t_axis)
     
-    # SECOND COLUMN - P/QRS/T Axis (optional: hidden in compact report mode)
-    show_extended_header_metrics = bool(data.get('show_extended_header_metrics', True))
-    if show_extended_header_metrics:
-        p_qrs_label = String(84.7 * mm, 284.1 * mm, f"P/QRS/T  : {p_axis_display}/{qrs_axis_display}/{t_axis_display}°",
-                             fontSize=10, fontName="Helvetica", fillColor=colors.black)
-        master_drawing.add(p_qrs_label)
+    # Calculate axis values for data dictionary
+    data['rv5_mv'] = rv5_mv
+    data['sv1_mv'] = sv1_mv
+    data['p_axis'] = sanitized_p_axis
+    data['QRS_axis'] = sanitized_qrs_axis
+    data['t_axis'] = sanitized_t_axis
 
-    # Get RV5 and SV1 amplitudes from the actual raw ECG graph whenever available.
-    rv5_amp = None
-    sv1_amp = None
-    used_live_measurement = False
-
-    if ecg_test_page is not None:
-        try:
-            from .metrics.intervals import calculate_rv5_sv1_from_test_page
-            rv5_calc, sv1_calc = calculate_rv5_sv1_from_test_page(ecg_test_page)
-            if rv5_calc is not None and rv5_calc > 0:
-                rv5_amp = float(rv5_calc)
-                used_live_measurement = True
-            if sv1_calc is not None and sv1_calc != 0.0:
-                sv1_amp = float(sv1_calc)
-                used_live_measurement = True
-        except Exception as e:
-            print(f" Error getting live RV5/SV1 measurement: {e}")
-
-    print(" Report Generator - Final RV5/SV1 source values:")
-    print(f"   rv5: {rv5_amp}, sv1: {sv1_amp}, source={'live_raw_ecg' if used_live_measurement else 'lead_data_unavailable'}")
-    
-    # If missing/zero, compute from V5 and V1 of last 10 seconds (GE/Hospital Standard)
-    # CRITICAL: Use RAW ECG data, not display-filtered signals
-    # Measurements must be from median beat, relative to TP baseline (isoelectric segment before P-wave)
-    # NOTE: sv1_amp can be negative (SV1 is negative by definition), so check for == 0.0, not <= 0
-    if False:
-        try:
-            from scipy.signal import butter, filtfilt, find_peaks
-            fs = 500.0
-            if hasattr(ecg_test_page, 'sampler') and hasattr(ecg_test_page.sampler,'sampling_rate') and ecg_test_page.sampler.sampling_rate:
-                fs = float(ecg_test_page.sampler.sampling_rate)
-            def _get_last(arr):
-                return arr[-int(10*fs):] if arr is not None and len(arr)>int(10*fs) else arr
-            # V5 index 10, V1 index 6 - Get RAW data
-            v5_raw = _get_last(ecg_test_page.data[10]) if len(ecg_test_page.data)>10 else None
-            v1_raw = _get_last(ecg_test_page.data[6]) if len(ecg_test_page.data)>6 else None
-            
-            if v5_raw is not None and len(v5_raw)>int(2*fs):
-                # Apply filter ONLY for R-peak detection (0.5-40 Hz)
-                # Use RAW data for amplitude measurements
-                nyq = fs/2.0
-                b,a = butter(2, [max(0.5/nyq, 0.001), min(40.0/nyq,0.99)], btype='band')
-                v5f = filtfilt(b,a, np.asarray(v5_raw))
-                env = np.convolve(np.square(np.diff(v5f)), np.ones(int(0.15*fs))/(0.15*fs), mode='same')
-                r,_ = find_peaks(env, height=np.mean(env)+0.5*np.std(env), distance=int(0.6*fs))
-                vals=[]
-                for rr in r[1:-1]:
-                    # QRS window: ±80ms around R-peak
-                    qs = max(0, rr-int(0.08*fs))
-                    qe = min(len(v5_raw), rr+int(0.08*fs))
-                    if qe > qs:
-                        # Use RAW data for amplitude measurement
-                        qrs_segment = np.asarray(v5_raw[qs:qe])
-                        
-                        # TP baseline: isoelectric segment before P-wave onset (150-350ms before R)
-                        tp_start = max(0, rr-int(0.35*fs))
-                        tp_end = max(0, rr-int(0.15*fs))
-                        if tp_end > tp_start:
-                            tp_segment = np.asarray(v5_raw[tp_start:tp_end])
-                            tp_baseline = np.median(tp_segment)  # Median for robustness
-                        else:
-                            # Fallback: short segment before QRS
-                            tp_baseline = np.median(np.asarray(v5_raw[max(0,qs-int(0.05*fs)):qs]))
-                        
-                        # RV5 = max(QRS) - TP_baseline (positive, in mV)
-                        # Use standardized calibration factor: 2048.0 ADC per mV (matches clinical_measurements.py)
-                        r_amp_adc = np.max(qrs_segment) - tp_baseline
-                        if r_amp_adc > 0:
-                            r_amp_mv = r_amp_adc / 2048.0  # Standardized ADC to mV conversion for V5
-                            vals.append(r_amp_mv)
-                if len(vals)>0 and rv5_amp<=0: 
-                    rv5_amp = float(np.median(vals))  # Median beat approach
-                    
-            if v1_raw is not None and len(v1_raw)>int(2*fs):
-                # Apply filter ONLY for R-peak detection (0.5-40 Hz)
-                # Use RAW data for amplitude measurements
-                nyq = fs/2.0
-                b,a = butter(2, [max(0.5/nyq, 0.001), min(40.0/nyq,0.99)], btype='band')
-                v1f = filtfilt(b,a, np.asarray(v1_raw))
-                env = np.convolve(np.square(np.diff(v1f)), np.ones(int(0.15*fs))/(0.15*fs), mode='same')
-                r,_ = find_peaks(env, height=np.mean(env)+0.5*np.std(env), distance=int(0.6*fs))
-                vals=[]
-                for rr in r[1:-1]:
-                    # QRS window: ±80ms around R-peak
-                    ss = rr
-                    se = min(len(v1_raw), rr+int(0.08*fs))
-                    if se > ss:
-                        # Use RAW data for amplitude measurement
-                        qrs_segment = np.asarray(v1_raw[ss:se])
-                        
-                        # TP baseline: isoelectric segment before P-wave onset (150-350ms before R)
-                        tp_start = max(0, rr-int(0.35*fs))
-                        tp_end = max(0, rr-int(0.15*fs))
-                        if tp_end > tp_start:
-                            tp_segment = np.asarray(v1_raw[tp_start:tp_end])
-                            tp_baseline = np.median(tp_segment)  # Median for robustness
-                        else:
-                            # Fallback: short segment before QRS
-                            tp_baseline = np.median(np.asarray(v1_raw[max(0, ss-int(0.05*fs)):ss]))
-                        
-                        # SV1 = min(QRS) - TP_baseline (negative, preserve sign, in mV)
-                        # Use standardized calibration factor: 1441.0 ADC per mV (matches clinical_measurements.py)
-                        s_amp_adc = np.min(qrs_segment) - tp_baseline
-                        if s_amp_adc < 0:  # SV1 must be negative
-                            s_amp_mv = s_amp_adc / 1441.0  # Standardized ADC to mV conversion for V1 (preserve sign)
-                            vals.append(s_amp_mv)
-                if len(vals)>0 and sv1_amp==0.0:
-                    sv1_amp = float(np.median(vals))  # Median beat approach, negative value
-            print(f" Fallback computed RV5/SV1: RV5={rv5_amp:.4f}, SV1={sv1_amp:.4f}")
-        except Exception as e:
-            print(f" Fallback RV5/SV1 computation failed: {e}")
-
-    # Unit conversion: GE/Hospital Standard - Values must be in mV
-    # CRITICAL: calculate_wave_amplitudes() now returns values in mV (converted from ADC counts)
-    # No additional conversion needed - use values directly
-    # GE Standard ranges: RV5 typically 0.5-3.0 mV, SV1 typically -0.5 to -2.0 mV
-    rv5_mv = float(rv5_amp) if rv5_amp is not None and rv5_amp > 0 else None
-    sv1_mv = float(sv1_amp) if sv1_amp is not None and sv1_amp != 0.0 else None
-    
-    print(f"   Converted to mV: RV5={rv5_mv if rv5_mv is not None else '--'}, SV1={sv1_mv if sv1_mv is not None else '--'}")
-    
-    # SECOND COLUMN - RV5/SV1 (ABOVE ECG GRAPH - shifted further up)
-    # Display SV1 as negative mV (GE/Hospital standard)
-    # Use 3 decimal places for precision (not rounded to integers)
-    rv5_text = f"{rv5_mv:.3f} mV" if rv5_mv is not None else "--"
-    sv1_text = f"{sv1_mv:.3f} mV" if sv1_mv is not None else "--"
-    rv5_sv_label = String(84.7 * mm, 279.0 * mm, f"RV5/SV1  : {rv5_text}/{sv1_text}",
-                         fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    if show_extended_header_metrics:
-        master_drawing.add(rv5_sv_label)
-
-    # Calculate RV5+SV1 from displayed magnitudes: RV5 - SV1_magnitude.
-    rv5_sv1_sum = (rv5_mv - abs(sv1_mv)) if rv5_mv is not None and sv1_mv is not None else None
-
-    # SECOND COLUMN - RV5+SV1 (ABOVE ECG GRAPH - shifted further up)
-    # Use 3 decimal places for precision
-    rv5_sv1_sum_text = f"{rv5_sv1_sum:.3f} mV" if rv5_sv1_sum is not None else "--"
-    rv5_sv1_sum_label = String(84.7 * mm, 273.9 * mm, f"RV5+SV1 : {rv5_sv1_sum_text}",
-                               fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    if show_extended_header_metrics:
-        master_drawing.add(rv5_sv1_sum_label)
-
-    # ── RV6 / SV2 calculation ────────────────────────────────────────────────
-    # RV6 = R-wave amplitude in V6 (index 11)
-    # SV2 = S-wave amplitude in V2 (index 7), negative value
-    rv6_mv = 0.0
-    sv2_mv = 0.0
-    try:
-        if ecg_test_page is not None and hasattr(ecg_test_page, 'data') and len(ecg_test_page.data) > 11:
-            from scipy.signal import butter, filtfilt, find_peaks as _fp
-            _fs = 500.0
-            if hasattr(ecg_test_page, 'sampler') and hasattr(ecg_test_page.sampler, 'sampling_rate') and ecg_test_page.sampler.sampling_rate > 10:
-                _fs = float(ecg_test_page.sampler.sampling_rate)
-
-            def _get_rv_sv(raw_arr, is_r_wave=True):
-                """Measure R (positive) or S (negative) amplitude from median beat."""
-                if raw_arr is None or len(raw_arr) < int(2 * _fs):
-                    return 0.0
-                arr_seg = np.asarray(raw_arr[-int(10 * _fs):], dtype=float)
-                ny = _fs / 2.0
-                b_, a_ = butter(2, [max(0.5/ny, 0.001), min(40.0/ny, 0.99)], btype='band')
-                flt = filtfilt(b_, a_, arr_seg)
-                env_ = np.convolve(np.square(np.gradient(flt)),
-                                   np.ones(max(1, int(0.08 * _fs))) / max(1, int(0.08 * _fs)),
-                                   mode='same')
-                r_, _ = _fp(env_, height=np.mean(env_) + 0.5 * np.std(env_), distance=int(0.6 * _fs))
-                vals_ = []
-                for rr_ in r_[1:-1]:
-                    qs_ = max(0, rr_ - int(0.08 * _fs))
-                    qe_ = min(len(arr_seg), rr_ + int(0.08 * _fs))
-                    tp_s = max(0, rr_ - int(0.35 * _fs))
-                    tp_e = max(0, rr_ - int(0.15 * _fs))
-                    if qe_ > qs_ and tp_e > tp_s:
-                        baseline_ = np.median(arr_seg[tp_s:tp_e])
-                        seg_ = arr_seg[qs_:qe_] - baseline_
-                        if is_r_wave:
-                            amp_ = np.max(seg_)
-                            if amp_ > 0:
-                                vals_.append(amp_ / 1441.0)  # ADC→mV (same factor as RV5/SV1)
-                        else:
-                            amp_ = np.min(seg_)
-                            if amp_ < 0:
-                                vals_.append(amp_ / 1441.0)
-                return float(np.median(vals_)) if vals_ else 0.0
-
-            rv6_mv = _get_rv_sv(ecg_test_page.data[11], is_r_wave=True)   # V6 R-wave
-            sv2_mv = _get_rv_sv(ecg_test_page.data[7],  is_r_wave=False)  # V2 S-wave (negative)
-    except Exception as _e:
-        print(f" RV6/SV2 calculation failed: {_e}")
-
-    # SECOND COLUMN - RV6/SV2
-    rv6_sv2_label = String(84.7 * mm, 268.8 * mm,
-                            f"RV6/SV2  : {abs(rv6_mv):.3f} mV/{abs(sv2_mv):.3f} mV",
-                            fontSize=10, fontName="Helvetica", fillColor=colors.black)
-    if show_extended_header_metrics:
-        master_drawing.add(rv6_sv2_label)
-
-    # NOTE: QTcF is already displayed at 262.5mm (where ST was removed) via qtcf_header_label above.
-    # The old qtcf_label at 268.3mm has been removed to prevent overlap with RV6/SV2 at 268.8mm.
-
-    # SECOND COLUMN - Speed/Gain (merged in one line) (ABOVE ECG GRAPH - shifted further up)
-    emg_setting = str(settings_manager.get_setting("filter_emg", "off")).strip()
-    dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
-    ac_setting = str(settings_manager.get_setting("filter_ac", "off")).strip()
-    ac_frequency = f"{ac_setting}Hz" if ac_setting in ("50", "60") else "Off"
-    if dft_setting not in ("off", "") and emg_setting not in ("off", ""):
-        filter_band = f"{dft_setting}-{emg_setting}Hz"
-    elif dft_setting not in ("off", ""):
-        filter_band = f"HP: {dft_setting}Hz"
-    elif emg_setting not in ("off", ""):
-        filter_band = f"LP: {emg_setting}Hz"
-    else:
-        filter_band = "Filter: Off"
-    master_drawing.add(String(
-        84.7 * mm, 257.4 * mm,
-        f"25.0 mm/s   {filter_band}   AC : {ac_frequency}   10.0 mm/mV",
-        fontSize=10,
-        fontName="Helvetica",
-        fillColor=colors.black,
-    ))
+    # ── CALL RESTRUCTURED HEADER (Handles all 4 columns) ─────────────────
+    _add_patient_header(master_drawing, full_name, age, gender, patient, date_time_str, data, settings_manager)
 
     
 
@@ -3720,20 +3566,25 @@ def generate_ecg_report(
     except Exception:
         doctor = ""
   
+    # Reference Report Confirmed by (above Doctor Name)
+    confirmed_label = String(3.6 * mm, 24.3 * mm, "Reference Report Confirmed by: ", 
+                              fontSize=8, fontName="Helvetica", fillColor=colors.black)
+    master_drawing.add(confirmed_label)
+
     # Doctor Name (below V6 lead)
     doctor_name_label = String(3.6 * mm, 19.0 * mm, "Doctor Name: ", 
-                              fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
+                              fontSize=8, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(doctor_name_label)
     
     if doctor:
-        value_x = 3.6 * mm + stringWidth("Doctor Name: ", "Helvetica-Bold", 10) + 5 * mm
+        value_x = 3.6 * mm + stringWidth("Doctor Name: ", "Helvetica", 8) + 5 * mm
         doctor_name_value = String(value_x, 19.0 * mm, doctor,
-                                fontSize=10, fontName="Helvetica", fillColor=colors.black)
+                                fontSize=8, fontName="Helvetica", fillColor=colors.black)
         master_drawing.add(doctor_name_value)
 
     # Doctor Signature (below Doctor Name)
     doctor_sign_label = String(3.6 * mm, 13.7 * mm, "Doctor Sign: ", 
-                              fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
+                              fontSize=8, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(doctor_sign_label)
 
     # Add RIGHT-SIDE Conclusion Box (moved to the right) - NOW DYNAMIC FROM DASHBOARD (12 conclusions max) - MADE SMALLER
@@ -3751,50 +3602,41 @@ def generate_ecg_report(
     # Box center: 200 + (325/2) = 362.5, so text should be centered around 362.5
     # Box top is at conclusion_y_start - 55, so header should be very close to top line
     conclusion_header = String(127.9 * mm, conclusion_y_start - 3.0 * mm, "CONCLUSION",  # Moved very close to top line: y=0→-53 (just below top edge at -55)
-                              fontSize=9, fontName="Helvetica-Bold",  # Reduced from 11 to 9
+                              fontSize=7, fontName="Helvetica-Bold",  # Reduced from 9 to 7
                               fillColor=colors.HexColor("#2c3e50"),
                               textAnchor="middle")  # This centers the text
     master_drawing.add(conclusion_header)
     
-    # DYNAMIC conclusions from dashboard in the box - ONLY REAL CONCLUSIONS (no empty/---)
-    # Split filtered conclusions into rows (2 conclusions per row) - COMPACT SPACING
+    # DYNAMIC conclusions from dashboard in the box - SINGLE COLUMN to avoid overlapping
     print(f" Drawing conclusions in graph from filtered list: {filtered_conclusions}")
     
-    # Calculate how many rows we need based on actual conclusions
-    num_conclusions = len(filtered_conclusions)
-    num_rows = (num_conclusions + 1) // 2  # Round up division for rows
+    # Draw conclusions vertically in a single column
+    row_spacing = 4.0 * mm  # Increased vertical spacing
+    start_y = conclusion_y_start - 8.0 * mm  # Starting Y position (further down from top)
+    box_bottom = conclusion_y_start - 26.5 * mm  # Bottom edge of the box
     
-    # Split into rows (2 conclusions per row)
-    conclusion_rows = []
-    for i in range(0, num_conclusions, 2):
-        row_conclusions = filtered_conclusions[i:i+2]
-        conclusion_rows.append(row_conclusions)
+    # FIRST LINE: Patient Name (Bold)
+    name_text = f"Name: {full_name}"
+    x_pos = 74.1 * mm  # Align with the box's left-ish side
+    master_drawing.add(String(x_pos, start_y, name_text, 
+                             fontSize=9, fontName="Helvetica-Bold", fillColor=colors.black))
     
-    print(f"   Total conclusions: {num_conclusions}, Rows needed: {num_rows}")
-    for idx, row in enumerate(conclusion_rows):
-        print(f"   Row {idx+1}: {row}")
-    
-    # Draw conclusions row by row - ONLY REAL ONES with proper numbering
-    row_spacing = 2.8 * mm  # Vertical spacing between rows
-    start_y = conclusion_y_start - 8.0 * mm  # Starting Y position
-    
-    conclusion_num = 1  # Start numbering from 1
-    for row_idx, row_conclusions in enumerate(conclusion_rows):
-        row_y = start_y - (row_idx * row_spacing)
+    # THEN: Findings "uske baad"
+    for idx, conclusion in enumerate(filtered_conclusions):
+        row_y = start_y - ((idx + 1) * row_spacing)
         
-        for col_idx, conclusion in enumerate(row_conclusions):
-            # Truncate long conclusions
-            display_conclusion = conclusion[:30] + "..." if len(conclusion) > 30 else conclusion
-            conc_text = f"{conclusion_num}. {display_conclusion}"
+        # User request: If getting cropped (exceeds box height), don't put in this.
+        if row_y < box_bottom + 2.0 * mm:  # 2mm padding from bottom
+            print(f" Skipping conclusion {idx+1} as it would be cropped")
+            continue
             
-            # Position horizontally across the box (2 conclusions per row)
-            x_pos = 74.1 * mm + (col_idx * 56.4 * mm)  # 160 points spacing for 2 conclusions per row
-            
-            conc = String(x_pos, row_y, conc_text, 
-                         fontSize=9, fontName="Helvetica", fillColor=colors.black)
-            master_drawing.add(conc)
-            
-            conclusion_num += 1  # Increment for next conclusion
+        conc_text = f"{idx + 1}. {conclusion}"
+        
+        conc = String(x_pos, row_y, conc_text, 
+                     fontSize=9, fontName="Helvetica", fillColor=colors.black)
+        master_drawing.add(conc)
+        
+    print(f" Added {len(filtered_conclusions)} REAL Conclusions in single column (no cropping)")
 
     print(f" Added Patient Info, Vital Parameters, {len(filtered_conclusions)} REAL Conclusions (no empty/---), and Doctor Name/Signature to ECG grid")
     

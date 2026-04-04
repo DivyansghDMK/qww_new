@@ -4156,208 +4156,242 @@ class Dashboard(QWidget):
             except:
                 pass
             
-            # Include rhythm interpretation findings first (System detects: AFib, VT, PVCs, Bradycardia, Tachycardia, NSR)
+            # ── LOGIC: If Normal Sinus Rhythm → show only NSR.
+            # If NOT NSR → show rhythm (heart-based analysis) + PR interval status + QRS status.
+
+            # ─── Determine rhythm status ────────────────────────────────────────
+            rhythm_issue         = None
+            is_normal_rhythm     = False
+            rhythm_clean         = ""
+            ignore_values        = {"", "Analyzing Rhythm...", "Detecting...", "Insufficient Data", "Insufficient data"}
+
             if rhythm_text:
                 rhythm_clean = rhythm_text.strip()
-                ignore_values = {"", "Analyzing Rhythm...", "Detecting...", "Insufficient Data", "Insufficient data"}
                 if rhythm_clean not in ignore_values:
-                    is_normal_rhythm = any(keyword in rhythm_clean.lower() for keyword in ["normal sinus", "none detected", "sinus rhythm"])
-                    prefix = "[OK]" if is_normal_rhythm else "[!]"
-                    findings.append(f"{prefix} <b>Rhythm Analysis</b> - {rhythm_clean}")
+                    is_normal_rhythm = any(
+                        keyword in rhythm_clean.lower()
+                        for keyword in ["normal sinus", "none detected", "sinus rhythm"]
+                    )
                     if not is_normal_rhythm:
-                        recommendations.append("• Review detected arrhythmia pattern, consult physician if persistent")
-            
-            # COMPREHENSIVE Heart Rate Analysis (System supports 10-300 BPM range)
-            if hr >= 10 and hr <= 300:
-                if hr > 200:
-                    findings.append("[!] <b>Extreme Tachycardia</b> - Heart rate critically elevated (>200 BPM)")
-                    recommendations.append("• Immediate medical attention required - may indicate SVT, VT, or severe stress")
-                    recommendations.append("• Check for symptoms: chest pain, dizziness, shortness of breath")
-                    additional_info.append(f"• Current HR: {hr} BPM is in the extreme tachycardia range")
-                    additional_info.append("• Normal resting HR: 60-100 BPM for adults")
-                elif hr > 150:
-                    findings.append("[!] <b>Severe Tachycardia</b> - Heart rate significantly elevated (150-200 BPM)")
-                    recommendations.append("• Consult physician promptly, check for arrhythmias or underlying conditions")
-                    recommendations.append("• Monitor for symptoms and avoid strenuous activity")
-                    additional_info.append(f"• Current HR: {hr} BPM indicates significant cardiac stress")
-                    additional_info.append("• Possible causes: exercise, stress, fever, anemia, hyperthyroidism")
-                elif hr > 100:
-                    findings.append("[!] <b>Tachycardia detected</b> - Heart rate elevated above normal range (100-150 BPM)")
-                    recommendations.append("• Monitor symptoms, consider medical evaluation if persistent")
-                    recommendations.append("• Ensure adequate hydration and rest")
-                    additional_info.append(f"• Current HR: {hr} BPM is above normal resting rate")
-                    additional_info.append("• May be normal during exercise, stress, or after caffeine intake")
-                elif hr < 40:
-                    findings.append("[!] <b>Severe Bradycardia</b> - Heart rate critically low (<40 BPM)")
-                    recommendations.append("• Immediate medical evaluation recommended - may indicate heart block or sick sinus syndrome")
-                    recommendations.append("• Check for symptoms: fatigue, dizziness, fainting, chest pain")
-                    additional_info.append(f"• Current HR: {hr} BPM is dangerously low")
-                    additional_info.append("• Normal resting HR: 60-100 BPM for adults")
-                elif hr < 60:
-                    findings.append("[i] <b>Bradycardia detected</b> - Heart rate below normal range (40-60 BPM)")
-                    recommendations.append("• May be normal for well-trained athletes or during sleep")
-                    recommendations.append("• Monitor for symptoms, consult if experiencing fatigue or dizziness")
-                    additional_info.append(f"• Current HR: {hr} BPM is below normal resting rate")
-                    additional_info.append("• Athletes often have resting HR 40-60 BPM due to cardiovascular fitness")
-                else:
-                    findings.append("[OK] <b>Normal heart rate</b> - Within healthy range (60-100 BPM)")
-                    additional_info.append(f"• Current HR: {hr} BPM is within normal resting range")
-                    additional_info.append("• Optimal HR varies by age, fitness level, and activity")
-            
-            # Analyze PR Interval
+                        rhythm_issue = rhythm_clean
+
+            # ─── Determine PR interval status ───────────────────────────────────
+            pr_status   = None  # None = normal / not measured
+            pr_label    = ""
             if pr > 0:
                 if pr > 200:
-                    findings.append("[!] <b>Prolonged PR interval</b> - Possible first-degree heart block (>200ms)")
-                    recommendations.append("• Medical evaluation recommended for AV conduction assessment")
-                    recommendations.append("• Monitor for progression to higher-degree blocks")
-                    additional_info.append(f"• PR interval: {pr} ms (normal: 120-200 ms)")
+                    pr_status = "prolonged"
+                    pr_label  = f"PR Interval: <b>{pr} ms</b> — <span style='color:#e67e22;'>Prolonged (Normal: 120–200 ms)</span>"
                 elif pr < 120:
-                    findings.append("[i] <b>Short PR interval</b> - May indicate pre-excitation syndrome (<120ms)")
-                    recommendations.append("• Monitor for accessory pathway patterns, consult if symptomatic")
-                    recommendations.append("• May be associated with WPW syndrome")
-                    additional_info.append(f"• PR interval: {pr} ms (normal: 120-200 ms)")
+                    pr_status = "short"
+                    pr_label  = f"PR Interval: <b>{pr} ms</b> — <span style='color:#e67e22;'>Short (Normal: 120–200 ms)</span>"
                 else:
-                    findings.append("[OK] <b>Normal PR interval</b> - Atrial-ventricular conduction normal")
-                    additional_info.append(f"• PR interval: {pr} ms (normal: 120-200 ms)")
-            
-            # Analyze QRS Duration
+                    pr_label  = f"PR Interval: <b>{pr} ms</b> — <span style='color:#27ae60;'>Normal (120–200 ms)</span>"
+
+            # ─── Determine QRS duration status ──────────────────────────────────
+            qrs_status  = None  # None = normal / not measured
+            qrs_label   = ""
             if qrs > 0:
                 if qrs > 120:
-                    findings.append("[!] <b>Wide QRS complex</b> - Possible bundle branch block or ventricular rhythm (>120ms)")
-                    recommendations.append("• 12-lead ECG analysis recommended for conduction pattern assessment")
-                    recommendations.append("• May indicate bundle branch block, ventricular rhythm, or hyperkalemia")
-                    additional_info.append(f"• QRS duration: {qrs} ms (normal: <100 ms)")
+                    qrs_status = "wide"
+                    qrs_label  = f"QRS Duration: <b>{qrs} ms</b> — <span style='color:#e74c3c;'>Wide (Normal: 60–120 ms)</span>"
+                elif qrs < 60:
+                    qrs_status = "narrow"
+                    qrs_label  = f"QRS Duration: <b>{qrs} ms</b> — <span style='color:#e67e22;'>Narrow (Normal: 60–120 ms)</span>"
                 elif qrs > 100:
-                    findings.append("[i] <b>Borderline QRS duration</b> - Early conduction delay detected (100-120ms)")
-                    recommendations.append("• Monitor for progression, follow-up ECG if symptoms develop")
-                    additional_info.append(f"• QRS duration: {qrs} ms (normal: <100 ms)")
+                    qrs_status = "borderline"
+                    qrs_label  = f"QRS Duration: <b>{qrs} ms</b> — <span style='color:#f39c12;'>Borderline Wide (Normal: 60–120 ms)</span>"
                 else:
-                    findings.append("[OK] <b>Normal QRS duration</b> - Ventricular depolarization normal")
-                    additional_info.append(f"• QRS duration: {qrs} ms (normal: <100 ms)")
-            
-            # Analyze QT/QTC Interval
+                    qrs_label  = f"QRS Duration: <b>{qrs} ms</b> — <span style='color:#27ae60;'>Normal (60–120 ms)</span>"
+
+            # ─── HR status ──────────────────────────────────────────────────────
+            hr_label = ""
+            hr_abnormal = False
+            if hr >= 10 and hr <= 300:
+                if hr > 100:
+                    hr_abnormal = True
+                    hr_label = f"Heart Rate: <b>{hr} BPM</b> — <span style='color:#e74c3c;'>Tachycardia (&gt;100 BPM)</span>"
+                elif hr < 60:
+                    hr_abnormal = True
+                    hr_label = f"Heart Rate: <b>{hr} BPM</b> — <span style='color:#e67e22;'>Bradycardia (&lt;60 BPM)</span>"
+                else:
+                    hr_label = f"Heart Rate: <b>{hr} BPM</b> — <span style='color:#27ae60;'>Normal (60–100 BPM)</span>"
+
+            # ─── QTc status ─────────────────────────────────────────────────────
+            qtc_label = ""
+            qtc_abnormal = False
             if qtc > 0:
-                if qtc > 500:
-                    findings.append("[!] <b>Prolonged QTc interval</b> - High risk for arrhythmias (>500ms)")
-                    recommendations.append("• Immediate medical evaluation - risk of Torsades de Pointes")
-                    recommendations.append("• Review medications that may prolong QT interval")
-                    additional_info.append(f"• QTc interval: {qtc} ms (normal: <450 ms for men, <470 ms for women)")
-                elif qtc > 470:
-                    findings.append("[!] <b>Borderline prolonged QTc</b> - Moderate risk (470-500ms)")
-                    recommendations.append("• Medical evaluation recommended, monitor for symptoms")
-                    recommendations.append("• Review medications and electrolyte levels")
-                    additional_info.append(f"• QTc interval: {qtc} ms (normal: <450 ms for men, <470 ms for women)")
-                elif qtc > 450:
-                    findings.append("[i] <b>Slightly prolonged QTc</b> - Mild concern (450-470ms)")
-                    recommendations.append("• Monitor, may be normal variant or medication effect")
-                    additional_info.append(f"• QTc interval: {qtc} ms (normal: <450 ms for men, <470 ms for women)")
+                if qtc > 470:
+                    qtc_abnormal = True
+                    qtc_label = f"QTc: <b>{qtc} ms</b> — <span style='color:#e74c3c;'>Prolonged (&gt;470 ms)</span>"
+                elif qtc >= 440:
+                    qtc_label = f"QTc: <b>{qtc} ms</b> — <span style='color:#f39c12;'>Borderline (440–470 ms)</span>"
                 else:
-                    findings.append("[OK] <b>Normal QTc interval</b> - Within safe range")
-                    additional_info.append(f"• QTc interval: {qtc} ms (normal: <450 ms for men, <470 ms for women)")
-            
-            # Check HRV/Stress
+                    qtc_label = f"QTc: <b>{qtc} ms</b> — <span style='color:#27ae60;'>Normal (&lt;440 ms)</span>"
+
+            # ─── HRV status ─────────────────────────────────────────────────────
+            hrv_issue = False
+            hrv_label = ""
             if hasattr(self, '_current_hrv'):
                 hrv = self._current_hrv
-                if hrv > 100:
-                    findings.append("[OK] <b>Good heart rate variability</b> - Low stress indicated")
-                    additional_info.append(f"• HRV: {hrv:.1f} ms indicates good autonomic function")
-                elif hrv > 50:
-                    findings.append("[i] <b>Moderate HRV</b> - Normal stress levels")
-                    additional_info.append(f"• HRV: {hrv:.1f} ms indicates moderate autonomic function")
-                else:
-                    findings.append("[!] <b>Low HRV</b> - Elevated stress or fatigue")
-                    recommendations.append("• Ensure adequate rest and stress management")
-                    recommendations.append("• Consider relaxation techniques, adequate sleep, and regular exercise")
-                    additional_info.append(f"• HRV: {hrv:.1f} ms indicates reduced autonomic function")
-            
-            # Add general cardiac health information
-            if hr > 0:
-                additional_info.append("• Regular exercise and healthy lifestyle help maintain optimal heart function")
-                additional_info.append("• Avoid smoking, excessive alcohol, and maintain healthy weight")
-            
-            # Build comprehensive conclusion HTML
-            if not findings:
+                if hrv < 50:
+                    hrv_issue = True
+                    hrv_label = f"HRV: <b>{hrv:.1f} ms</b> — <span style='color:#e74c3c;'>Low</span>"
+
+            # ─── BUILD HTML ─────────────────────────────────────────────────────
+            any_metric_abnormal = (
+                pr_status is not None
+                or qrs_status is not None
+                or hr_abnormal
+                or qtc_abnormal
+                or hrv_issue
+            )
+
+            if rhythm_clean in ignore_values or not rhythm_clean:
+                # Still waiting for ECG data
                 conclusion_html = """
                     <p style='color: #888; font-style: italic;'>
                     Waiting for stable ECG data...<br><br>
                     Metrics are being analyzed. Please wait a few seconds.
                     </p>
                 """
+
+            elif is_normal_rhythm and not any_metric_abnormal:
+                # ── CASE 1: Everything is normal → show Normal Sinus Rhythm only
+                conclusion_html = (
+                    "<div style='padding:4px;'>"
+                    "<span style='font-size:15px; color:#27ae60; font-weight:bold;'>✔ Normal Sinus Rhythm</span><br><br>"
+                )
+                if hr_label:
+                    conclusion_html += f"<span style='color:#555;'>{hr_label}</span><br>"
+                if pr_label:
+                    conclusion_html += f"<span style='color:#555;'>{pr_label}</span><br>"
+                if qrs_label:
+                    conclusion_html += f"<span style='color:#555;'>{qrs_label}</span><br>"
+                if qtc_label:
+                    conclusion_html += f"<span style='color:#555;'>{qtc_label}</span><br>"
+                conclusion_html += (
+                    "<br><p style='font-size:10px; color:#999; font-style:italic;'>"
+                    "<b>NOTE:</b> This is an automated analysis for educational purposes only. "
+                    "Not a substitute for professional medical advice."
+                    "</p></div>"
+                )
+                findings.append("Normal Sinus Rhythm")
+
             else:
-                conclusion_html = "<b style='color: #ff6600; font-size: 14px;'>Findings:</b><br>"
-                for f in findings:
-                    conclusion_html += f + "<br>"
-                
+                # ── CASE 2: Abnormal rhythm OR any metric abnormal → show everything
+                conclusion_html = "<div style='padding:4px;'>"
+
+                # 2a. Rhythm (heart-based analysis)
+                if rhythm_issue:
+                    conclusion_html += (
+                        "<b style='color:#ff6600; font-size:14px;'>♥ Heart-Based Rhythm Analysis:</b><br>"
+                        f"<span style='color:#e74c3c; font-weight:bold;'>⚠ {rhythm_issue}</span><br><br>"
+                    )
+                    findings.append(f"Rhythm: {rhythm_issue}")
+                    recommendations.append("Review detected arrhythmia pattern, consult physician if persistent")
+                elif is_normal_rhythm:
+                    # Rhythm is normal but some interval is abnormal
+                    conclusion_html += (
+                        "<b style='color:#ff6600; font-size:14px;'>♥ Heart-Based Rhythm Analysis:</b><br>"
+                        "<span style='color:#27ae60; font-weight:bold;'>✔ Normal Sinus Rhythm</span><br><br>"
+                    )
+                    findings.append("Normal Sinus Rhythm (with interval abnormality)")
+
+                # 2b. HR
+                if hr_label:
+                    prefix = "⚠ " if hr_abnormal else ""
+                    conclusion_html += f"<b style='color:#ff6600;'>Heart Rate:</b> {prefix}{hr_label}<br>"
+                    if hr_abnormal:
+                        findings.append(f"{'Tachycardia' if hr > 100 else 'Bradycardia'} - HR: {hr} BPM")
+
+                # 2c. PR Interval
+                if pr_label:
+                    conclusion_html += "<br><b style='color:#ff6600; font-size:14px;'>PR Interval:</b><br>"
+                    conclusion_html += f"{pr_label}<br>"
+                    if pr_status:
+                        label_str = "Prolonged PR" if pr_status == "prolonged" else "Short PR"
+                        findings.append(f"{label_str} - {pr} ms")
+
+                # 2d. QRS Duration
+                if qrs_label:
+                    conclusion_html += "<br><b style='color:#ff6600; font-size:14px;'>QRS Duration:</b><br>"
+                    conclusion_html += f"{qrs_label}<br>"
+                    if qrs_status:
+                        label_str = {"wide": "Wide QRS", "narrow": "Narrow QRS", "borderline": "Borderline Wide QRS"}[qrs_status]
+                        findings.append(f"{label_str} - {qrs} ms")
+
+                # 2e. QTc
+                if qtc_label:
+                    conclusion_html += "<br><b style='color:#ff6600; font-size:14px;'>QTc Interval:</b><br>"
+                    conclusion_html += f"{qtc_label}<br>"
+                    if qtc_abnormal:
+                        findings.append(f"Prolonged QTc - {qtc} ms")
+
+                # 2f. HRV
+                if hrv_label:
+                    conclusion_html += "<br><b style='color:#ff6600; font-size:14px;'>HRV:</b><br>"
+                    conclusion_html += f"{hrv_label}<br>"
+                    if hrv_issue:
+                        findings.append(f"Low HRV - {self._current_hrv:.1f} ms")
+
+                # Recommendations
                 if recommendations:
-                    conclusion_html += "<br><b style='color: #ff6600; font-size: 14px;'>Recommendations:</b><br>"
+                    conclusion_html += "<br><b style='color:#ff6600; font-size:14px;'>Recommendations:</b><br>"
                     for r in recommendations:
-                        conclusion_html += r + "<br>"
-                
-                if additional_info:
-                    conclusion_html += "<br><b style='color: #2c3e50; font-size: 13px;'>Additional Information:</b><br>"
-                    for info in additional_info:
-                        conclusion_html += f"<span style='color: #555;'>{info}</span><br>"
-                
-                conclusion_html += """
-                    <br><p style='font-size: 10px; color: #999; font-style: italic;'>
-                    <b>NOTE:</b> This is an automated analysis for educational purposes only. 
-                    Not a substitute for professional medical advice. Consult a healthcare provider for medical concerns.
-                    </p>
-                """
-            
+                        conclusion_html += f"• {r}<br>"
+
+                conclusion_html += (
+                    "<br><p style='font-size:10px; color:#999; font-style:italic;'>"
+                    "<b>NOTE:</b> This is an automated analysis for educational purposes only. "
+                    "Not a substitute for professional medical advice. Consult a healthcare provider for medical concerns."
+                    "</p></div>"
+                )
+
             if hasattr(self, 'conclusion_box'):
                 self.conclusion_box.setHtml(conclusion_html)
-            
-            # Save conclusions to JSON file for report generation (only if valid findings exist)
+
+            # ─── Save conclusions to JSON for report generation ──────────────────
             try:
                 import os
                 import json
                 from datetime import datetime
                 import re
-                
-                # Only save if we have actual findings (not empty)
+
                 if findings:
-                    # Extract clean headings from findings (remove prefixes, HTML tags, and explanations)
+                    # Strip any leftover HTML and prefix markers for clean report text
                     clean_findings = []
                     for f in findings:
-                        # Remove HTML tags first
                         text = re.sub(r'<[^>]+>', '', f).strip()
-                        # Remove prefix markers like [i], [OK], [!]
                         text = re.sub(r'^\[.*?\]\s*', '', text).strip()
-                        # Extract only the heading (before " - " if present)
-                        if ' - ' in text:
-                            text = text.split(' - ')[0].strip()
                         clean_findings.append(text)
-                    
-                    # Clean recommendations (remove HTML tags and bullet points)
+
                     clean_recommendations = []
                     for r in recommendations:
                         text = re.sub(r'<[^>]+>', '', r).strip()
-                        # Remove bullet point if present
                         text = re.sub(r'^[•●○]\s*', '', text).strip()
                         clean_recommendations.append(text)
-                    
+
                     conclusions_data = {
                         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         "findings": clean_findings,
                         "recommendations": clean_recommendations
                     }
-                    
-                    # Save to project root directory
+
                     base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
                     conclusions_file = os.path.join(base_dir, 'last_conclusions.json')
-                    
+
                     with open(conclusions_file, 'w') as f:
                         json.dump(conclusions_data, f, indent=2)
-                    
+
                     print(f" Saved {len(clean_findings)} findings to last_conclusions.json")
                     print(f"   Findings: {clean_findings}")
                 else:
-                    print(f" Skipped saving empty findings to last_conclusions.json (waiting for valid ECG data)")
-                
+                    print(" Skipped saving empty findings to last_conclusions.json (waiting for valid ECG data)")
+
             except Exception as save_err:
                 print(f" Error saving conclusions to JSON: {save_err}")
-        
+
         except Exception as e:
             print(f" Error updating conclusion: {e}")
 

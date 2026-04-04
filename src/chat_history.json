@@ -15,6 +15,14 @@
     {
       "question": "kya haal h ecg ke",
       "answer": "Main aapki ECG ke baare mein madad kar sakta hoon. Kya aapke paas ECG ka print ya image hai jo main dekh sakoon? Ya phir aapke paas kya specific sawal hai jo main samajh sakoon?"
+    },
+    {
+      "question": "kya haal h ecg tere btaa mereko bta",
+      "answer": "Main aapki ECG ki jaankaari pradaan kar sakta hoon. Lekin aapko kuchh vishayon ki jaankaari di jaane ke liye kuchh vishayon ki jaankari chahiye. Kya aapke paas ECG ki pratiyaan hain? Aapke paas lead ki jaankaari hai, jaise ki lead I, II, III, aadi? Aur kya aapke paas anya vishayon ki jaankaari hai, jaise ki patient ki umar, laagu, aur anya samasyaen?"
+    },
+    {
+      "question": "mai ek ecg machine bna rha aur mujhe bpm niklna h mere pass 500 sample hai project microcontroller based hai kaise nikalu bpm jo har case mai sahi aaye",
+      "answer": "BPM (Beats Per Minute) nikalne ke liye, aapko ECG signal ko samajhna hoga aur usse BPM calculate karna hoga. Microcontroller-based ECG machine ke liye, aapko ECG signal ko digitalize karna hoga aur fir usse BPM calculate karna hoga.\n\nAapke paas 500 sample hai, isliye aapko ECG signal ko samajhne ke liye ek algorithm develop karna hoga. ECG signal mein R-peak ko identify karna hoga, aur fir uske beech ki interval ko calculate karna hoga. Interval ko minute mein badalne ke liye, aapko 60 second ke hisaab se divide karna hoga.\n\nAapke liye ek sadharan algorithm yeh hai:\n\n1. ECG signal ko digitalize karein.\n2. R-peak ko identify karein.\n3. R-peak ke beech ki interval ko calculate karein.\n4. Interval ko minute mein badalne ke liye, 60 second ke hisaab se divide karein.\n5. BPM ko calculate karein.\n\nAapko R-peak ko identify karne ke liye, aapko ECG signal ko band-pass filter se pass karna hoga, jisse noise aur other signals ka effect kam ho jayega. Fir aapko R-peak ko identify karne ke liye, aapko threshold setting karna hoga, jisse aap R-peak ko identify kar saken.\n\nAapke liye ek sadharan threshold setting yeh hai:\n\n* Threshold: 0.5 mV\n* Sampling rate: 500 Hz\n* Window size: 10 seconds\n\nAapko yeh threshold setting adjust karna hoga, taaki aapke liye sahi BPM aaye."
     }
   ]
 }

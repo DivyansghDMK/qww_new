@@ -286,10 +286,10 @@ def _draw_header(ax, frozen, patient, PW, fmt):
         #  COL4 (x=152): Org name / address / phone  (up to 3 rows, bold 8.5pt)
         #                This is the "hospital info" block visible top-right in reference
         #
-        left_x  = 10.0
-        col2_x  = 60.0
-        col3_x  = 100.0
-        col4_x  = 152.0
+        left_x  = 5.0
+        col2_x  = 72.0
+        col3_x  = 115.0
+        col4_x  = 160.0
         row_gap = 4.8   # 5 metric rows × 4.8mm = 24mm; 6 left rows = 28.8mm
 
         # COL1: patient details (6 rows)
@@ -328,22 +328,22 @@ def _draw_header(ax, frozen, patient, PW, fmt):
         if phone:
             col4_lines.append(phone)
 
-        # Draw COL1 — 7pt (6pt for specs row so it doesn't wrap)
+        # Draw COL1 — 9pt
         for i, text in enumerate(left_lines):
-            fs = 6.5 if i == 5 else 7.0
+            fs = 9.0
             _t(ax, text, left_x, yb + i * row_gap, fs)
 
-        # Draw COL2 — bold, 8.5pt
+        # Draw COL2 — 9pt
         for i, text in enumerate(col2_lines):
-            _t(ax, text, col2_x, yb + i * row_gap, 8.5, bold=True)
+            _t(ax, text, col2_x, yb + i * row_gap, 9.0, bold=False)
 
-        # Draw COL3 — bold, 8.5pt
+        # Draw COL3 — 9pt
         for i, text in enumerate(col3_lines):
-            _t(ax, text, col3_x, yb + i * row_gap, 8.5, bold=True)
+            _t(ax, text, col3_x, yb + i * row_gap, 9.0, bold=False)
 
-        # Draw COL4 — bold, 8.5pt (hospital info top-right)
+        # Draw COL4 — bold, 9pt (hospital info top-right)
         for i, text in enumerate(col4_lines[:3]):
-            _t(ax, text, col4_x, yb + i * row_gap, 8.5, bold=True)
+            _t(ax, text, col4_x, yb + i * row_gap, 9.0, bold=True)
 
         return
 
@@ -418,14 +418,14 @@ def _draw_header(ax, frozen, patient, PW, fmt):
     ls_col4 = [t for t in [org, phone] if t]
 
     for i, txt in enumerate(ls_left):
-        fs = 6.5 if i == 5 else 7.0
+        fs = 9.0
         _t(ax, txt, L_left, yb + i * L_gap, fs)
     for i, txt in enumerate(ls_col2):
-        _t(ax, txt, L_col2, yb + i * L_gap, 8.5, bold=True)
+        _t(ax, txt, L_col2, yb + i * L_gap, 9.0, bold=False)
     for i, txt in enumerate(ls_col3):
-        _t(ax, txt, L_col3, yb + i * L_gap, 8.5, bold=True)
+        _t(ax, txt, L_col3, yb + i * L_gap, 9.0, bold=False)
     for i, txt in enumerate(ls_col4[:3]):
-        _t(ax, txt, L_col4, yb + i * L_gap, 8.5, bold=True)
+        _t(ax, txt, L_col4, yb + i * L_gap, 9.0, bold=True)
 
 
 # ─── 12:1 Portrait — waves fill header→footer, no white gap ──────────────────
@@ -596,19 +596,16 @@ def _draw_footer_portrait(ax, frozen, patient, conc_list, PW, PH):
     _t(ax, "CONCLUSION",
        box_x+box_w/2, box_y+1, 7, bold=True, ha='center', zorder=9)
 
-    # Max 5 conclusions, 3 columns
+    # Draw conclusions in a single column to avoid overlapping
     items = conc_list[:5]
-    cols  = 3
-    col_w = (box_w - 4.0) / cols
-    row_h = 3.5
+    row_h = 4.0
     sx    = box_x + 2.0
     sy    = box_y + 6.0
     for i, line in enumerate(items):
-        row = i // cols; col = i % cols
-        tx  = sx + col*col_w
-        ty  = sy + row*row_h
-        if ty + row_h > box_y + box_h: break
-        _t(ax, f"{i+1}. {line}", tx, ty, 6, zorder=9)
+        ty  = sy + i*row_h
+        # User request: If getting cropped (exceeds box height), don't put in this.
+        if ty + row_h > box_y + box_h - 1.0: break 
+        _t(ax, f"{i+1}. {line}", sx, ty, 9, zorder=9)
 
     # Brand line
     brand = "Deckmount Electronics Pvt Ltd  |  Rhythm Ultra ECG  |  IEC 60601  |  Made in India"
@@ -636,23 +633,20 @@ def _draw_footer_landscape(ax, frozen, patient, conc_list, PW, PH):
                             facecolor='none', zorder=8))
 
     _t(ax, "CONCLUSION",
-       box_x+box_w/2, box_y+2, 8, bold=True, ha='center', zorder=9)
+       box_x+box_w/2, box_y+2, 9, bold=True, ha='center', zorder=9)
 
-    # Max 5 conclusions, 3 columns
+    # Draw conclusions in a single column to avoid overlapping
     items   = conc_list[:5]
-    cols    = 3; col_gap = 5.0
-    col_w   = (box_w - 10.0 - col_gap*2) / cols
-    sx      = box_x+5.0; sy = box_y+7.0; row_gap=5.0
+    sx      = box_x+5.0; sy = box_y+8.0; row_gap=5.0
     for i, txt in enumerate(items):
-        row=i//cols; col=i%cols
-        tx = sx + col*(col_w+col_gap)
-        ty = sy + row*row_gap
-        if ty+row_gap > box_y+box_h-1: break
-        _t(ax, f"{i+1}. {txt}", tx, ty, 6, zorder=9)
+        ty = sy + i*row_gap
+        # User request: If getting cropped (exceeds box height), don't put in this.
+        if ty+row_gap > box_y+box_h-1.5: break
+        _t(ax, f"{i+1}. {txt}", sx, ty, 9, zorder=9)
 
     # Brand line
     brand = "Deckmount Electronics Pvt Ltd  |  Rhythm Ultra ECG  |  IEC 60601  |  Made in India"
-    _t(ax, brand, PW/2, PH-MB+1.5, 5.5, ha='center', zorder=9)
+    _t(ax, brand, PW/2, PH-MB+1.5, 9, ha='center', zorder=9)
 
 
 # ─── Calibration pulse ────────────────────────────────────────────────────────

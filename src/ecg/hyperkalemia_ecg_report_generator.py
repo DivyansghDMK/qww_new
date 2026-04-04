@@ -2506,47 +2506,32 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
                               textAnchor="middle")  # This centers the text
     master_drawing.add(conclusion_header)
     
-    # DYNAMIC conclusions from dashboard in the box - ONLY REAL CONCLUSIONS (no empty/---)
-    # Split filtered conclusions into rows (2 conclusions per row) - COMPACT SPACING
+    # DYNAMIC conclusions from dashboard in the box - SINGLE COLUMN to avoid overlapping
     print(f" Drawing conclusions in graph from filtered list: {filtered_conclusions}")
     
-    # Calculate how many rows we need based on actual conclusions
-    num_conclusions = len(filtered_conclusions)
-    num_rows = (num_conclusions + 1) // 2  # Round up division for rows
+    # Draw conclusions vertically in a single column
+    row_spacing = 10  # Increased vertical spacing
+    start_y = conclusion_y_start - 12  # Starting Y position (further down from top)
+    box_bottom = conclusion_y_start - 55  # Bottom edge of the box
     
-    # Split into rows (2 conclusions per row)
-    conclusion_rows = []
-    for i in range(0, num_conclusions, 2):
-        row_conclusions = filtered_conclusions[i:i+2]
-        conclusion_rows.append(row_conclusions)
-    
-    print(f"   Total conclusions: {num_conclusions}, Rows needed: {num_rows}")
-    for idx, row in enumerate(conclusion_rows):
-        print(f"   Row {idx+1}: {row}")
-    
-    # Draw conclusions row by row - ONLY REAL ONES with proper numbering
-    row_spacing = 8  # Vertical spacing between rows
-    start_y = conclusion_y_start - 10  # Starting Y position
-    
-    conclusion_num = 1  # Start numbering from 1
-    for row_idx, row_conclusions in enumerate(conclusion_rows):
-        row_y = start_y - (row_idx * row_spacing)
+    for idx, conclusion in enumerate(filtered_conclusions):
+        row_y = start_y - (idx * row_spacing)
         
-        for col_idx, conclusion in enumerate(row_conclusions):
-            # Truncate long conclusions
-            display_conclusion = conclusion[:30] + "..." if len(conclusion) > 30 else conclusion
-            conc_text = f"{conclusion_num}. {display_conclusion}"
+        # User request: If getting cropped (exceeds box height), don't put in this.
+        if row_y < box_bottom + 5:  # 5 points padding from bottom
+            print(f" Skipping conclusion {idx+1} as it would be cropped")
+            continue
             
-            # Position horizontally across the box (2 conclusions per row)
-            x_pos = 210 + (col_idx * 160)  # 160 points spacing for 2 conclusions per row
+        conc_text = f"{idx + 1}. {conclusion}"
+        
+        # Position horizontally in a single column
+        x_pos = 210  # Align with the box's left side
+        
+        conc = String(x_pos, row_y, conc_text, 
+                     fontSize=9, fontName="Helvetica", fillColor=colors.black)
+        master_drawing.add(conc)
             
-            conc = String(x_pos, row_y, conc_text, 
-                         fontSize=9, fontName="Helvetica", fillColor=colors.black)
-            master_drawing.add(conc)
-            
-            conclusion_num += 1  # Increment for next conclusion
-
-    print(f" Added Patient Info, Vital Parameters, {len(filtered_conclusions)} REAL Conclusions (no empty/---), and Doctor Name/Signature to ECG grid")
+    print(f" Added {len(filtered_conclusions)} REAL Conclusions in single column (no cropping)")
     
     # STEP 5: Add SINGLE master drawing to story (NO containers)
     story.append(master_drawing)
@@ -3818,15 +3803,15 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     
     # LEFT SIDE: Patient Info (SHIFTED LEFT + UP)
     patient_name_label = String(5, 540, f"Name: {full_name}",
-                                fontSize=10, fontName="Helvetica", fillColor=colors.black)
+                                fontSize=9, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(patient_name_label)
     
     patient_age_label = String(5, 525, f"Age: {age}",
-                               fontSize=10, fontName="Helvetica", fillColor=colors.black)
+                               fontSize=9, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(patient_age_label)
     
     patient_gender_label = String(5, 510, f"Gender: {gender}",
-                                  fontSize=10, fontName="Helvetica", fillColor=colors.black)
+                                  fontSize=9, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(patient_gender_label)
     
     # RIGHT SIDE: Date/Time
@@ -3839,15 +3824,15 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     
     # Right-side contact block on landscape page
     org_name_label = String(680, 540, f"Org. Name: {patient_org}",
-                    fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
+                    fontSize=9, fontName="Helvetica-Bold", fillColor=colors.black)
     master_drawing.add(org_name_label)
     
     org_address_label = String(680, 525, f"Org. Address: {patient_org_address}",
-                      fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
+                      fontSize=9, fontName="Helvetica-Bold", fillColor=colors.black)
     master_drawing.add(org_address_label)
 
     phone_label = String(680, 510, f"Phone No: {patient_doctor_mobile}",
-                      fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
+                      fontSize=9, fontName="Helvetica-Bold", fillColor=colors.black)
     master_drawing.add(phone_label)
     
     # ==================== VITAL PARAMETERS (LANDSCAPE MODE - 2 COLUMNS SIDE BY SIDE) ====================
@@ -4028,19 +4013,24 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     
     doctor = doctor or ""
     label_text = "Doctor Name: "
+
+    # Reference Report Confirmed by (above Doctor Name)
+    confirmed_label = String(10, 89, "Reference Report Confirmed by: ", 
+                              fontSize=8, fontName="Helvetica", fillColor=colors.black)
+    master_drawing.add(confirmed_label)
     
     doctor_name_label = String(10, 74, "Doctor Name: ",  # shifted further up to clear footer
-                              fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
+                              fontSize=8, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(doctor_name_label)
     
     if doctor:
-        value_x = 10 + stringWidth(label_text, "Helvetica-Bold", 10) + 6
+        value_x = 10 + stringWidth("Doctor Name: ", "Helvetica", 8) + 6
         doctor_name_value = String(value_x, 74, doctor,  # Starts after "Doctor Name: " label
-                                fontSize=10, fontName="Helvetica", fillColor=colors.black)
+                                fontSize=8, fontName="Helvetica", fillColor=colors.black)
         master_drawing.add(doctor_name_value)
     
     doctor_sign_label = String(10, 59, "Doctor Sign: ",  # shifted further up to clear footer
-                              fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
+                              fontSize=8, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(doctor_sign_label)
     
     # ==================== CONCLUSION BOX ON PAGE 2 (LANDSCAPE MODE - ADJUSTED FOR 780 WIDTH) ====================

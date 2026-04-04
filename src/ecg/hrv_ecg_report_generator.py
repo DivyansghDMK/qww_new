@@ -1122,6 +1122,10 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     for conclusion in dashboard_conclusions:
         # Keep only non-empty conclusions that are not "---"
         if conclusion and conclusion.strip() and conclusion.strip() != "---":
+            # Per user request: exclude "Rhythm Analysis" from the report
+            # and rely only on the heart-rate-based clinical conclusions.
+            if "Rhythm Analysis" in conclusion:
+                continue
             filtered_conclusions.append(conclusion.strip())
             # LIMIT: Maximum 12 conclusions (only 12 boxes available)
             if len(filtered_conclusions) >= 12:
@@ -1876,15 +1880,15 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
 
     # LEFT SIDE: Patient Info (ABOVE ECG GRAPH - shifted further up)
     patient_name_label = String(-30, 740, f"Name: {full_name}",  # Moved up from 700 to 710
-                           fontSize=10, fontName="Helvetica", fillColor=colors.black)
+                               fontSize=9, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(patient_name_label)
-
+    
     patient_age_label = String(-30, 720, f"Age: {age}",  # Moved up from 680 to 690
-                          fontSize=10, fontName="Helvetica", fillColor=colors.black)
+                              fontSize=9, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(patient_age_label)
-
+    
     patient_gender_label = String(-30, 700, f"Gender: {gender}",  # Moved up from 660 to 670
-                             fontSize=10, fontName="Helvetica", fillColor=colors.black)
+                                 fontSize=9, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(patient_gender_label)
     
     # RIGHT SIDE: Date/Time (ABOVE ECG GRAPH - shifted further up)
@@ -2436,47 +2440,32 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
                               textAnchor="middle")  # This centers the text
     master_drawing.add(conclusion_header)
     
-    # DYNAMIC conclusions from dashboard in the box - ONLY REAL CONCLUSIONS (no empty/---)
-    # Split filtered conclusions into rows (2 conclusions per row) - COMPACT SPACING
+    # DYNAMIC conclusions from dashboard in the box - SINGLE COLUMN to avoid overlapping
     print(f"🎨 Drawing conclusions in graph from filtered list: {filtered_conclusions}")
     
-    # Calculate how many rows we need based on actual conclusions
-    num_conclusions = len(filtered_conclusions)
-    num_rows = (num_conclusions + 1) // 2  # Round up division for rows
+    # Draw conclusions vertically in a single column
+    row_spacing = 10  # Increased vertical spacing
+    start_y = conclusion_y_start - 12  # Starting Y position (further down from top)
+    box_bottom = conclusion_y_start - 55  # Bottom edge of the box
     
-    # Split into rows (2 conclusions per row)
-    conclusion_rows = []
-    for i in range(0, num_conclusions, 2):
-        row_conclusions = filtered_conclusions[i:i+2]
-        conclusion_rows.append(row_conclusions)
-    
-    print(f"   Total conclusions: {num_conclusions}, Rows needed: {num_rows}")
-    for idx, row in enumerate(conclusion_rows):
-        print(f"   Row {idx+1}: {row}")
-    
-    # Draw conclusions row by row - ONLY REAL ONES with proper numbering
-    row_spacing = 8  # Vertical spacing between rows
-    start_y = conclusion_y_start - 10  # Starting Y position
-    
-    conclusion_num = 1  # Start numbering from 1
-    for row_idx, row_conclusions in enumerate(conclusion_rows):
-        row_y = start_y - (row_idx * row_spacing)
+    for idx, conclusion in enumerate(filtered_conclusions):
+        row_y = start_y - (idx * row_spacing)
         
-        for col_idx, conclusion in enumerate(row_conclusions):
-            # Truncate long conclusions
-            display_conclusion = conclusion[:30] + "..." if len(conclusion) > 30 else conclusion
-            conc_text = f"{conclusion_num}. {display_conclusion}"
+        # User request: If getting cropped (exceeds box height), don't put in this.
+        if row_y < box_bottom + 5:  # 5 points padding from bottom
+            print(f" Skipping conclusion {idx+1} as it would be cropped")
+            continue
             
-            # Position horizontally across the box (2 conclusions per row)
-            x_pos = 210 + (col_idx * 160)  # 160 points spacing for 2 conclusions per row
+        conc_text = f"{idx + 1}. {conclusion}"
+        
+        # Position horizontally in a single column
+        x_pos = 210  # Align with the box's left side
+        
+        conc = String(x_pos, row_y, conc_text, 
+                     fontSize=9, fontName="Helvetica", fillColor=colors.black)
+        master_drawing.add(conc)
             
-            conc = String(x_pos, row_y, conc_text, 
-                         fontSize=9, fontName="Helvetica", fillColor=colors.black)
-            master_drawing.add(conc)
-            
-            conclusion_num += 1  # Increment for next conclusion
-
-    print(f"✅ Added Patient Info, Vital Parameters, {len(filtered_conclusions)} REAL Conclusions (no empty/---), and Doctor Name/Signature to ECG grid")
+    print(f"✅ Added {len(filtered_conclusions)} REAL Conclusions in single column (no cropping)")
     
     # STEP 5: Add SINGLE master drawing to story (NO containers)
     story.append(master_drawing)
@@ -3616,17 +3605,17 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
 
     # ── ROW 1 — Patient identity (top-left) ──────────────────────────────────
     patient_name_label = String(5, 525, f"Name: {full_name}",
-                                fontSize=10, fontName="Helvetica", fillColor=colors.black)
+                                fontSize=9, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(patient_name_label)
     patient_age_label = String(5, 511, f"Age: {age}",
-                               fontSize=10, fontName="Helvetica", fillColor=colors.black)
+                               fontSize=9, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(patient_age_label)
     patient_gender_label = String(5, 497, f"Gender: {gender}",
-                                  fontSize=10, fontName="Helvetica", fillColor=colors.black)
+                                  fontSize=9, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(patient_gender_label)
 
     # ── LEFT metrics block (x=210) — uses ONLY HRV-computed values ───────────
-    _LX = 210; _fs = 10
+    _LX = 210; _fs = 9
     master_drawing.add(String(_LX, 525, f"HR   : {HR} bpm",   fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
     master_drawing.add(String(_LX, 511, f"PR   : {PR} ms",    fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
     master_drawing.add(String(_LX, 497, f"QRS : {QRS_H} ms",  fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
@@ -3644,13 +3633,13 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
 
     # ── Date/Time (top-right) ────────────────────────────────────────────────
     master_drawing.add(String(_RX, 486, f"Date & Time: {date_part} {time_part}",
-                              fontSize=10, fontName="Helvetica", fillColor=colors.black))
+                              fontSize=9, fontName="Helvetica", fillColor=colors.black))
     master_drawing.add(String(690, 525, f"Org. Name: {org_name}",
-                              fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black))
+                              fontSize=9, fontName="Helvetica-Bold", fillColor=colors.black))
     master_drawing.add(String(690, 511, f"Org. Address: {org_address}",
-                              fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black))
+                              fontSize=9, fontName="Helvetica-Bold", fillColor=colors.black))
     master_drawing.add(String(690, 497, f"Phone No: {doctor_mobile}",
-                              fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black))
+                              fontSize=9, fontName="Helvetica-Bold", fillColor=colors.black))
 
     # ── Lead label (just above the first strip) ───────────────────────────────
     # Removed the global Lead label because it overlaps with the "Lead II (First minute)" label per strip.
@@ -3660,19 +3649,24 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     
     doctor = patient.get("doctor", "") if patient else ""
     label_text = "Doctor Name: "
+
+    # Reference Report Confirmed by (above Doctor Name)
+    confirmed_label = String(10, 65, "Reference Report Confirmed by: ", 
+                              fontSize=8, fontName="Helvetica", fillColor=colors.black)
+    master_drawing.add(confirmed_label)
     
     doctor_name_label = String(10, 50, "Doctor Name: ",  # X=10 (visible, inside drawing)
-                              fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
+                              fontSize=8, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(doctor_name_label)
     
     if doctor:
-        value_x = 10 + stringWidth(label_text, "Helvetica-Bold", 10) + 6
+        value_x = 10 + stringWidth("Doctor Name: ", "Helvetica", 8) + 6
         doctor_name_value = String(value_x, 50, doctor,  # Starts after "Doctor Name: " label
-                                fontSize=10, fontName="Helvetica", fillColor=colors.black)
+                                fontSize=8, fontName="Helvetica", fillColor=colors.black)
         master_drawing.add(doctor_name_value)
     
     doctor_sign_label = String(10, 35, "Doctor Sign: ",  # X=10 (visible, inside drawing)
-                              fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
+                              fontSize=8, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(doctor_sign_label)
     
     # ==================== CONCLUSION BOX ON PAGE 1 (LANDSCAPE MODE - ADJUSTED FOR 780 WIDTH) ====================
