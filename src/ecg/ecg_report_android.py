@@ -37,6 +37,9 @@ ECG_FS        = 500.0
 FIXED_SPEED   = 25.0
 FIXED_GAIN    = 10.0
 MM_PER_SAMPLE = FIXED_SPEED / ECG_FS   # 0.05 mm/sample
+REPORT_AC_SETTING = "50"
+REPORT_EMG_SETTING = "150"
+REPORT_DFT_SETTING = "0.5"
 # ADC_PER_MM: ADC counts per 1mm at standard 10mm/mV gain.
 # Formula: (ADC_full_scale / mV_full_scale) / (mm_per_mV)
 # = 6400 ADC / 50mV / 10mm*mV = 12800 / 1000 = 12.8? No -
@@ -81,6 +84,7 @@ def generate_report(snap_raw, frozen, patient, filename, fmt,
     fs        : sampling rate Hz
     """
     global ECG_FS, MM_PER_SAMPLE, ADC_PER_MM
+    global REPORT_AC_SETTING, REPORT_EMG_SETTING, REPORT_DFT_SETTING
     ECG_FS        = float(fs)
     MM_PER_SAMPLE = FIXED_SPEED / ECG_FS
 
@@ -115,6 +119,9 @@ def generate_report(snap_raw, frozen, patient, filename, fmt,
     ac_setting  = _get_filter_setting("filter_ac",  "50")   # "50", "60", or "off"
     emg_setting = _get_filter_setting("filter_emg", "150")  # "25".."150" or "off"
     dft_setting = _get_filter_setting("filter_dft", "0.5")  # "0.05", "0.5", or "off"
+    REPORT_AC_SETTING = ac_setting
+    REPORT_EMG_SETTING = emg_setting
+    REPORT_DFT_SETTING = dft_setting
     print(f"[ecg_report_android] Filter settings — AC:{ac_setting}  EMG:{emg_setting}  DFT:{dft_setting}")
 
     # Read wave_gain from settings to set correct ADC→mm scaling
@@ -142,31 +149,13 @@ def generate_report(snap_raw, frozen, patient, filename, fmt,
     ADC_PER_MM = 1280.0 / max(wave_gain_val, 1.0)
     print(f"[ecg_report_android] wave_gain={wave_gain_val} mm/mV  →  ADC_PER_MM={ADC_PER_MM:.2f}")
 
-    # ── Apply user-selected filters to all 12 leads ───────────────────────
+    # ── Freeze raw snapshots for all 12 leads; strip preparation happens
+    #    later per rendered segment so edge stabilisation matches the exact
+    #    report window and does not depend on where the snapshot was cut. ──
     lead_mv = {}
     for i, lead in enumerate(ALL_LEADS):
         arr = np.asarray(snap_raw[i], dtype=float) if i < len(snap_raw) else np.array([])
-        if len(arr) < 100:
-            lead_mv[lead] = arr
-            continue
-        try:
-            from ecg.ecg_filters import apply_ecg_filters, stabilize_report_edges
-            ac_param  = ac_setting  if ac_setting  not in ("off", "") else None
-            emg_param = emg_setting if emg_setting not in ("off", "") else None
-            dft_param = dft_setting if dft_setting not in ("off", "") else None
-            filtered = apply_ecg_filters(
-                arr,
-                sampling_rate=float(ECG_FS),
-                ac_filter=ac_param,
-                emg_filter=emg_param,
-                dft_filter=dft_param,
-            )
-            # Gentle edge stabilisation (removes filter transients at strip edges)
-            filtered = stabilize_report_edges(filtered, float(ECG_FS))
-            lead_mv[lead] = filtered
-        except Exception as _fe:
-            print(f"[ecg_report_android] Filter failed for {lead}: {_fe} — using median-centred raw")
-            lead_mv[lead] = arr - float(np.median(arr))
+        lead_mv[lead] = arr
 
     # ── Figure — exact A4, white background ───────────────────────────────
     fig = Figure(figsize=(PW/25.4, PH/25.4), dpi=150, facecolor='white')
@@ -666,25 +655,9 @@ def _draw_calibration_pad(ax, x_mm, y_mm, gain_mm):
 # ─── Waveform ─────────────────────────────────────────────────────────────────
 
 def _draw_waveform(ax, samples, x0_mm, y0_mm, width_mm, half_cell_mm=10.0, target_samples=None):
-    arr = np.asarray(samples, dtype=float)
+    arr = _prepare_report_waveform(samples, width_mm, target_samples=target_samples)
     if len(arr) < 2:
         return
-    if target_samples is not None:
-        if len(arr) > target_samples:
-            arr = arr[-target_samples:]
-    else:
-        n_max = int(width_mm / MM_PER_SAMPLE) + 1
-        arr = arr[:n_max]
-        
-    if len(arr) < 2:
-        return
-
-    # Apply Gaussian smoothing to match live display (SMOOTH_SIGMA = 0.8)
-    try:
-        from scipy.ndimage import gaussian_filter1d
-        arr = gaussian_filter1d(arr, sigma=0.8)
-    except Exception:
-        pass
 
     # X coordinate strictly respects the scale
     xs = x0_mm + np.arange(len(arr)) * MM_PER_SAMPLE
@@ -698,6 +671,83 @@ def _draw_waveform(ax, samples, x0_mm, y0_mm, width_mm, half_cell_mm=10.0, targe
 
     ax.plot(xs, ys, color='black', linewidth=0.5,
             solid_joinstyle='round', solid_capstyle='round', zorder=5)
+
+
+def _prepare_report_waveform(samples, width_mm, target_samples=None):
+    """Prepare one report strip using a stable segment-local pipeline.
+
+    The bug here was intermittent because we used to filter the full captured
+    buffer first and then slice the newest segment afterward. Depending on
+    where the snapshot ended, that could leave strip-local edge transients or
+    shifting baseline in the printed waveform.
+    """
+    arr = np.asarray(samples, dtype=float)
+    if arr.size < 2:
+        return arr
+
+    if target_samples is not None:
+        core_n = min(arr.size, int(target_samples))
+        start_idx = max(0, arr.size - core_n)
+    else:
+        core_n = min(arr.size, int(width_mm / MM_PER_SAMPLE) + 1)
+        start_idx = 0
+
+    if core_n < 2:
+        return np.asarray([], dtype=float)
+
+    pad_n = min(max(8, int(0.5 * ECG_FS)), start_idx) if target_samples is not None else 0
+    work_start = max(0, start_idx - pad_n)
+    work = np.asarray(arr[work_start:], dtype=float) if target_samples is not None else np.asarray(arr[:core_n], dtype=float)
+    if work.size < 2:
+        return work
+
+    try:
+        from ecg.ecg_filters import apply_ecg_filters, stabilize_report_edges
+        ac_param = REPORT_AC_SETTING if REPORT_AC_SETTING not in ("off", "") else None
+        emg_param = REPORT_EMG_SETTING if REPORT_EMG_SETTING not in ("off", "") else None
+        dft_param = REPORT_DFT_SETTING if REPORT_DFT_SETTING not in ("off", "") else None
+        work = apply_ecg_filters(
+            work,
+            sampling_rate=float(ECG_FS),
+            ac_filter=ac_param,
+            emg_filter=emg_param,
+            dft_filter=dft_param,
+        )
+        work = stabilize_report_edges(work, float(ECG_FS), edge_ms=180.0)
+    except Exception:
+        pass
+
+    if work.size > core_n:
+        work = work[-core_n:] if target_samples is not None else work[:core_n]
+
+    try:
+        from ecg.signal.signal_processing import extract_low_frequency_baseline
+        baseline_est = extract_low_frequency_baseline(work, float(ECG_FS))
+        work = work - float(baseline_est)
+    except Exception:
+        pass
+
+    try:
+        dc = float(np.nanmean(work)) if work.size > 0 else 0.0
+        if np.isfinite(dc):
+            work = work - dc
+    except Exception:
+        pass
+
+    try:
+        from scipy.ndimage import gaussian_filter1d
+        if work.size > 5:
+            work = gaussian_filter1d(work, sigma=0.8)
+    except Exception:
+        pass
+
+    try:
+        from ecg.ecg_filters import stabilize_report_edges
+        work = stabilize_report_edges(work, float(ECG_FS), edge_ms=120.0)
+    except Exception:
+        pass
+
+    return np.asarray(work, dtype=float)
 
 
 # ─── Text helper ──────────────────────────────────────────────────────────────

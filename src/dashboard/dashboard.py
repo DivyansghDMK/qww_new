@@ -13,6 +13,7 @@ import sys
 import platform
 import numpy as np
 from scipy.ndimage import gaussian_filter1d
+from scipy.interpolate import interp1d
 from ecg.serial.serial_reader import SerialStreamReader, SERIAL_AVAILABLE
 import serial.tools.list_ports
 if SERIAL_AVAILABLE:
@@ -33,6 +34,8 @@ from utils.localization import translate_text
 from utils.crash_logger import get_crash_logger, CrashLogDialog
 from utils.patient_profile import resolve_patient_profile
 from dashboard.admin_reports import AdminLoginDialog, AdminReportsDialog
+from ecg.signal.signal_processing import extract_low_frequency_baseline
+from ecg.utils.helpers import get_display_gain
 
 # Try to import configuration, fallback to defaults if not available
 try:
@@ -2590,6 +2593,7 @@ class Dashboard(QWidget):
                         tp_baseline = get_tp_baseline(ecg_signal, r_mid, fs, prev_r_peak_idx=prev_r_idx)
                         
                         # Calculate RR interval for QTC calculation
+                        valid_rr = np.array([], dtype=float)
                         if len(peaks) >= 2:
                             rr_intervals_ms = np.diff(peaks) * (1000.0 / fs)
                             valid_rr = rr_intervals_ms[(rr_intervals_ms >= 200) & (rr_intervals_ms <= 6000)]
@@ -2850,45 +2854,6 @@ class Dashboard(QWidget):
                     except Exception as e:
                         print(f" Error getting sampling rate: {e}")
 
-                    # Apply filters matching the 12-lead display (AC notch → EMG → DFT → Gaussian)
-                    try:
-                        original_data = np.asarray(lead_ii_data, dtype=float)
-
-                        from ecg.ecg_filters import apply_ecg_filters
-                        from scipy.ndimage import gaussian_filter1d as _gf1d
-
-                        ac_setting  = str(self.settings_manager.get_setting("filter_ac",  "50")).strip()
-                        emg_setting = str(self.settings_manager.get_setting("filter_emg", "150")).strip()
-                        dft_setting = str(self.settings_manager.get_setting("filter_dft", "0.5")).strip()
-
-                        # Nyquist guard: AC notch at F Hz requires sampling rate > 2*F Hz.
-                        # Disable gracefully rather than letting the filter raise an error.
-                        if ac_setting in ("50", "60"):
-                            required_fs = float(ac_setting) * 2.0 + 1.0  # e.g. 101 Hz for 50 Hz notch
-                            if actual_sampling_rate <= required_fs:
-                                print(f" AC filter disabled (rate {actual_sampling_rate} Hz too low for {ac_setting} Hz notch)")
-                                ac_setting = "off"
-
-                        original_data = apply_ecg_filters(
-                            signal=original_data,
-                            sampling_rate=actual_sampling_rate,
-                            ac_filter=ac_setting  if ac_setting  not in ("off", "") else None,
-                            emg_filter=emg_setting if emg_setting not in ("off", "") else None,
-                            dft_filter=dft_setting if dft_setting not in ("off", "") else None,
-                        )
-
-                        # Light Gaussian smoothing (sigma=0.8 — same as 12-lead page SMOOTH_SIGMA)
-                        if len(original_data) > 5:
-                            original_data = _gf1d(original_data, sigma=0.8)
-
-                    except Exception as e:
-                        print(f" Dashboard filter error, using raw data: {e}")
-                        try:
-                            original_data = np.asarray(lead_ii_data, dtype=float)
-                        except Exception as e2:
-                            print(f" Error converting Lead II data to array: {e2}")
-                            return self._fallback_wave_update(frame)
-                    
                     # Check for invalid values
                     if np.any(np.isnan(original_data)) or np.any(np.isinf(original_data)):
                         print(" Invalid values (NaN/Inf) in Lead II data")
@@ -2901,38 +2866,6 @@ class Dashboard(QWidget):
                             settings_src = self.ecg_test_page.settings_manager
                     except Exception:
                         settings_src = self.settings_manager
-
-                    # Apply same AC/EMG/DFT filters as 12-lead dashboard for DISPLAY ONLY
-                    try:
-                        from ecg.ecg_filters import apply_ecg_filters_from_settings
-                        display_data = apply_ecg_filters_from_settings(
-                            signal=original_data,
-                            sampling_rate=actual_sampling_rate,
-                            settings_manager=settings_src
-                        )
-                    except Exception as filter_err:
-                        print(f" Error applying ECG display filters: {filter_err}")
-                        display_data = original_data
-
-                    # Apply Gaussian smoothing to reduce corner noise
-                    try:
-                        from scipy.ndimage import gaussian_filter1d
-                        sigma = getattr(self.ecg_test_page, 'SMOOTH_SIGMA', 0.8)
-                        if len(display_data) > 5 and sigma > 0:
-                            sigma = max(sigma * 1.5, 1.3)
-                            display_data = gaussian_filter1d(display_data, sigma=sigma)
-
-                        # Trim filter edge artefacts (similar to inner grid: ~0.5s each side)
-                            try:
-                                fs = float(actual_sampling_rate)
-                                edge_trim = int(0.5 * fs)
-                                if edge_trim > 0 and len(display_data) > 2 * edge_trim:
-                                    display_data = display_data[edge_trim:-edge_trim]
-                            except Exception:
-                                pass
-
-                    except Exception as gauss_err:
-                        print(f" Error applying Gaussian smoothing to ECG display: {gauss_err}")
 
                     # Determine visible window based on wave speed (display feature only)
                     try:
@@ -2950,57 +2883,100 @@ class Dashboard(QWidget):
                     # Scale time window with wave speed:
                     #   12.5 mm/s → 6 s, 25 mm/s → 3 s, 50 mm/s → 1.5 s
                     seconds_to_show = baseline_seconds * (25.0 / max(1e-6, wave_speed))
-                    window_samples = int(max(50, min(len(display_data), seconds_to_show * actual_sampling_rate)))
+                    window_samples = int(max(50, min(len(original_data), seconds_to_show * actual_sampling_rate)))
 
-                    # ── Direct mirror of 12-lead Lead II display ────────────────────────
-                    # data[1] is already a rolling fixed-size buffer filled by the serial
-                    # reader (same as the 12-lead page uses).  We just take the last
-                    # window_samples from it, apply the same filters, and plot directly.
-                    # This is identical to how Lead II looks on the 12-lead page —
-                    # no manual ring-buffer needed, no wrapping jump.
-                    # ────────────────────────────────────────────────────────────────────
+                    # Mirror the stable 12-lead live view pipeline.
                     try:
-                        src = display_data[-window_samples:]
-                        if len(src) > 0:
-                            # Hard-center baseline each frame to prevent upward drift
-                            current_dc = float(np.nanmean(src))
-                            src = src - current_dc + 2048.0
-
-                        # Strip NaNs from the head (happens while buffer fills up)
-                        valid_mask = ~np.isnan(src)
-                        if valid_mask.sum() < 5:
-                            # Not enough real data yet — show flat baseline
-                            display_y = np.full(len(self.ecg_x), 2048.0)
+                        raw_data = np.asarray(original_data, dtype=float)
+                        non_zero_indices = np.where(raw_data != 0)[0]
+                        if len(non_zero_indices) > 0:
+                            recent_data = raw_data[int(non_zero_indices[0]):]
                         else:
-                            # Baseline-centre once (same as 12-lead adaptive gain logic)
-                            dc = float(np.nanmedian(src))
-                            src_c = np.where(valid_mask, src - dc + 2048.0, 2048.0)
+                            recent_data = raw_data[-min(window_samples, len(raw_data)):] if len(raw_data) > 0 else raw_data
 
-                            # Resample to the fixed display width (ecg_x has 500 pts)
-                            display_len = len(self.ecg_x)
-                            x_src = np.linspace(0.0, 1.0, src_c.size)
-                            x_dst = np.linspace(0.0, 1.0, display_len)
-                            display_y = np.interp(x_dst, x_src, src_c.astype(float))
-                            display_y = np.clip(display_y, 0, 4095)
+                        if len(recent_data) > window_samples:
+                            data_slice = recent_data[-window_samples:]
+                        else:
+                            data_slice = recent_data
 
-                        # ── Match x-axis to time in seconds (like 12-lead "1..10 s") ──
-                        # Update x-axis limits to show the correct time window
-                        seconds_shown = window_samples / actual_sampling_rate
-                        self.ecg_canvas.axes.set_xlim(0, seconds_shown)
+                        if len(data_slice) == 0:
+                            data_slice = raw_data[-min(50, len(raw_data)):]
+                        if len(data_slice) == 0:
+                            return self._fallback_wave_update(frame)
 
-                        # Validate display data
+                        filtered_slice = np.asarray(data_slice, dtype=float)
+
+                        if not hasattr(self, '_dashboard_lead2_baseline_anchor'):
+                            self._dashboard_lead2_baseline_anchor = None
+                        try:
+                            baseline_estimate = extract_low_frequency_baseline(filtered_slice, float(actual_sampling_rate))
+                            if self._dashboard_lead2_baseline_anchor is None:
+                                self._dashboard_lead2_baseline_anchor = baseline_estimate
+                            baseline_alpha = 0.0005
+                            self._dashboard_lead2_baseline_anchor = (
+                                (1.0 - baseline_alpha) * self._dashboard_lead2_baseline_anchor
+                                + baseline_alpha * baseline_estimate
+                            )
+                            filtered_slice = filtered_slice - self._dashboard_lead2_baseline_anchor
+                            current_dc = float(np.nanmean(filtered_slice)) if len(filtered_slice) > 0 else 0.0
+                            if np.isfinite(current_dc):
+                                filtered_slice = filtered_slice - current_dc
+                        except Exception:
+                            pass
+
+                        try:
+                            from ecg.ecg_filters import apply_emg_filter, apply_ac_filter
+                            emg_setting = str(settings_src.get_setting("filter_emg", "150")).strip()
+                            ac_setting = str(settings_src.get_setting("filter_ac", "50")).strip()
+                            if emg_setting.lower() != "off" and len(filtered_slice) >= 10:
+                                filtered_slice = apply_emg_filter(filtered_slice, float(actual_sampling_rate), emg_setting)
+                            if ac_setting in ("50", "60") and len(filtered_slice) > 30:
+                                filtered_slice = apply_ac_filter(filtered_slice, float(actual_sampling_rate), ac_setting)
+                        except Exception:
+                            pass
+
+                        gain_factor = get_display_gain(settings_src.get_wave_gain())
+                        scaled_data = filtered_slice * gain_factor
+                        scaled_data = np.nan_to_num(scaled_data, copy=False)
+
+                        sigma = float(getattr(self.ecg_test_page, 'SMOOTH_SIGMA', 0.8) or 0.8)
+                        if len(scaled_data) > 5 and sigma > 0:
+                            scaled_data = gaussian_filter1d(scaled_data, sigma=sigma)
+
+                        interp_factor = int(getattr(self.ecg_test_page, 'INTERP_FACTOR', 4) or 4)
+                        if len(scaled_data) > 1 and interp_factor > 1:
+                            try:
+                                x = np.arange(len(scaled_data), dtype=float)
+                                f = interp1d(x, scaled_data, kind='cubic')
+                                xi = np.linspace(0.0, float(len(scaled_data) - 1), len(scaled_data) * interp_factor)
+                                scaled_data = np.asarray(f(xi), dtype=float)
+                            except Exception:
+                                x = np.arange(len(scaled_data), dtype=float)
+                                xi = np.linspace(0.0, float(len(scaled_data) - 1), len(scaled_data) * interp_factor)
+                                scaled_data = np.interp(xi, x, scaled_data)
+
+                        edge_trim = int(0.5 * float(actual_sampling_rate))
+                        if edge_trim > 0 and len(scaled_data) > 2 * edge_trim:
+                            scaled_data = scaled_data[edge_trim:-edge_trim]
+
+                        if len(scaled_data) == 0:
+                            scaled_data = np.array([0.0], dtype=float)
+
+                        display_y = np.clip(scaled_data + 2048.0, 0.0, 4095.0)
+                        x_axis = np.linspace(0.0, seconds_to_show, len(display_y))
+
                         if np.any(np.isnan(display_y)) or np.any(np.isinf(display_y)):
                             print(" Invalid display data generated")
                             return self._fallback_wave_update(frame)
-                        
-                        # Update both X and Y so the visible window matches the time scale exactly
-                        x_axis = np.linspace(0.0, seconds_to_show, display_len)
+
                         self.ecg_line.set_data(x_axis, display_y)
-                        # Ensure axes are locked: 0–seconds_to_show in X, 0–4096 in Y
                         self.ecg_canvas.axes.set_autoscale_on(False)
-                        self.ecg_canvas.axes.set_xlim(0.0, seconds_to_show)
+                        new_xlim = (0.0, seconds_to_show)
+                        if not hasattr(self, '_prev_xlim') or self._prev_xlim != new_xlim:
+                            self.ecg_canvas.axes.set_xlim(*new_xlim)
+                            self._prev_xlim = new_xlim
                         self.ecg_canvas.axes.set_ylim(0, 4096)
-                        
+
                     except Exception as e:
                         print(f" Error processing display data: {e}")
                         return self._fallback_wave_update(frame)
@@ -3309,42 +3285,25 @@ class Dashboard(QWidget):
             print(f" Error updating dashboard metrics from ECG: {e}")
     
     def generate_pdf_report(self):
-        """Generate ECG PDF report.
-        
-        FIX-REPORT-1: Snapshot all metric values at the moment this button is clicked
-                      so they are FROZEN and consistent throughout generation. Reading
-                      from live UI labels later produced different values every click.
-        FIX-REPORT-2: All heavy computation (matplotlib 12-lead plot rendering, ECG
-                      axis/amplitude calculations, PDF generation) is moved to a
-                      background QThread so the ECG wave plots keep scrolling smoothly
-                      with zero UI lag / "dhakke".
-        """
+        """Generate ECG PDF report in a separate process."""
         from PyQt5.QtWidgets import QMessageBox
-        from PyQt5.QtCore import QThread, pyqtSignal, QObject
+        import copy
         import datetime
         import os
-        import copy
 
-        # Prevent overlapping report jobs (double-click / repeated clicks)
-        if getattr(self, '_report_thread', None) is not None and self._report_thread.isRunning():
+        runner = getattr(self, "_pdf_runner", None)
+        if runner is not None and runner.is_running():
             print("ℹ️ Report generation is already running. Please wait for it to finish.")
             return
 
-        # Hold dashboard BPM smoothing steady for a short grace period while the
-        # report snapshot/background work starts, so repeated report clicks or
-        # app focus changes do not create a transient spike in the live display.
         try:
             import time as _time
             self._dashboard_resume_grace_until = _time.time() + 1.5
         except Exception:
             pass
 
-        # ── STEP 1: Freeze ALL metric values RIGHT NOW (before any background work) ──
-        # This is the key fix for "different values each click even though machine
-        # sends constant data" — the live update timer overwrites labels between calls.
-
         def _extract_metric(label_key, default="0", strip_units=True):
-            if not hasattr(self, 'metric_labels') or label_key not in self.metric_labels:
+            if not hasattr(self, "metric_labels") or label_key not in self.metric_labels:
                 return default
             text = self.metric_labels[label_key].text().strip()
             if not text:
@@ -3356,497 +3315,143 @@ class Dashboard(QWidget):
 
         def _to_int(value, default=0):
             try:
-                return int(float(str(value).split('/')[0].strip()))
+                return int(float(str(value).split("/")[0].strip()))
             except Exception:
                 return default
 
         def _to_float(value, default=0.0):
             try:
-                return float(str(value).replace('mV','').strip())
+                return float(str(value).replace("mV", "").strip())
             except Exception:
                 return default
 
-        # --- Snapshot metric labels immediately (FROZEN at click time) ---
-        HR_text  = _extract_metric('heart_rate',  "0")
-        PR_text  = _extract_metric('pr_interval', "0")
-        QRS_text = _extract_metric('qrs_duration', "0")
-        qtc_label_text = _extract_metric('qtc_interval', "0/0", strip_units=False)
-        st_label_text  = _extract_metric('st_interval', "", strip_units=False) or \
-                         _extract_metric('st_segment', "0.0 mV", strip_units=False)
+        hr_text = _extract_metric("heart_rate", "0")
+        pr_text = _extract_metric("pr_interval", "0")
+        qrs_text = _extract_metric("qrs_duration", "0")
+        qtc_label_text = _extract_metric("qtc_interval", "0/0", strip_units=False)
+        st_label_text = _extract_metric("st_interval", "", strip_units=False) or _extract_metric(
+            "st_segment", "0.0 mV", strip_units=False
+        )
 
-        QT_text, QTc_text = "0", "0"
-        if '/' in qtc_label_text:
-            parts = [p.strip().replace("ms","").strip() for p in qtc_label_text.split('/') if p.strip()]
-            if len(parts) >= 1: QT_text  = parts[0]
-            if len(parts) >= 2: QTc_text = parts[1]
+        qt_text, qtc_text = "0", "0"
+        if "/" in qtc_label_text:
+            parts = [p.strip().replace("ms", "").strip() for p in qtc_label_text.split("/") if p.strip()]
+            if len(parts) >= 1:
+                qt_text = parts[0]
+            if len(parts) >= 2:
+                qtc_text = parts[1]
         else:
-            QTc_text = qtc_label_text.strip()
+            qtc_text = qtc_label_text.strip()
 
-        ST_text = st_label_text.replace("mV", "").strip()
+        hr_value = _to_int(hr_text, 0)
+        pr_value = _to_int(pr_text, 0)
+        qrs_value = _to_int(qrs_text, 0)
+        qt_value = _to_int(qt_text, 0)
+        qtc_value = _to_int(qtc_text, 0)
+        st_value = _to_float(st_label_text, 0.0)
+        qtcf_value = 0
 
-        HR  = _to_int(HR_text,  0)
-        PR  = _to_int(PR_text,  0)
-        QRS = _to_int(QRS_text, 0)
-        QT  = _to_int(QT_text,  0)
-        QTc = _to_int(QTc_text, 0)
-        ST  = _to_float(ST_text, 0.0)
+        ecg_page = getattr(self, "ecg_test_page", None)
+        if qt_value <= 0 and ecg_page and getattr(ecg_page, "_last_qt_ms", None):
+            qt_value = int(ecg_page._last_qt_ms)
+        if qtc_value <= 0 and ecg_page and getattr(ecg_page, "_last_qtc_ms", None):
+            qtc_value = int(ecg_page._last_qtc_ms)
+        if ecg_page and getattr(ecg_page, "_last_qtcf_ms", None):
+            qtcf_value = int(ecg_page._last_qtcf_ms or 0)
 
-        # Fill QT/QTc from ECG page cache if labels show 0
-        if QT <= 0 and hasattr(self, 'ecg_test_page') and getattr(self.ecg_test_page, '_last_qt_ms', None):
-            QT = int(self.ecg_test_page._last_qt_ms)
-        if QTc <= 0 and hasattr(self, 'ecg_test_page') and getattr(self.ecg_test_page, '_last_qtc_ms', None):
-            QTc = int(self.ecg_test_page._last_qtc_ms)
-        QTcF = 0
-        if hasattr(self, 'ecg_test_page') and getattr(self.ecg_test_page, '_last_qtcf_ms', None):
-            QTcF = int(self.ecg_test_page._last_qtcf_ms or 0)
-
-        print(f" [SNAPSHOT] PDF Report values — HR:{HR} PR:{PR} QRS:{QRS} QT:{QT} QTc:{QTc} QTcF:{QTcF}")
-
-        # Snapshot sampling rate first (used to trim snapshot size)
         sampling_rate = 500.0
-        if hasattr(self, 'ecg_test_page') and self.ecg_test_page and \
-                hasattr(self.ecg_test_page, 'sampler') and \
-                hasattr(self.ecg_test_page.sampler, 'sampling_rate'):
+        if ecg_page and hasattr(ecg_page, "sampler") and hasattr(ecg_page.sampler, "sampling_rate"):
             try:
-                sampling_rate = float(self.ecg_test_page.sampler.sampling_rate)
+                sampling_rate = float(ecg_page.sampler.sampling_rate or 500.0)
             except Exception:
                 sampling_rate = 500.0
 
-        # Snapshot data arrays NOW (copy to avoid mutation while thread runs).
-        # Report values must come from the exact click-time tail segment, not
-        # smoothed display labels, so capture the newest report window directly.
-        ecg_data_snapshot = None
-        if hasattr(self, 'ecg_test_page') and self.ecg_test_page and \
-                hasattr(self.ecg_test_page, 'data'):
-            try:
-                import numpy as np
-                report_points = 5000  # last 10 seconds at 500 Hz; report calculations use this tail window
-                ecg_data_snapshot = []
-                for arr in self.ecg_test_page.data:
-                    arr_np = np.asarray(arr, dtype=float)
-                    if arr_np.size == 0:
-                        ecg_data_snapshot.append(arr_np.copy())
-                        continue
-                    start_idx = max(0, arr_np.size - report_points)
-                    ecg_data_snapshot.append(arr_np[start_idx:].copy())
-            except Exception as e:
-                print(f" [SNAPSHOT] Could not copy ECG data arrays: {e}")
+        from ecg.ecg_report_generator import save_ecg_data_to_file
+        from dashboard.history_window import append_history_entry
+        from utils.pdf_process_runner import PDFProcessRunner
 
-        # Snapshot demo mode flag
-        is_demo_mode = False
-        if hasattr(self, 'ecg_test_page') and self.ecg_test_page and \
-                hasattr(self.ecg_test_page, 'demo_toggle'):
-            is_demo_mode = self.ecg_test_page.demo_toggle.isChecked()
-        # Assemble frozen ecg_data dict. Values will be recalculated from the
-        # captured last-5000-sample snapshot inside the worker before PDF generation.
-        frozen_ecg_data = {
-            "HR":     0,
-            "beat":   0,
-            "PR":     0,
-            "QRS":    0,
-            "QT":     0,
-            "QTc":    0,
-            "QTcF":   0,
-            "ST":     0.0,
-            "RR_ms":  0,
-            "HR_max": 0,
-            "HR_min": 0,
-            "HR_avg": 0,
-        }
+        saved_ecg_data_file = save_ecg_data_to_file(ecg_page)
+        if not saved_ecg_data_file:
+            QMessageBox.warning(self, "Report Failed", "No ECG data available to generate report.")
+            return
 
-        # ── STEP 2: Prepare output path BEFORE starting background work (non-modal) ──
-        from ecg.ecg_report_generator import generate_ecg_report
-        try:
-            from ecg.demo_ecg_report_generator import generate_demo_ecg_report
-        except Exception:
-            generate_demo_ecg_report = None
-        try:
-            from dashboard.history_window import append_history_entry
-        except Exception:
-            append_history_entry = None
-        # Non-blocking output path (no QFileDialog) to avoid UI pause/deformation while ECG is live.
-        report_stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        report_stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         default_name = f"ECG_Report_12_1_{report_stamp}.pdf"
-        downloads_dir = os.path.join(os.path.expanduser('~'), 'Downloads')
+        downloads_dir = os.path.join(os.path.expanduser("~"), "Downloads")
         if not os.path.isdir(downloads_dir):
-            downloads_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'reports'))
+            downloads_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "reports"))
         os.makedirs(downloads_dir, exist_ok=True)
         filename = os.path.join(downloads_dir, default_name)
 
-        patient = resolve_patient_profile(
-            explicit_patient=getattr(self, "patient_details", None),
-            username=getattr(self, "username", "") or "",
-            user_details=getattr(self, "user_details", {}) or {},
+        frozen_patient = copy.deepcopy(
+            resolve_patient_profile(
+                explicit_patient=getattr(self, "patient_details", None),
+                username=getattr(self, "username", "") or "",
+                user_details=getattr(self, "user_details", {}) or {},
+            )
         )
-        frozen_patient = copy.deepcopy(patient)
 
-        # Snapshot user details
-        frozen_ecg_data['user'] = {
-            'name':  getattr(self, 'user_details', {}).get('full_name', getattr(self, 'username', '') or ''),
-            'phone': getattr(self, 'user_details', {}).get('phone', ''),
+        rr_ms = int(round(60000.0 / hr_value)) if hr_value > 0 else 0
+        frozen_ecg_data = {
+            "HR": hr_value,
+            "beat": hr_value,
+            "PR": pr_value,
+            "QRS": qrs_value,
+            "QT": qt_value,
+            "QTc": qtc_value,
+            "QTcF": qtcf_value,
+            "QTc_Fridericia": qtcf_value,
+            "ST": st_value,
+            "RR_ms": rr_ms,
+            "HR_max": hr_value,
+            "HR_min": hr_value,
+            "HR_avg": hr_value,
+            "Heart_Rate": hr_value,
+            "HR_bpm": hr_value,
+            "user": {
+                "name": getattr(self, "user_details", {}).get("full_name", getattr(self, "username", "") or ""),
+                "phone": getattr(self, "user_details", {}).get("phone", ""),
+            },
+            "machine_serial": getattr(self, "user_details", {}).get("serial_id", "") or os.getenv("MACHINE_SERIAL_ID", ""),
         }
-        frozen_ecg_data['machine_serial'] = \
-            getattr(self, 'user_details', {}).get('serial_id', '') or os.getenv('MACHINE_SERIAL_ID', '')
-
-        # ── STEP 3: Run ALL heavy work on a background thread ──────────────────
-        # matplotlib figure creation, ECG axis/amplitude calculations, PDF rendering —
-        # none of these touch Qt widgets so they are safe off the main thread.
-
-        class _ReportWorker(QObject):
-            finished = pyqtSignal(str)   # emits success message
-            failed   = pyqtSignal(str)   # emits error message
-
-            def __init__(self, dashboard, ecg_data, ecg_data_snapshot, sampling_rate,
-                         filename, patient, is_demo_mode,
-                         generate_ecg_report, generate_demo_ecg_report,
-                         append_history_entry, ecg_test_page_ref):
-                super().__init__()
-                self.dashboard             = dashboard
-                self.ecg_data              = ecg_data
-                self.ecg_data_snapshot     = ecg_data_snapshot
-                self.sampling_rate         = sampling_rate
-                self.filename              = filename
-                self.patient               = patient
-                self.is_demo_mode          = is_demo_mode
-                self.generate_ecg_report   = generate_ecg_report
-                self.generate_demo_ecg_report = generate_demo_ecg_report
-                self.append_history_entry  = append_history_entry
-                self.ecg_test_page_ref     = ecg_test_page_ref  # for non-Qt reads only
-
-            def run(self):
-                try:
-                    import os
-                    import numpy as np
-                    import matplotlib
-                    matplotlib.use('Agg')
-                    import matplotlib.pyplot as plt
-
-                    ordered_leads = ["I","II","III","aVR","aVL","aVF","V1","V2","V3","V4","V5","V6"]
-                    lead_img_paths = {}
-                    current_dir  = os.path.dirname(os.path.abspath(__file__))
-                    project_root = os.path.abspath(os.path.join(current_dir, '..'))
-
-                    def _recalculate_report_metrics_from_snapshot():
-                        """Recalculate report values from the captured last-5000-sample snapshot only."""
-                        if not self.ecg_data_snapshot or len(self.ecg_data_snapshot) < 2:
-                            return
-                        try:
-                            from ecg.signal_paths import display_filter
-                            from ecg.ecg_calculations import detectRPeaks, calculate_qtcf_interval
-                            from ecg.clinical_measurements import (
-                                build_median_beat,
-                                get_tp_baseline,
-                                measure_pr_from_median_beat,
-                                measure_qrs_duration_from_median_beat,
-                                measure_qt_from_median_beat,
-                                measure_st_deviation_from_median_beat,
-                            )
-
-                            fs = float(self.sampling_rate or 500.0)
-                            lead_ii = np.asarray(self.ecg_data_snapshot[1], dtype=float)
-                            if lead_ii.size < 100:
-                                return
-
-                            filtered_ii = display_filter(lead_ii, fs)
-                            r_peaks = np.asarray(detectRPeaks(filtered_ii, fs), dtype=int)
-                            rr_ms = 0
-                            hr_bpm = 0
-                            if r_peaks.size >= 2:
-                                rr_intervals_ms = np.diff(r_peaks) * (1000.0 / fs)
-                                valid_rr = rr_intervals_ms[(rr_intervals_ms >= 250.0) & (rr_intervals_ms <= 2000.0)]
-                                if valid_rr.size > 0:
-                                    rr_ms = int(round(float(np.median(valid_rr))))
-                                    hr_bpm = int(round(60000.0 / rr_ms)) if rr_ms > 0 else 0
-
-                            self.ecg_data["RR_ms"] = rr_ms
-                            self.ecg_data["HR"] = hr_bpm
-                            self.ecg_data["beat"] = hr_bpm
-                            self.ecg_data["HR_avg"] = hr_bpm
-                            self.ecg_data["HR_max"] = hr_bpm
-                            self.ecg_data["HR_min"] = hr_bpm
-                            self.ecg_data["Heart_Rate"] = hr_bpm
-                            self.ecg_data["HR_bpm"] = hr_bpm
-
-                            min_beats = min(8, max(3, int(r_peaks.size)))
-                            time_axis, median_beat = build_median_beat(lead_ii, r_peaks, fs, min_beats=min_beats)
-                            if median_beat is None or time_axis is None:
-                                print(" [BG] Report snapshot median beat unavailable; only RR/HR refreshed")
-                                return
-
-                            mid_idx = len(r_peaks) // 2
-                            r_mid = int(r_peaks[mid_idx])
-                            prev_r_idx = int(r_peaks[mid_idx - 1]) if mid_idx > 0 else None
-                            tp_baseline = get_tp_baseline(lead_ii, r_mid, fs, prev_r_peak_idx=prev_r_idx)
-
-                            pr_val = measure_pr_from_median_beat(median_beat, time_axis, fs, tp_baseline) or 0
-                            qrs_val = measure_qrs_duration_from_median_beat(median_beat, time_axis, fs, tp_baseline) or 0
-                            qt_val = measure_qt_from_median_beat(
-                                median_beat,
-                                time_axis,
-                                fs,
-                                tp_baseline,
-                                rr_ms=rr_ms if rr_ms > 0 else None,
-                            ) or 0
-                            st_val = measure_st_deviation_from_median_beat(median_beat, time_axis, fs, tp_baseline)
-                            st_val = float(st_val) if st_val is not None else 0.0
-
-                            qtc_val = 0
-                            qtcf_val = 0
-                            if qt_val > 0 and rr_ms > 0:
-                                rr_sec = rr_ms / 1000.0
-                                qtc_val = int(round(qt_val / (rr_sec ** 0.5)))
-                                qtcf_val = int(calculate_qtcf_interval(qt_val, rr_ms) or 0)
-
-                            self.ecg_data["PR"] = int(round(pr_val)) if pr_val > 0 else 0
-                            self.ecg_data["QRS"] = int(round(qrs_val)) if qrs_val > 0 else 0
-                            self.ecg_data["QT"] = int(round(qt_val)) if qt_val > 0 else 0
-                            self.ecg_data["QTc"] = int(round(qtc_val)) if qtc_val > 0 else 0
-                            self.ecg_data["QTcF"] = int(round(qtcf_val)) if qtcf_val > 0 else 0
-                            self.ecg_data["QTc_Fridericia"] = int(round(qtcf_val)) if qtcf_val > 0 else 0
-                            self.ecg_data["ST"] = st_val
-
-                            print(
-                                " [BG] Report snapshot metrics (last 5000 samples) — "
-                                f"HR:{self.ecg_data['HR']} RR:{self.ecg_data['RR_ms']} "
-                                f"PR:{self.ecg_data['PR']} QRS:{self.ecg_data['QRS']} "
-                                f"QT:{self.ecg_data['QT']} QTc:{self.ecg_data['QTc']} "
-                                f"QTcF:{self.ecg_data['QTcF']} ST:{self.ecg_data['ST']:.3f}"
-                            )
-                        except Exception as calc_err:
-                            print(f" [BG] Failed to recalculate report metrics from snapshot: {calc_err}")
-
-                    _recalculate_report_metrics_from_snapshot()
-
-                    # --- Render 12-lead plots from frozen snapshot data ---
-                    if self.ecg_data_snapshot and len(self.ecg_data_snapshot) >= 12:
-                        data_points = int(self.sampling_rate * 10)
-                        for i, lead in enumerate(ordered_leads):
-                            if i >= len(self.ecg_data_snapshot):
-                                continue
-                            try:
-                                arr = self.ecg_data_snapshot[i]
-                                recent = arr[-data_points:] if len(arr) > data_points else arr
-                                if len(recent) == 0 or np.all(recent == 0):
-                                    continue
-
-                                # Match 12-box visual cleanliness: use same display filter for report traces.
-                                # Fallback to raw snapshot if filtering fails.
-                                plot_signal = np.asarray(recent, dtype=float)
-                                try:
-                                    from ecg.signal_paths import display_filter
-                                    filtered = display_filter(plot_signal, float(self.sampling_rate))
-                                    if filtered is not None and len(filtered) == len(plot_signal):
-                                        plot_signal = np.asarray(filtered, dtype=float)
-                                except Exception:
-                                    pass
-
-                                fig, ax = plt.subplots(figsize=(8, 2))
-                                duration_sec = max(1e-3, float(len(plot_signal)) / float(self.sampling_rate))
-                                time_ax = np.linspace(0, duration_sec, len(plot_signal), endpoint=False)
-                                ax.plot(time_ax, plot_signal, color='black', linewidth=0.8)
-                                ax.set_xlim(0, duration_sec)
-                                ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
-                                ax.set_facecolor('white')
-                                fig.patch.set_facecolor('white')
-                                img_path = os.path.join(project_root, f"lead_{lead}_10sec.png")
-                                fig.savefig(img_path, bbox_inches='tight', pad_inches=0.1,
-                                            dpi=120, facecolor='white', edgecolor='none')
-                                plt.close(fig)
-                                lead_img_paths[lead] = img_path
-                            except Exception as e:
-                                print(f" Error rendering Lead {lead}: {e}")
-
-                    if not lead_img_paths:
-                        self.failed.emit("No ECG data available. Please start ECG acquisition first.")
-                        return
-
-                    # --- ECG amplitude / axis calculations (pure numpy, thread-safe) ---
-                    try:
-                        from ecg.clinical_measurements import (
-                            build_median_beat, get_tp_baseline, calculate_axis_from_median_beat
-                        )
-                        from ecg.metrics.axis_calculations import (
-                            calculate_p_axis_from_median, calculate_t_axis_from_median,
-                            calculate_qrs_axis_from_median
-                        )
-                        from ecg.metrics.intervals import calculate_rv5_sv1_from_median
-                        from scipy.signal import find_peaks
-
-                        fs = self.sampling_rate
-                        snap = self.ecg_data_snapshot
-                        leads_list = ordered_leads[:len(snap)]
-
-                        # Use Lead II for R-peak detection - EXACT same rigorous algorithm as UI
-                        ecg_ii = snap[1] if len(snap) > 1 else np.array([])
-                        r_peaks = np.array([], dtype=int)
-                        if len(ecg_ii) > 100:
-                            try:
-                                from ecg.ecg_calculations import detectRPeaks
-                                from ecg.signal_paths import display_filter
-                                # Must use display_filter here (0.5-40Hz) for Pan-Tompkins peak detection accuracy
-                                filtered_ii = display_filter(ecg_ii, fs)
-                                r_peaks = detectRPeaks(filtered_ii, fs)
-                            except Exception as e:
-                                print(f" [BG] Pan-Tompkins failed in report generation: {e}")
-                                pass
-
-                        if len(r_peaks) >= 8:
-                            p_axis = calculate_p_axis_from_median(snap, leads_list, r_peaks, fs)
-                            qrs_axis = calculate_qrs_axis_from_median(snap, leads_list, r_peaks, fs)
-                            t_axis = calculate_t_axis_from_median(snap, leads_list, r_peaks, fs)
-                            rv5, sv1 = calculate_rv5_sv1_from_median(snap, leads_list, r_peaks, fs)
-
-                            # --- EXACT MATCH DEADBAND STABILIZER ---
-                            # Prevent the axes and amplitudes from jumping around across multiple 
-                            # consecutive report-clicks on an identical hardware signal.
-                            if not hasattr(self.dashboard, '_report_deadband_state'):
-                                self.dashboard._report_deadband_state = {}
-                            db_state = self.dashboard._report_deadband_state
-                            
-                            def _deadband(key, new_val, strict_margin):
-                                if new_val is None: return None
-                                new_val = float(new_val)
-                                if key not in db_state:
-                                    db_state[key] = new_val
-                                    return new_val
-                                old_val = db_state[key]
-                                diff = abs(new_val - old_val)
-                                if diff >= strict_margin:
-                                    db_state[key] = new_val
-                                elif diff >= strict_margin / 2:
-                                    db_state[key] = 0.8 * old_val + 0.2 * new_val
-                                return db_state[key]
-
-                            p_axis = _deadband('p_axis', p_axis, 8.0)     # 8 degrees padding
-                            qrs_axis = _deadband('qrs_axis', qrs_axis, 8.0) 
-                            t_axis = _deadband('t_axis', t_axis, 8.0)
-                            rv5 = _deadband('rv5', rv5, 0.40)             # 0.4mV padding
-                            sv1 = _deadband('sv1', sv1, 0.40)
-
-                            if p_axis   is not None: self.ecg_data['p_axis']   = int(round(p_axis))
-                            if qrs_axis is not None: self.ecg_data['QRS_axis'] = int(round(qrs_axis))
-                            if t_axis   is not None: self.ecg_data['t_axis']   = int(round(t_axis))
-
-                            if rv5 is not None and rv5 > 0: self.ecg_data['rv5'] = round(float(rv5), 3)
-                            if sv1 is not None:              self.ecg_data['sv1'] = round(float(sv1), 3)
-
-                        print(f" [BG] Axes — P:{self.ecg_data.get('p_axis','--')} "
-                              f"QRS:{self.ecg_data.get('QRS_axis','--')} "
-                              f"T:{self.ecg_data.get('t_axis','--')}")
-                    except Exception as e:
-                        print(f" [BG] Axis/amplitude calculation failed: {e}")
-
-                    # --- Generate the PDF ---
-                    if self.is_demo_mode and self.generate_demo_ecg_report:
-                        self.generate_demo_ecg_report(
-                            self.filename, lead_img_paths,
-                            self.dashboard, None  # ecg_test_page not needed for demo
-                        )
-                    else:
-                        self.generate_ecg_report(
-                            self.filename, self.ecg_data, lead_img_paths,
-                            self.dashboard, None,   # pass None — avoids touching Qt widgets
-                            self.patient, log_history=False,
-                        )
-
-                    # --- Save copy to reports folder & update index ---
-                    try:
-                        import shutil, json, datetime as _dt
-                        base_dir     = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-                        reports_dir  = os.path.abspath(os.path.join(base_dir, "..", "reports"))
-                        os.makedirs(reports_dir, exist_ok=True)
-                        dst_basename = os.path.basename(self.filename)
-                        dst_path     = os.path.join(reports_dir, dst_basename)
-                        if os.path.abspath(self.filename) != os.path.abspath(dst_path):
-                            counter = 1
-                            base_name, ext = os.path.splitext(dst_basename)
-                            while os.path.exists(dst_path):
-                                dst_basename = f"{base_name}_{counter}{ext}"
-                                dst_path = os.path.join(reports_dir, dst_basename)
-                                counter += 1
-                            shutil.copyfile(self.filename, dst_path)
-                        src_json = os.path.splitext(self.filename)[0] + ".json"
-                        if os.path.exists(src_json):
-                            dst_json = os.path.splitext(dst_path)[0] + ".json"
-                            if os.path.abspath(src_json) != os.path.abspath(dst_json):
-                                shutil.copyfile(src_json, dst_json)
-                        index_path = os.path.join(reports_dir, "index.json")
-                        items = []
-                        if os.path.exists(index_path):
-                            try:
-                                with open(index_path, 'r') as f:
-                                    items = json.load(f)
-                            except Exception:
-                                items = []
-                        now = _dt.datetime.now()
-                        meta = {
-                            "filename": os.path.basename(dst_path),
-                            "title":    "ECG Report",
-                            "patient":  "",
-                            "date":     now.strftime('%Y-%m-%d'),
-                            "time":     now.strftime('%H:%M:%S'),
-                            "username": getattr(self.dashboard, 'username', '') or ""
-                        }
-                        items = [meta] + items
-                        items = items[:10]
-                        with open(index_path, 'w') as f:
-                            json.dump(items, f, indent=2)
-                    except Exception as idx_err:
-                        print(f" Failed to update Recent Reports index: {idx_err}")
-
-                    # History entry
-                    try:
-                        if self.append_history_entry:
-                            self.append_history_entry(
-                                self.patient, self.filename, report_type="12 Lead")
-                    except Exception:
-                        pass
-
-                    self.finished.emit(self.filename)
-
-                except Exception as e:
-                    import traceback
-                    traceback.print_exc()
-                    self.failed.emit(str(e))
-
-        # Wire up the worker ────────────────────────────────────────────────────
-        self._report_thread = QThread()
-        self._report_worker = _ReportWorker(
-            dashboard              = self,
-            ecg_data               = frozen_ecg_data,
-            ecg_data_snapshot      = ecg_data_snapshot,
-            sampling_rate          = sampling_rate,
-            filename               = filename,
-            patient                = frozen_patient,
-            is_demo_mode           = is_demo_mode,
-            generate_ecg_report    = generate_ecg_report,
-            generate_demo_ecg_report = generate_demo_ecg_report,
-            append_history_entry   = append_history_entry,
-            ecg_test_page_ref      = getattr(self, 'ecg_test_page', None),
-        )
-        self._report_worker.moveToThread(self._report_thread)
-        self._report_thread.started.connect(self._report_worker.run)
 
         def _on_finished(fname):
-            self._report_thread.quit()
-            self._report_thread.wait()
+            try:
+                append_history_entry(
+                    frozen_patient.copy(),
+                    fname,
+                    report_type="12 Lead",
+                    username=getattr(self, "username", "") or "",
+                )
+            except Exception as hist_err:
+                print(f" Failed to append ECG history: {hist_err}")
             try:
                 self.refresh_recent_reports_ui()
             except Exception:
                 pass
-            # Keep flow non-modal to avoid disturbing live ECG painting.
             print(f"✅ ECG Report generated successfully: {fname}")
 
         def _on_failed(err):
-            self._report_thread.quit()
-            self._report_thread.wait()
-            # Keep feedback non-blocking to avoid stalling live ECG painting on slower systems.
             print(f"❌ Failed to generate PDF: {err}")
 
-        self._report_worker.finished.connect(_on_finished)
-        self._report_worker.failed.connect(_on_failed)
-        # Run worker with low OS scheduling priority to minimize impact on live ECG UI refresh.
-        self._report_thread.start(QThread.LowestPriority)
+        self._pdf_runner = PDFProcessRunner(parent_widget=self)
+        spawned = self._pdf_runner.start_ecg_report(
+            filename=filename,
+            frozen_data={
+                "data": frozen_ecg_data,
+                "ecg_data_file": saved_ecg_data_file,
+                "log_history": False,
+                "username": getattr(self, "username", "") or "",
+                "demo_mode": False,
+            },
+            patient=frozen_patient,
+            sampling_rate=sampling_rate,
+            on_success=_on_finished,
+            on_failure=_on_failed,
+        )
+
+        if not spawned:
+            print("❌ Failed to start ECG report background process.")
 
 
 

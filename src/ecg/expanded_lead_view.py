@@ -7,6 +7,7 @@ import sys
 import time
 import numpy as np
 from scipy.signal import butter, filtfilt
+from scipy.interpolate import interp1d
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QGridLayout,
     QSizePolicy, QScrollArea, QGroupBox, QFormLayout, QLineEdit, QComboBox,
@@ -21,6 +22,7 @@ from matplotlib.figure import Figure
 import matplotlib.patches as patches
 from .arrhythmia_detector import ArrhythmiaDetector
 from .signal_quality import assess_signal_quality
+from .utils.helpers import get_display_gain
 
 try:
     # Optional NeuroKit2-powered PQRST analyzer (if dependency is installed).
@@ -463,6 +465,8 @@ class ExpandedLeadView(QDialog):
         self._last_button_state_update_time = 0.0
         self.ecg_line = None
         self._quality_text_artist = None
+        self._live_display_lag_seconds = 0.5
+        self._live_baseline_anchor = None
         
         # Live data update
         self.timer = QTimer()
@@ -1406,7 +1410,8 @@ class ExpandedLeadView(QDialog):
                         # Only auto-advance if user hasn't manually positioned the slider
                         if not self.manual_view and not self.history_slider_active:
                             total_duration = len(self.ecg_data) / max(1.0, self.sampling_rate)
-                            self.view_window_offset = max(0.0, total_duration - self.view_window_duration)
+                            lag_seconds = max(0.0, float(getattr(self, '_live_display_lag_seconds', 0.0)))
+                            self.view_window_offset = max(0.0, total_duration - self.view_window_duration - lag_seconds)
                         
                         # Update plot first (visual update)
                         self.update_plot()
@@ -1622,6 +1627,138 @@ class ExpandedLeadView(QDialog):
             return smoothed[pad:-pad]
         except Exception:
             return arr
+
+    def _interpolate_display_signal(self, signal, factor):
+        """Match the live 12-lead page's cubic interpolation step."""
+        arr = np.asarray(signal, dtype=float)
+        if arr.size < 2 or factor <= 1:
+            return arr
+        try:
+            x = np.arange(arr.size, dtype=float)
+            f = interp1d(x, arr, kind='cubic')
+            xi = np.linspace(0.0, float(arr.size - 1), int(arr.size * factor))
+            return np.asarray(f(xi), dtype=float)
+        except Exception:
+            x = np.arange(arr.size, dtype=float)
+            xi = np.linspace(0.0, float(arr.size - 1), int(arr.size * factor))
+            return np.interp(xi, x, arr)
+
+    def _prepare_stable_live_display(self):
+        """Mirror the stable 12-lead live rendering pipeline."""
+        raw_data = np.asarray(self.ecg_data, dtype=float)
+        if raw_data.size == 0:
+            return None
+
+        fs = max(1.0, float(self.sampling_rate))
+        samples_to_show = max(1, int(round(self.view_window_duration * fs)))
+
+        try:
+            non_zero_indices = np.where(raw_data != 0)[0]
+            if len(non_zero_indices) > 0:
+                recent_data = raw_data[int(non_zero_indices[0]):]
+            else:
+                recent_data = raw_data[-min(samples_to_show, raw_data.size):]
+        except Exception:
+            recent_data = raw_data
+
+        if recent_data.size > samples_to_show:
+            data_slice = recent_data[-samples_to_show:]
+        else:
+            data_slice = recent_data
+
+        if data_slice.size == 0:
+            data_slice = raw_data[-min(50, raw_data.size):]
+        if data_slice.size == 0:
+            return None
+
+        window_signal = np.asarray(data_slice, dtype=float)
+        filtered_slice = window_signal.copy()
+
+        try:
+            baseline_estimate = extract_low_frequency_baseline(filtered_slice, fs)
+            if self._live_baseline_anchor is None:
+                self._live_baseline_anchor = baseline_estimate
+            baseline_alpha = 0.0005
+            self._live_baseline_anchor = (
+                (1.0 - baseline_alpha) * self._live_baseline_anchor
+                + baseline_alpha * baseline_estimate
+            )
+            filtered_slice = filtered_slice - self._live_baseline_anchor
+            current_dc = float(np.nanmean(filtered_slice)) if filtered_slice.size > 0 else 0.0
+            if np.isfinite(current_dc):
+                filtered_slice = filtered_slice - current_dc
+        except Exception:
+            pass
+
+        emg_opt = "150"
+        ac_opt = "50"
+        try:
+            if hasattr(self._parent, "settings_manager") and self._parent.settings_manager is not None:
+                emg_opt = str(self._parent.settings_manager.get_setting("filter_emg", "150")).strip()
+                ac_opt = str(self._parent.settings_manager.get_setting("filter_ac", "50")).strip()
+        except Exception:
+            pass
+
+        try:
+            if apply_emg_filter is not None and emg_opt.lower() != "off" and filtered_slice.size >= 10:
+                filtered_slice = apply_emg_filter(filtered_slice, fs, emg_opt)
+        except Exception:
+            pass
+
+        try:
+            if apply_ac_filter is not None and ac_opt in ("50", "60") and filtered_slice.size > 30:
+                filtered_slice = apply_ac_filter(filtered_slice, fs, ac_opt)
+        except Exception:
+            pass
+
+        wave_gain_mm = 10.0
+        try:
+            if hasattr(self._parent, "settings_manager") and self._parent.settings_manager is not None:
+                wave_gain_mm = float(self._parent.settings_manager.get_wave_gain())
+        except Exception:
+            wave_gain_mm = 10.0
+
+        gain_factor = get_display_gain(wave_gain_mm) * float(self.amplification)
+        scaled_data = filtered_slice * gain_factor
+        scaled_data = np.nan_to_num(scaled_data, copy=False)
+
+        smooth_sigma = 0.8
+        interp_factor = 4
+        try:
+            if self._parent is not None:
+                smooth_sigma = float(getattr(self._parent, "SMOOTH_SIGMA", 0.8) or 0.8)
+                interp_factor = int(getattr(self._parent, "INTERP_FACTOR", 4) or 4)
+        except Exception:
+            pass
+
+        try:
+            if scaled_data.size > 5 and smooth_sigma > 0:
+                from scipy.ndimage import gaussian_filter1d
+                scaled_data = gaussian_filter1d(scaled_data, sigma=smooth_sigma)
+        except Exception:
+            pass
+
+        try:
+            if scaled_data.size > 1 and interp_factor > 1:
+                scaled_data = self._interpolate_display_signal(scaled_data, interp_factor)
+        except Exception:
+            pass
+
+        try:
+            edge_trim = int(0.5 * fs)
+            if edge_trim > 0 and scaled_data.size > 2 * edge_trim:
+                scaled_data = scaled_data[edge_trim:-edge_trim]
+        except Exception:
+            pass
+
+        if scaled_data.size == 0:
+            scaled_data = np.array([0.0], dtype=float)
+
+        adc_center = -2048.0 if str(self.lead_name).upper() == 'AVR' else 2048.0
+        display_adc = scaled_data + adc_center
+        time_axis = np.linspace(0.0, self.view_window_duration, display_adc.size) if display_adc.size > 1 else np.array([0.0])
+        current_window_bounds = (max(0, raw_data.size - data_slice.size), raw_data.size)
+        return time_axis, display_adc, window_signal, current_window_bounds
     
     def calculate_respiration_ylim(self, respiration_signal):
         """Calculate dynamic Y-limits for respiration using percentiles.
@@ -1709,6 +1846,13 @@ class ExpandedLeadView(QDialog):
             start_idx = int(self.view_window_offset * self.sampling_rate)
             end_idx = min(total_samples, start_idx + window_samples)
 
+            live_fixed_axis = self.is_live and not self.manual_view and not self.history_slider_active
+            if live_fixed_axis:
+                lag_samples = int(max(0.0, float(getattr(self, '_live_display_lag_seconds', 0.0))) * self.sampling_rate)
+                if lag_samples > 0 and total_samples > window_samples + lag_samples:
+                    end_idx = max(window_samples, total_samples - lag_samples)
+                    start_idx = max(0, end_idx - window_samples)
+
             try:
                 non_zero_indices = np.where(self.ecg_data != 0)[0]
                 if len(non_zero_indices) > 0:
@@ -1722,153 +1866,99 @@ class ExpandedLeadView(QDialog):
             if end_idx - start_idx <= 1:
                 return
 
-            # To avoid filter edge artifacts at the very start/end of the visible box
-            # (especially when 50 Hz AC filter is enabled), we apply all display‑only
-            # filters on a slightly larger padded segment, then crop back to the
-            # requested [start_idx, end_idx) window.
-            pad_seconds = 0.5  # 500 ms padding on each side
-            pad_samples = int(pad_seconds * self.sampling_rate)
-            padded_start = max(0, start_idx - pad_samples)
-            padded_end = min(total_samples, end_idx + pad_samples)
-
-            signal_raw = self.ecg_data[padded_start:padded_end]
-
-            # ── FIX: Mirror-pad right edge when at buffer end ─────────────────
-            # When end_idx = total_samples (live view), right pad = 0
-            # → filtfilt has no causal data → Gibbs ringing → jump at right edge
-            # Solution: mirror-extend the last pad_samples worth of signal
-            right_missing = pad_samples - (padded_end - end_idx)
-            if right_missing > 0 and len(signal_raw) > right_missing:
-                mirror_right = signal_raw[-right_missing:][::-1]  # mirror last N samples
-                signal_raw = np.concatenate([signal_raw, mirror_right])
-            # ─────────────────────────────────────────────────────────────────
-
-            padded_signal = signal_raw
-            if len(padded_signal) <= 1:
-                return
-
-            # This is the portion we will actually display after filtering
-            visible_len = end_idx - start_idx
-            visible_offset = start_idx - padded_start
-            current_window_bounds = (start_idx, end_idx)
-
-            window_signal = padded_signal  # use padded for filtering
-            
-            # Ensure we have valid data
-            if len(window_signal) == 0:
-                return
-            
-            # ---------------- DISPLAY-ONLY PIPELINE ----------------
-            # Clinical signal (raw) is untouched; display_signal is for plotting only.
-            display_signal = window_signal.copy()
-            try:
-                # Keep expanded view filter behavior aligned with 12-box defaults.
-                # Default AC notch is 50 Hz; if user turns it off, both views follow that.
-                ac_opt = '50'
-                emg_opt = 'off'
-                dft_opt = 'off'
-                if hasattr(self._parent, 'settings_manager') and self._parent.settings_manager is not None:
-                    ac_opt = str(self._parent.settings_manager.get_setting('filter_ac', '50')).strip()
-                    emg_opt = str(self._parent.settings_manager.get_setting('filter_emg', 'off')).strip()
-                    dft_opt = str(self._parent.settings_manager.get_setting('filter_dft', 'off')).strip()
-
-                if apply_ecg_filters is not None:
-                    display_signal = apply_ecg_filters(
-                        signal=display_signal,
-                        sampling_rate=float(self.sampling_rate),
-                        ac_filter=ac_opt if ac_opt in ('50', '60') else None,
-                        emg_filter=emg_opt if emg_opt not in ('off', '') else None,
-                        dft_filter=dft_opt if dft_opt not in ('off', '') else None,
-                    )
-                else:
-                    if apply_emg_filter is not None and emg_opt not in ('off', ''):
-                        display_signal = apply_emg_filter(display_signal, float(self.sampling_rate), emg_opt)
-                    if apply_ac_filter is not None and ac_opt in ('50', '60'):
-                        display_signal = apply_ac_filter(display_signal, float(self.sampling_rate), ac_opt)
-
-                # Optional clean-view mode can further suppress respiration drift.
-                if self.use_clean_view:
-                    display_signal = self._remove_respiration_display(display_signal, fs=self.sampling_rate, window_sec=2.0)
-            except Exception as filter_error:
-                print(f" Expanded view display filter error: {filter_error}")
-
-            # After all filters, crop back to the exact visible window to remove
-            # edge transients introduced by filtering the padded segment.
-            # Bug 3 fix: explicit length guard before crop; fall back to raw slice
-            # if the mirror extension made the array shorter than expected so that
-            # filter ringing can't silently leak through.
-            try:
-                if (visible_len > 0 and
-                        len(display_signal) >= visible_offset + visible_len):
-                    display_signal = display_signal[visible_offset:visible_offset + visible_len]
-                else:
-                    # Fallback: use raw unpadded slice — no edge-mitigation, but no ringing
-                    display_signal = self.ecg_data[start_idx:end_idx].copy()
-            except Exception:
-                display_signal = self.ecg_data[start_idx:end_idx].copy()
-
-            # Single smooth pass at 500 Hz sweet-spot — never call twice (double-pass
-            # compounds group delay and makes the waveform visually lag the true signal)
-            display_signal = self._smooth_display_signal(display_signal, sigma=1.2)
-
-            # ---------------- DISPLAY SCALING (apply gain ONCE, last) ----------------
-            wave_gain_mm = 10.0
-            try:
-                if hasattr(self._parent, "settings_manager"):
-                    wave_gain_mm = float(self._parent.settings_manager.get_wave_gain())
-            except Exception:
-                wave_gain_mm = 10.0
-            gain = wave_gain_mm / 10.0  # 10mm/mV = 1.0x baseline
-
-            # ── STABLE CENTERING: quiet-mask EMA (alpha=0.005, ~1 s time constant) ──
-            # Only update the baseline EMA from the quiet (sub-75th-percentile) parts
-            # of the signal — QRS peaks are excluded so a spike entering the right
-            # edge cannot shift the entire waveform up or down.
-            if len(display_signal) > 0:
-                try:
-                    p75 = float(np.percentile(display_signal, 75))
-                    quiet_mask = display_signal < p75
-                    if np.any(quiet_mask):
-                        quiet_center = float(np.nanmedian(display_signal[quiet_mask]))
-                    else:
-                        quiet_center = float(np.nanmedian(display_signal))
-                except Exception:
-                    quiet_center = float(np.nanmedian(display_signal))
-            else:
-                quiet_center = 0.0
-            if not hasattr(self, '_live_center_ema') or self._live_center_ema is None:
-                self._live_center_ema = quiet_center
-            _ema_alpha = 0.005  # ~1 s time-constant at 50 ms refresh — very stable
-            self._live_center_ema = (1.0 - _ema_alpha) * self._live_center_ema + _ema_alpha * quiet_center
-            raw_center = self._live_center_ema
-            self._last_window_bounds = current_window_bounds
-            # ─────────────────────────────────────────────────────────────────────
-
-            centered = display_signal - raw_center
-            scaled = centered * (gain * self.amplification)
-            visual_gain = 1.5
-            adc_center = -2048 if str(self.lead_name).upper() == 'AVR' else 2048
-            display_adc = adc_center + scaled * visual_gain
-            
-            # ── FIXED TIME AXIS for live mode (copies 12-lead ECG box) ──────────────
-            # The 12-lead box always sets xlim to [0, seconds_to_show] and maps
-            # data[-N:] onto that fixed range.  The x-axis NEVER changes between
-            # frames – only Y-data updates.  This eliminates tick-label regeneration
-            # (the root cause of the remaining jitter).
-            #
-            # In history / manual mode the absolute offset axis is still used so
-            # the user can see the correct wall-clock position of each beat.
-            fs = max(1.0, float(self.sampling_rate))
-            live_fixed_axis = self.is_live and not self.manual_view and not self.history_slider_active
             if live_fixed_axis:
-                # Fixed 0 → window_duration axis — never changes between frames
-                n_pts = len(display_adc)
-                time = np.linspace(0.0, self.view_window_duration, n_pts) if n_pts > 0 else np.array([])
+                prepared_live = self._prepare_stable_live_display()
+                if prepared_live is None:
+                    return
+                time, display_adc, window_signal, current_window_bounds = prepared_live
+                self._last_window_bounds = current_window_bounds
+                ylim_low, ylim_high = (-4096.0, 0.0) if str(self.lead_name).upper() == 'AVR' else (0.0, 4096.0)
             else:
-                # History / manual mode: show absolute sample positions
-                time = np.arange(len(display_adc), dtype=float) / fs + (start_idx / fs)
+                # To avoid filter edge artifacts at the very start/end of the visible box
+                # (especially when 50 Hz AC filter is enabled), we apply all display‑only
+                # filters on a slightly larger padded segment, then crop back to the
+                # requested [start_idx, end_idx) window.
+                pad_seconds = 0.5  # 500 ms padding on each side
+                pad_samples = int(pad_seconds * self.sampling_rate)
+                padded_start = max(0, start_idx - pad_samples)
+                padded_end = min(total_samples, end_idx + pad_samples)
 
-            ylim_low, ylim_high = (-4096.0, 0.0) if str(self.lead_name).upper() == 'AVR' else (0.0, 4096.0)
+                signal_raw = self.ecg_data[padded_start:padded_end]
+
+                # ── FIX: Mirror-pad right edge when at buffer end ─────────────────
+                right_missing = pad_samples - (padded_end - end_idx)
+                if right_missing > 0 and len(signal_raw) > right_missing:
+                    mirror_right = signal_raw[-right_missing:][::-1]
+                    signal_raw = np.concatenate([signal_raw, mirror_right])
+
+                padded_signal = signal_raw
+                if len(padded_signal) <= 1:
+                    return
+
+                visible_len = end_idx - start_idx
+                visible_offset = start_idx - padded_start
+                current_window_bounds = (start_idx, end_idx)
+                window_signal = padded_signal
+                if len(window_signal) == 0:
+                    return
+
+                display_signal = window_signal.copy()
+                try:
+                    ac_opt = '50'
+                    emg_opt = 'off'
+                    dft_opt = 'off'
+                    if hasattr(self._parent, 'settings_manager') and self._parent.settings_manager is not None:
+                        ac_opt = str(self._parent.settings_manager.get_setting('filter_ac', '50')).strip()
+                        emg_opt = str(self._parent.settings_manager.get_setting('filter_emg', 'off')).strip()
+                        dft_opt = str(self._parent.settings_manager.get_setting('filter_dft', 'off')).strip()
+
+                    if apply_ecg_filters is not None:
+                        display_signal = apply_ecg_filters(
+                            signal=display_signal,
+                            sampling_rate=float(self.sampling_rate),
+                            ac_filter=ac_opt if ac_opt in ('50', '60') else None,
+                            emg_filter=emg_opt if emg_opt not in ('off', '') else None,
+                            dft_filter=dft_opt if dft_opt not in ('off', '') else None,
+                        )
+                    else:
+                        if apply_emg_filter is not None and emg_opt not in ('off', ''):
+                            display_signal = apply_emg_filter(display_signal, float(self.sampling_rate), emg_opt)
+                        if apply_ac_filter is not None and ac_opt in ('50', '60'):
+                            display_signal = apply_ac_filter(display_signal, float(self.sampling_rate), ac_opt)
+
+                    if self.use_clean_view:
+                        display_signal = self._remove_respiration_display(display_signal, fs=self.sampling_rate, window_sec=2.0)
+                except Exception as filter_error:
+                    print(f" Expanded view display filter error: {filter_error}")
+
+                try:
+                    if (visible_len > 0 and
+                            len(display_signal) >= visible_offset + visible_len):
+                        display_signal = display_signal[visible_offset:visible_offset + visible_len]
+                    else:
+                        display_signal = self.ecg_data[start_idx:end_idx].copy()
+                except Exception:
+                    display_signal = self.ecg_data[start_idx:end_idx].copy()
+
+                display_signal = self._smooth_display_signal(display_signal, sigma=1.2)
+
+                wave_gain_mm = 10.0
+                try:
+                    if hasattr(self._parent, "settings_manager"):
+                        wave_gain_mm = float(self._parent.settings_manager.get_wave_gain())
+                except Exception:
+                    wave_gain_mm = 10.0
+                gain = wave_gain_mm / 10.0
+                centered = display_signal - self.adc_midpoint
+                scaled = centered * (gain * self.amplification)
+                visual_gain = 1.5
+                adc_center = -2048 if str(self.lead_name).upper() == 'AVR' else 2048
+                display_adc = adc_center + scaled * visual_gain
+
+                fs = max(1.0, float(self.sampling_rate))
+                time = np.arange(len(display_adc), dtype=float) / fs + (start_idx / fs)
+                ylim_low, ylim_high = (-4096.0, 0.0) if str(self.lead_name).upper() == 'AVR' else (0.0, 4096.0)
+
             fast_live_path = self._can_use_fast_live_path() and self.ecg_line is not None
 
             # Heatmap overlay intentionally disabled per user request.
@@ -1891,11 +1981,19 @@ class ExpandedLeadView(QDialog):
                     # Simple beat quality: peak-to-peak vs threshold
                     try:
                         ptp = np.ptp(display_adc[valid_mask])
-                        if self.show_quality and ptp < 0.15:
-                            waveform_alpha = 0.4
-                            quality_text = "Quality: Noisy/Low"
-                        elif self.show_quality:
-                            quality_text = "Quality: Clean"
+                        if self.show_quality:
+                            if not hasattr(self, '_quality_state'):
+                                self._quality_state = 'unknown'
+                            if self._quality_state != 'noisy' and ptp < 0.12:
+                                self._quality_state = 'noisy'
+                            elif self._quality_state != 'clean' and ptp > 0.20:
+                                self._quality_state = 'clean'
+
+                            if self._quality_state == 'noisy':
+                                waveform_alpha = 0.4
+                                quality_text = "Quality: Noisy/Low"
+                            elif self._quality_state == 'clean':
+                                quality_text = "Quality: Clean"
                     except Exception:
                         pass
                     # Bug 2 fix: remove second _smooth_display_signal call.

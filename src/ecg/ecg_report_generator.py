@@ -594,104 +594,101 @@ def calculate_time_window_from_bpm_and_wave_speed(hr_bpm, wave_speed_mm_s, desir
     
     return calculated_time_window, num_samples
 
-def apply_report_ecg_filters(signal, sampling_rate, settings_manager):
-    from ecg.ecg_filters import apply_ecg_filters, apply_baseline_wander_median_mean, stabilize_report_edges
+def _prepare_report_strip_signal(signal, sampling_rate, settings_manager, target_samples=None):
+    """Prepare the visible report strip using a stable segment-local pipeline."""
     arr = np.asarray(signal, dtype=float)
-    if arr.size < 10:
+    if arr.size < 2:
         return arr
-    try:
-        fs = float(sampling_rate)
-    except Exception:
+
+    fs = _safe_float(sampling_rate, 500.0)
+    if fs is None or fs <= 0:
         fs = 500.0
-    try:
-        win_sec = float(str(settings_manager.get_setting("report_window_seconds", "10")).strip() or "10")
-    except Exception:
-        win_sec = 10.0
-    window_samples = int(max(1.0, win_sec) * fs)
-    if arr.size > window_samples:
-        arr = arr[-window_samples:]
-    pad_seconds = 4.0
-    pad_samples = int(pad_seconds * fs)
-    pad = min(pad_samples, max(0, arr.size - 1))
-    if pad > 0:
-        work = np.pad(arr, pad_width=pad, mode="reflect")
+
+    if target_samples is not None:
+        try:
+            core_n = max(1, min(arr.size, int(target_samples)))
+        except Exception:
+            core_n = arr.size
+        start_idx = max(0, arr.size - core_n)
     else:
-        work = arr
-    dft_setting = str(settings_manager.get_setting("filter_dft", "0.5")).strip()
-    emg_setting = str(settings_manager.get_setting("filter_emg", "150")).strip()
-    ac_setting = str(settings_manager.get_setting("filter_ac", "50")).strip()
-    dft_param = dft_setting if dft_setting not in ("off", "") else None
-    emg_param = emg_setting if emg_setting not in ("off", "") else None
-    ac_param = ac_setting if ac_setting not in ("off", "") else None
-    filtered = apply_ecg_filters(
-        work,
-        sampling_rate=fs,
-        ac_filter=ac_param,
-        emg_filter=emg_param,
-        dft_filter=dft_param,
-    )
-    filtered = apply_baseline_wander_median_mean(filtered, fs)
+        try:
+            win_sec = float(str(settings_manager.get_setting("report_window_seconds", "10")).strip() or "10")
+        except Exception:
+            win_sec = 10.0
+        core_n = min(arr.size, int(max(1.0, win_sec) * fs))
+        start_idx = max(0, arr.size - core_n)
+
+    pad_n = min(max(8, int(0.5 * fs)), start_idx)
+    work_start = max(0, start_idx - pad_n)
+    work = np.asarray(arr[work_start:], dtype=float)
+    if work.size < 2:
+        return work
+
     try:
-        if filtered.size > 5:
-            from scipy.ndimage import gaussian_filter1d
-            filtered = gaussian_filter1d(filtered, sigma=0.8)  # Match display SMOOTH_SIGMA
+        from ecg.ecg_filters import apply_ecg_filters, stabilize_report_edges
+
+        if settings_manager is not None:
+            ac_setting = str(settings_manager.get_setting("filter_ac", "50")).strip()
+            emg_setting = str(settings_manager.get_setting("filter_emg", "150")).strip()
+            dft_setting = str(settings_manager.get_setting("filter_dft", "0.5")).strip()
+        else:
+            ac_setting, emg_setting, dft_setting = "50", "150", "0.5"
+
+        if ac_setting in ("50", "60"):
+            required_fs = float(ac_setting) * 2.0 + 1.0
+            if float(fs) <= required_fs:
+                ac_setting = "off"
+
+        work = apply_ecg_filters(
+            signal=work,
+            sampling_rate=float(fs),
+            ac_filter=ac_setting if ac_setting not in ("off", "") else None,
+            emg_filter=emg_setting if emg_setting not in ("off", "") else None,
+            dft_filter=dft_setting if dft_setting not in ("off", "") else None,
+        )
+        work = stabilize_report_edges(work, float(fs), edge_ms=180.0)
     except Exception:
         pass
+
+    if work.size > core_n:
+        work = work[-core_n:]
+
     try:
-        if filtered.size > 5:
-            dif = np.diff(filtered, prepend=filtered[0])
-            th = 5.0 * (np.std(dif) + 1e-6)
-            bad = np.where(np.abs(dif) > th)[0]
-            for i in bad:
-                if 1 <= i < filtered.size - 1:
-                    filtered[i] = 0.5 * (filtered[i - 1] + filtered[i + 1])
+        from ecg.signal.signal_processing import extract_low_frequency_baseline
+
+        baseline_est = extract_low_frequency_baseline(work, float(fs))
+        if np.isfinite(baseline_est):
+            work = work - float(baseline_est)
     except Exception:
         pass
+
     try:
-        n = filtered.size
-        if n > 50:
-            edge_len = max(50, int(0.10 * n))
-            mid_start = n // 3
-            mid_end = (2 * n) // 3
-            start_std = np.std(np.diff(filtered[:edge_len]))
-            end_std = np.std(np.diff(filtered[-edge_len:]))
-            mid_std = np.std(np.diff(filtered[mid_start:mid_end])) + 1e-6
-            start_trim = int(0.05 * n) if start_std > 1.5 * mid_std else 0
-            end_trim = int(0.05 * n) if end_std > 1.5 * mid_std else 0
-            if start_trim + end_trim < n - 20:
-                filtered = filtered[start_trim:n - end_trim]
+        dc = float(np.nanmean(work)) if work.size > 0 else 0.0
+        if np.isfinite(dc):
+            work = work - dc
     except Exception:
         pass
-    if pad > 0 and filtered.size > 2 * pad:
-        filtered = filtered[pad:-pad]
+
     try:
-        n2 = filtered.size
-        if n2 > 50:
-            edge_len2 = max(50, int(0.10 * n2))
-            mid_start2 = n2 // 3
-            mid_end2 = (2 * n2) // 3
-            start_std2 = np.std(np.diff(filtered[:edge_len2]))
-            end_std2 = np.std(np.diff(filtered[-edge_len2:]))
-            mid_std2 = np.std(np.diff(filtered[mid_start2:mid_end2])) + 1e-6
-            start_trim2 = int(0.05 * n2) if start_std2 > 1.3 * mid_std2 else 0
-            end_trim2 = int(0.05 * n2) if end_std2 > 1.3 * mid_std2 else 0
-            if start_trim2 + end_trim2 < n2 - 20:
-                filtered = filtered[start_trim2:n2 - end_trim2]
+        from scipy.ndimage import gaussian_filter1d
+
+        if work.size > 5:
+            work = gaussian_filter1d(work, sigma=0.8)
     except Exception:
         pass
+
     try:
-        n3 = filtered.size
-        if n3 > 100:
-            hard_trim = max(10, int(0.03 * n3))
-            filtered = filtered[hard_trim:n3 - hard_trim]
+        from ecg.ecg_filters import stabilize_report_edges
+
+        work = stabilize_report_edges(work, float(fs), edge_ms=120.0)
     except Exception:
         pass
-    # NOTE:
-    # Do not force waveform edges to a flat mean value. Edge tapering hides
-    # clinically relevant terminal morphology and can create visible "humps"
-    # before the strip ends. Keep natural morphology after filtering.
-    filtered = stabilize_report_edges(filtered, fs)
-    return filtered
+
+    return np.asarray(work, dtype=float)
+
+
+def apply_report_ecg_filters(signal, sampling_rate, settings_manager):
+    return _prepare_report_strip_signal(signal, sampling_rate, settings_manager)
 
 
 def _estimate_rr_from_report_strip(ecg_test_page, ecg_data_file, sampling_rate, settings_manager, width_points=REPORT_STRIP_WIDTH_POINTS):
@@ -970,21 +967,13 @@ def capture_real_ecg_graphs_from_dashboard(dashboard_instance=None, ecg_test_pag
             wave_gain_mm_mv = 10.0
             print(f" Could not get wave_gain from settings, using default: {wave_gain_mm_mv} mm/mV")
     
-    # Apply report filters (AC/EMG/DFT) based on current settings
-    filtered_ecg_data = {}
-    for lead, signal in real_ecg_data.items():
-        try:
-            filtered_ecg_data[lead] = apply_report_ecg_filters(signal, samples_per_second, settings_manager)
-        except Exception:
-            filtered_ecg_data[lead] = signal
-
-    # Create ReportLab drawings with REAL (filtered) data
+    # Create ReportLab drawings with REAL ECG data
     for lead in ordered_leads:
         try:
             # Create ReportLab drawing with REAL ECG data (with wave_gain applied)
             drawing = create_reportlab_ecg_drawing_with_real_data(
                 lead, 
-                filtered_ecg_data.get(lead), 
+                real_ecg_data.get(lead), 
                 width=REPORT_STRIP_WIDTH_POINTS, 
                 height=45,
                 wave_gain_mm_mv=wave_gain_mm_mv,
@@ -993,7 +982,7 @@ def capture_real_ecg_graphs_from_dashboard(dashboard_instance=None, ecg_test_pag
             )
             lead_drawings[lead] = drawing
             
-            if lead in filtered_ecg_data:
+            if lead in real_ecg_data:
                 print(f" Created drawing with MAXIMUM data for Lead {lead} - showing 7+ heartbeats")
             else:
                 print(f"Created grid-only drawing for Lead {lead}")
@@ -1107,53 +1096,6 @@ def create_reportlab_ecg_drawing_with_real_data(lead_name, ecg_data, width=REPOR
 
     fs = float(sampling_rate)
 
-    # ── Apply ECG filters (50Hz notch + bandpass 0.5-40Hz) ──────────────────
-    if settings_manager is not None and len(ecg_mv) > 30:
-        try:
-            ecg_mv = apply_report_ecg_filters(ecg_mv, fs, settings_manager)
-        except Exception as _fe:
-            print(f"[Report] Filter failed for {lead_name}: {_fe}")
-            # fallback: manual notch + bandpass
-            try:
-                from scipy.signal import butter, filtfilt, iirnotch
-                nyq = fs / 2.0
-                b_n, a_n = iirnotch(50.0 / nyq, Q=35.0)
-                ecg_mv = filtfilt(b_n, a_n, ecg_mv)
-                b_b, a_b = butter(4, [0.5 / nyq, 40.0 / nyq], btype='band')
-                ecg_mv = filtfilt(b_b, a_b, ecg_mv)
-            except Exception:
-                pass
-
-    # Show ALL available data - NO MASKING to prevent cutting last beat
-    print(f" Available data: {len(ecg_mv)} points, Time window: {total_seconds:.2f}s")
-    
-    if len(ecg_mv) == 0:
-        print(f" ECG data empty for {lead_name}")
-        return drawing
-
-    # Gentle baseline conditioning for report rendering (no forced flat tail).
-    if len(ecg_mv) > 0:
-        # Remove DC offset first
-        dc_offset = np.nanmedian(ecg_mv)
-        ecg_mv = ecg_mv - dc_offset
-
-        # Remove linear drift only (no artificial end flattening)
-        if len(ecg_mv) > 20:
-            x = np.arange(len(ecg_mv))
-            coeffs = np.polyfit(x, ecg_mv, 1)
-            slope = coeffs[0]
-            trend = np.polyval(coeffs, x)
-            ecg_mv = ecg_mv - trend
-
-            # ✅ ADD: taper edges to prevent jump at start/end of strip
-            taper_len = min(int(0.05 * fs), len(ecg_mv) // 10)  # 50ms taper
-            if taper_len > 2:
-                taper = np.linspace(0, 1, taper_len)
-                ecg_mv[:taper_len]  *= taper
-                ecg_mv[-taper_len:] *= taper[::-1]
-
-            print(f" {lead_name}: Removed baseline slope={slope:.6f}")
-    
     # PROPER ECG SCALING: Use actual ECG paper scaling (25mm/s with proper grid alignment)
     # This ensures medically accurate time representation
     effective_speed_mm_s = speed_mm_s * 1.05  # ECG_SPEED_SCALE = 1.05
@@ -1166,13 +1108,28 @@ def create_reportlab_ecg_drawing_with_real_data(lead_name, ecg_data, width=REPOR
     display_seconds = min(actual_data_seconds, max_display_seconds)
     display_samples = max(1, min(len(ecg_mv), int(round(display_seconds * fs))))
 
-    # Always render the newest portion of the report window so the waveform,
-    # boxes-per-wave timing, and calculated values all describe the same tail segment.
-    if len(ecg_mv) > display_samples:
-        ecg_mv = ecg_mv[-display_samples:]
-        print(f" {lead_name}: Using latest {display_samples} samples for report strip")
-    else:
-        ecg_mv = ecg_mv[:display_samples]
+    print(f" Available data: {len(ecg_mv)} points, Time window: {total_seconds:.2f}s")
+
+    if len(ecg_mv) == 0:
+        print(f" ECG data empty for {lead_name}")
+        return drawing
+
+    try:
+        ecg_mv = _prepare_report_strip_signal(
+            ecg_mv,
+            fs,
+            settings_manager,
+            target_samples=display_samples,
+        )
+    except Exception as _fe:
+        print(f"[Report] Stable strip prep failed for {lead_name}: {_fe}")
+        ecg_mv = np.asarray(ecg_mv[-display_samples:], dtype=float)
+
+    if len(ecg_mv) == 0:
+        return drawing
+
+    display_seconds = len(ecg_mv) / fs
+    print(f" {lead_name}: Using latest {len(ecg_mv)} samples for report strip")
 
     t_sec = np.arange(len(ecg_mv)) / fs
 
@@ -1799,7 +1756,7 @@ def generate_ecg_report(
                            facecolor='#ffe6e6',  # PINK background
                            edgecolor='none',
                            format='png')
-                del fig
+                plt.close(fig)
                 
                 lead_images[lead] = img_path
                 print(f" Created NEW PINK GRID image: {img_path}")
@@ -2258,162 +2215,24 @@ def generate_ecg_report(
                 ecg_width = graph_boxes * ECG_LARGE_BOX_MM * mm
                 ecg_height = 45
                 
-                # Create time array for ALL data
-                t = np.linspace(x_pos, x_pos + ecg_width, len(real_ecg_data))
-                
-                # Step 1: Convert ADC data to numpy array
-                adc_data = np.array(real_ecg_data, dtype=float)
+                adc_data = _prepare_report_strip_signal(
+                    real_ecg_data,
+                    computed_sampling_rate,
+                    settings_manager,
+                    target_samples=len(real_ecg_data),
+                )
+                if len(adc_data) < 2:
+                    continue
 
-                # Apply SAME filters as dashboard (AC notch → EMG → DFT → Gaussian)
-                try:
-                    from ecg.ecg_filters import apply_ecg_filters
-                    from scipy.ndimage import gaussian_filter1d as _gf1d
-                    
-                    if settings_manager is not None:
-                        ac_setting  = str(settings_manager.get_setting("filter_ac",  "50")).strip()
-                        emg_setting = str(settings_manager.get_setting("filter_emg", "150")).strip()
-                        dft_setting = str(settings_manager.get_setting("filter_dft", "0.5")).strip()
-                    else:
-                        ac_setting, emg_setting, dft_setting = "50", "150", "0.5"
-                    
-                    # Nyquist guard: AC notch at F Hz requires sampling rate > 2*F Hz
-                    if ac_setting in ("50", "60"):
-                        required_fs = float(ac_setting) * 2.0 + 1.0
-                        if float(computed_sampling_rate) <= required_fs:
-                            print(f" AC filter disabled (rate {computed_sampling_rate} Hz too low for {ac_setting} Hz notch)")
-                            ac_setting = "off"
-                    
-                    adc_data = apply_ecg_filters(
-                        signal=adc_data,
-                        sampling_rate=float(computed_sampling_rate),
-                        ac_filter=ac_setting  if ac_setting  not in ("off", "") else None,
-                        emg_filter=emg_setting if emg_setting not in ("off", "") else None,
-                        dft_filter=dft_setting if dft_setting not in ("off", "") else None,
-                    )
-                    
-                    # Light Gaussian smoothing (sigma=0.8 — same as dashboard)
-                    if len(adc_data) > 5:
-                        adc_data = _gf1d(adc_data, sigma=0.8)
-                    
-                    print(f" Applied dashboard filters: AC={ac_setting}, EMG={emg_setting}, DFT={dft_setting} for {lead}")
-                except Exception as filter_err:
-                    print(f" Dashboard filter apply failed for {lead}: {filter_err}")
-                
-                # Step 1: Apply baseline correction based on data type
-                data_mean = np.mean(adc_data)
-                baseline_adc = 2000.0
-                is_calculated_lead = lead in ["III", "aVR", "aVL", "aVF", "-aVR"]
-                
-                if abs(data_mean - 2000.0) < 500:  # Data is close to baseline 2000 (raw ADC)
-                    baseline_corrected = adc_data - baseline_adc
-                elif is_calculated_lead:
-                    baseline_corrected = adc_data  # Calculated leads already centered
-                else:
-                    baseline_corrected = adc_data  # Already processed data
-                
-                # Step 2: FORCE CENTER for report - subtract mean to ensure perfect centering
-                # IMPORTANT: Report me har lead apni grid line ke center me dikhni chahiye
-                # Chahe baseline wander kitna bhi ho (respiration mode, Fluke data, etc.)
-                # This ensures waveform is exactly centered on grid line regardless of baseline wander
-                centered_adc = baseline_corrected - np.mean(baseline_corrected)
+                t = np.linspace(x_pos, x_pos + ecg_width, len(adc_data))
 
-                # Step 3: Calculate ADC per box based on wave_gain and lead-specific multiplier
                 adc_per_box_multiplier = ADC_PER_BOX_CONFIG.get(lead, 6400.0)
-                # Formula: ADC_per_box = adc_per_box_multiplier / wave_gain_mm_mv
-                # IMPORTANT: Each lead can have different ADC per box multiplier
-                # This means: 550 ADC offset = 1 box (5mm) vertical movement
-                adc_per_box = adc_per_box_multiplier / max(1e-6, wave_gain_mm_mv)  # Avoid division by zero
-                
-                # DEBUG: Log actual ADC values for troubleshooting
-                max_centered_adc = np.max(np.abs(centered_adc))
-                min_centered_adc = np.min(centered_adc)
-                max_centered_adc_abs = np.max(np.abs(centered_adc))
-                expected_boxes = max_centered_adc_abs / adc_per_box
-                
-                # Step 4: Detrend and convert to boxes
-                if centered_adc.size > 20:
-                    x_idx = np.arange(centered_adc.size)
-                    trend = np.polyval(np.polyfit(x_idx, centered_adc, 1), x_idx)
-                    centered_adc = centered_adc - trend
-                boxes_offset = centered_adc / adc_per_box
-                
-                # Log boxes offset for verification
-                
-                # Step 5: Convert boxes to Y position
+                adc_per_box = adc_per_box_multiplier / max(1e-6, wave_gain_mm_mv)
                 center_y = y_pos + (ecg_height / 2.0)  # Center of the graph in points
-                # Use report grid box size for vertical scaling
                 from reportlab.lib.units import mm
                 box_height_points = ECG_LARGE_BOX_MM * mm
-                major_spacing_y = box_height_points
-                
-                # Convert boxes offset to Y position
+                boxes_offset = adc_data / adc_per_box
                 ecg_normalized = center_y + (boxes_offset * box_height_points)
-                
-                try:
-                    from ecg.ecg_filters import apply_baseline_wander_median_mean
-                    local = ecg_normalized - center_y
-                    local = apply_baseline_wander_median_mean(local, 500.0)
-                    ecg_normalized = center_y + local
-                except Exception:
-                    pass
-                
-                try:
-                    idx = np.arange(len(ecg_normalized))
-                    local = ecg_normalized - center_y
-                    trend = np.polyval(np.polyfit(idx, local, 2), idx)
-                    ecg_normalized = center_y + (local - trend)
-                except Exception:
-                    pass
-                try:
-                    local = ecg_normalized - center_y
-                    wl = max(25, int(0.12 * len(local)))
-                    kernel = np.ones(wl) / float(wl)
-                    baseline = np.convolve(local, kernel, mode="same")
-                    ecg_normalized = center_y + (local - baseline)
-                except Exception:
-                    pass
-                edge = max(30, int(0.25 * len(ecg_normalized)))
-                if len(ecg_normalized) > edge * 2:
-                    r = np.sin(np.linspace(0.0, np.pi / 2.0, edge)) ** 2
-                    ecg_normalized[:edge] = center_y + (ecg_normalized[:edge] - center_y) * r
-                    ecg_normalized[-edge:] = center_y + (ecg_normalized[-edge:] - center_y) * r[::-1]
-                clamp = max(10, int(0.05 * len(ecg_normalized)))
-                if len(ecg_normalized) > clamp * 2:
-                    ecg_normalized[:clamp] = center_y
-                    ecg_normalized[-clamp:] = center_y
-                try:
-                    idx = np.arange(len(ecg_normalized))
-                    local = ecg_normalized - center_y
-                    trend = np.polyval(np.polyfit(idx, local, 2), idx)
-                    ecg_normalized = center_y + (local - trend)
-                except Exception:
-                    pass
-                try:
-                    local = ecg_normalized - center_y
-                    wl = max(25, int(0.12 * len(local)))
-                    kernel = np.ones(wl) / float(wl)
-                    baseline = np.convolve(local, kernel, mode="same")
-                    ecg_normalized = center_y + (local - baseline)
-                except Exception:
-                    pass
-                edge = max(30, int(0.25 * len(ecg_normalized)))
-                if len(ecg_normalized) > edge * 2:
-                    r = np.sin(np.linspace(0.0, np.pi / 2.0, edge)) ** 2
-                    ecg_normalized[:edge] = center_y + (ecg_normalized[:edge] - center_y) * r
-                    ecg_normalized[-edge:] = center_y + (ecg_normalized[-edge:] - center_y) * r[::-1]
-                clamp = max(10, int(0.05 * len(ecg_normalized)))
-                if len(ecg_normalized) > clamp * 2:
-                    ecg_normalized[:clamp] = center_y
-                    ecg_normalized[-clamp:] = center_y
-                edge = max(20, int(0.12 * len(ecg_normalized)))
-                if len(ecg_normalized) > edge * 2:
-                    r = np.sin(np.linspace(0.0, np.pi / 2.0, edge)) ** 2
-                    ecg_normalized[:edge] = center_y + (ecg_normalized[:edge] - center_y) * r
-                    ecg_normalized[-edge:] = center_y + (ecg_normalized[-edge:] - center_y) * r[::-1]
-                clamp = max(5, int(0.01 * len(ecg_normalized)))
-                if len(ecg_normalized) > clamp * 2:
-                    ecg_normalized[:clamp] = center_y
-                    ecg_normalized[-clamp:] = center_y
                 
                 # DEBUG: Verify Y position calculation
                 
@@ -2476,7 +2295,7 @@ def generate_ecg_report(
                 master_drawing.add(notch_path)
                 print(f" DEBUG: Calibration notch added for Lead {lead}")
                 
-                print(f" Drew {len(real_ecg_data)} ECG data points for Lead {lead}")
+                print(f" Drew {len(adc_data)} ECG data points for Lead {lead}")
             else:
                 print(f" No real data for Lead {lead} - showing flat line")
                 # Draw flat line when no real data available (like dashboard)
@@ -2792,100 +2611,23 @@ def generate_ecg_report(
                 ecg_width = graph_boxes * ECG_LARGE_BOX_MM * mm
                 ecg_height = 45
                 
-                # Create time array for ALL data
-                t = np.linspace(x_pos, x_pos + ecg_width, len(real_ecg_data))
-                
-               
-                # Step 1: Convert ADC data to numpy array
-                adc_data = np.array(real_ecg_data, dtype=float)
+                adc_data = _prepare_report_strip_signal(
+                    real_ecg_data,
+                    computed_sampling_rate,
+                    settings_manager,
+                    target_samples=len(real_ecg_data),
+                )
+                if len(adc_data) < 2:
+                    continue
 
-                # Apply SAME filters as dashboard (AC notch → EMG → DFT → Gaussian)
-                try:
-                    from ecg.ecg_filters import apply_ecg_filters
-                    from scipy.ndimage import gaussian_filter1d as _gf1d
-                    
-                    if settings_manager is not None:
-                        ac_setting  = str(settings_manager.get_setting("filter_ac",  "50")).strip()
-                        emg_setting = str(settings_manager.get_setting("filter_emg", "150")).strip()
-                        dft_setting = str(settings_manager.get_setting("filter_dft", "0.5")).strip()
-                    else:
-                        ac_setting, emg_setting, dft_setting = "50", "150", "0.5"
-                    
-                    # Nyquist guard: AC notch at F Hz requires sampling rate > 2*F Hz
-                    if ac_setting in ("50", "60"):
-                        required_fs = float(ac_setting) * 2.0 + 1.0
-                        if float(computed_sampling_rate) <= required_fs:
-                            print(f" AC filter disabled (rate {computed_sampling_rate} Hz too low for {ac_setting} Hz notch)")
-                            ac_setting = "off"
-                    
-                    adc_data = apply_ecg_filters(
-                        signal=adc_data,
-                        sampling_rate=float(computed_sampling_rate),
-                        ac_filter=ac_setting  if ac_setting  not in ("off", "") else None,
-                        emg_filter=emg_setting if emg_setting not in ("off", "") else None,
-                        dft_filter=dft_setting if dft_setting not in ("off", "") else None,
-                    )
-                    
-                    # Light Gaussian smoothing (sigma=0.8 — same as dashboard)
-                    if len(adc_data) > 5:
-                        adc_data = _gf1d(adc_data, sigma=0.8)
-                    
-                    print(f" Applied dashboard filters: AC={ac_setting}, EMG={emg_setting}, DFT={dft_setting} for {lead}")
-                except Exception as filter_err:
-                    print(f" Dashboard filter apply failed for {lead}: {filter_err}")
-                
-                # Step 1: Apply baseline correction based on data type
-                data_mean = np.mean(adc_data)
-                baseline_adc = 2000.0
-                is_calculated_lead = lead in ["III", "aVR", "aVL", "aVF", "-aVR"]
-                
-                if abs(data_mean - 2000.0) < 500:  # Data is close to baseline 2000 (raw ADC)
-                    baseline_corrected = adc_data - baseline_adc
-                elif is_calculated_lead:
-                    baseline_corrected = adc_data  # Calculated leads already centered
-                else:
-                    baseline_corrected = adc_data  # Already processed data
-                
-                # Step 2: FORCE CENTER for report - subtract mean to ensure perfect centering
-                # IMPORTANT: Report me har lead apni grid line ke center me dikhni chahiye
-                # Chahe baseline wander kitna bhi ho (respiration mode, Fluke data, etc.)
-                # This ensures waveform is exactly centered on grid line regardless of baseline wander
-                centered_adc = baseline_corrected - np.mean(baseline_corrected)
-                
-                # Step 3: Calculate ADC per box based on wave_gain and lead-specific multiplier
+                t = np.linspace(x_pos, x_pos + ecg_width, len(adc_data))
+
                 adc_per_box_multiplier = ADC_PER_BOX_CONFIG.get(lead, 6400.0)
-                # Formula: ADC_per_box = adc_per_box_multiplier / wave_gain_mm_mv
-                # IMPORTANT: Each lead can have different ADC per box multiplier
-                adc_per_box = adc_per_box_multiplier / max(1e-6, wave_gain_mm_mv)  # Avoid division by zero
-                
-                # DEBUG: Log actual ADC values for troubleshooting
-                max_centered_adc_abs = np.max(np.abs(centered_adc))
-                expected_boxes = max_centered_adc_abs / adc_per_box
-                
-                
-                
-                if centered_adc.size > 20:
-                    x_idx = np.arange(centered_adc.size)
-                    trend = np.polyval(np.polyfit(x_idx, centered_adc, 1), x_idx)
-                    centered_adc = centered_adc - trend
-                boxes_offset = centered_adc / adc_per_box
-                
-                # Step 5: Convert boxes to Y position (in mm, then to points)
-                # Center of graph is at y_pos + (ecg_height / 2.0)
-                # Use report grid box size for vertical scaling
+                adc_per_box = adc_per_box_multiplier / max(1e-6, wave_gain_mm_mv)
                 center_y = y_pos + (ecg_height / 2.0)  # Center of the graph in points
                 box_height_points = ECG_LARGE_BOX_MM * mm
-                
-                # Convert boxes offset to Y position
+                boxes_offset = adc_data / adc_per_box
                 ecg_normalized = center_y + (boxes_offset * box_height_points)
-                
-                try:
-                    from ecg.ecg_filters import apply_baseline_wander_median_mean
-                    local = ecg_normalized - center_y
-                    local = apply_baseline_wander_median_mean(local, 500.0)
-                    ecg_normalized = center_y + local
-                except Exception:
-                    pass
                 
                 
                 # Draw ALL REAL ECG data points
@@ -2955,7 +2697,7 @@ def generate_ecg_report(
                 master_drawing.add(notch_path)
                 print(f" DEBUG: Calibration notch added for Lead {lead}")
                 
-                print(f" Drew {len(real_ecg_data)} ECG data points for Lead {lead}")
+                print(f" Drew {len(adc_data)} ECG data points for Lead {lead}")
             else:
                 print(f" No real data for Lead {lead} - showing flat line")
                 

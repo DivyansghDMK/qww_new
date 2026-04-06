@@ -8,7 +8,7 @@ Enhanced with:
   • Crosshair cursor + live readout (time, amplitude)
   • Floating magnifier lens (2–5× zoom, follows cursor)
   • Right-click context-menu annotation on any lead
-  • Double-click a lead → full-width expanded view
+  • Click any lead → dedicated expanded analysis popup
   • All original JSON-load, API-fetch, frame-nav, PDF-gen features kept intact
 """
 
@@ -42,18 +42,19 @@ if src_dir not in sys.path:
     sys.path.insert(0, src_dir)
 
 try:
-    from ecg.arrhythmia_detector import ArrhythmiaDetector
+    from ecg.arrhythmia_detector import ArrhythmiaDetector, get_interpretation
     from ecg.expanded_lead_view import PQRSTAnalyzer
 except ImportError:
     try:
-        from src.ecg.arrhythmia_detector import ArrhythmiaDetector
+        from src.ecg.arrhythmia_detector import ArrhythmiaDetector, get_interpretation
         from src.ecg.expanded_lead_view import PQRSTAnalyzer
     except ImportError:
         try:
-            from ..ecg.arrhythmia_detector import ArrhythmiaDetector
+            from ..ecg.arrhythmia_detector import ArrhythmiaDetector, get_interpretation
             from ..ecg.expanded_lead_view import PQRSTAnalyzer
         except (ImportError, ValueError):
             ArrhythmiaDetector = None
+            get_interpretation = None
             PQRSTAnalyzer = None
 
 
@@ -88,7 +89,6 @@ class InteractiveLeadCanvas(FigureCanvas):
     caliper_measured  = pyqtSignal(str)
     annotation_req    = pyqtSignal(float, float, str)  # start_sec, end_sec, lead_name
     expand_requested  = pyqtSignal(str)           # lead name
-
     def __init__(self, fig, ax, lead_name, parent_window, parent=None):
         super().__init__(fig)
         self.ax = ax
@@ -216,6 +216,10 @@ class InteractiveLeadCanvas(FigureCanvas):
             return
 
         if event.button == 1:  # Left click
+            if tool == TOOL_SELECT:
+                self.expand_requested.emit(self.lead_name)
+                return
+
             if tool == TOOL_RULER:
                 self._drag_start = (xd, yd)
                 self._drag_end   = None
@@ -511,6 +515,245 @@ class InteractiveLeadCanvas(FigureCanvas):
         painter.end()
 
 
+class LeadExpandedPopup(QDialog):
+    """Standalone expanded lead window with metrics, zoom/amplification, and rhythm interpretation."""
+
+    def __init__(self, lead_name: str, lead_data: np.ndarray, sampling_rate: float, parent=None):
+        super().__init__(parent)
+        self.lead_name = str(lead_name)
+        self.sampling_rate = float(sampling_rate or 500.0)
+        self.raw_data = np.asarray(lead_data if lead_data is not None else [], dtype=float)
+        self.time_zoom_factor = 1.0
+        self.amplification = 1.0
+        self.analysis = {}
+
+        self.setWindowTitle(f"Lead {self.lead_name} Expanded Analysis")
+        self.setWindowFlags(Qt.Window | Qt.WindowCloseButtonHint | Qt.WindowMaximizeButtonHint)
+
+        self._build_ui()
+        self._fit_to_screen()
+        self.refresh_from_data(self.raw_data, self.sampling_rate)
+
+    def _fit_to_screen(self):
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is None:
+            self.resize(1200, 760)
+            return
+        rect = screen.availableGeometry()
+        width = int(rect.width() * 0.86)
+        height = int(rect.height() * 0.82)
+        x = rect.x() + (rect.width() - width) // 2
+        y = rect.y() + (rect.height() - height) // 2
+        self.setGeometry(x, y, width, height)
+
+    def _build_ui(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(10, 10, 10, 10)
+        root.setSpacing(8)
+
+        header = QLabel(f"Lead {self.lead_name} - Expanded Waveform")
+        header.setStyleSheet("color:#fff4e8;font-size:14px;font-weight:bold;")
+        root.addWidget(header)
+
+        controls = QHBoxLayout()
+        controls.setSpacing(8)
+
+        controls.addWidget(QLabel("Time Zoom:"))
+        self.zoom_combo = QComboBox()
+        self.zoom_combo.addItems(["1x", "2x", "4x", "8x"])
+        self.zoom_combo.setCurrentText("1x")
+        self.zoom_combo.currentTextChanged.connect(self._on_zoom_changed)
+        controls.addWidget(self.zoom_combo)
+
+        controls.addWidget(QLabel("Amplification:"))
+        self.amp_slider = QSlider(Qt.Horizontal)
+        self.amp_slider.setRange(25, 400)
+        self.amp_slider.setValue(100)
+        self.amp_slider.valueChanged.connect(self._on_amp_changed)
+        self.amp_label = QLabel("1.00x")
+        controls.addWidget(self.amp_slider, 1)
+        controls.addWidget(self.amp_label)
+
+        controls.addWidget(QLabel("Position:"))
+        self.pos_slider = QSlider(Qt.Horizontal)
+        self.pos_slider.setRange(0, 1000)
+        self.pos_slider.setValue(0)
+        self.pos_slider.valueChanged.connect(self._render_plot)
+        controls.addWidget(self.pos_slider, 2)
+        root.addLayout(controls)
+
+        fig = Figure(facecolor="#090b14")
+        self.ax = fig.add_subplot(111)
+        self.canvas = FigureCanvas(fig)
+        self.canvas.setStyleSheet("background:#090b14;border:1px solid #5b4525;")
+        root.addWidget(self.canvas, stretch=1)
+
+        metrics_row = QHBoxLayout()
+        metrics_row.setSpacing(12)
+        self.rr_lbl = QLabel("RR: -- ms")
+        self.pr_lbl = QLabel("PR: -- ms")
+        self.qrs_lbl = QLabel("QRS: -- ms")
+        self.p_lbl = QLabel("P: --")
+        for lbl in (self.rr_lbl, self.pr_lbl, self.qrs_lbl, self.p_lbl):
+            lbl.setStyleSheet(
+                "color:#ffedda;background:#1b1f34;border:1px solid #6a532e;"
+                "border-radius:6px;padding:6px 10px;font-weight:bold;"
+            )
+            metrics_row.addWidget(lbl)
+        metrics_row.addStretch()
+        root.addLayout(metrics_row)
+
+        self.interpret_lbl = QLabel("Arrhythmia Interpretation: analyzing...")
+        self.interpret_lbl.setWordWrap(True)
+        self.interpret_lbl.setStyleSheet(
+            "color:#e8f1ff;background:#15192b;border:1px solid #5b4525;border-radius:6px;padding:8px;"
+        )
+        root.addWidget(self.interpret_lbl)
+
+    def refresh_from_data(self, lead_data: np.ndarray, sampling_rate: float):
+        self.raw_data = np.asarray(lead_data if lead_data is not None else [], dtype=float)
+        self.sampling_rate = float(sampling_rate or 500.0)
+        self._run_analysis()
+        self._render_plot()
+
+    def _on_zoom_changed(self, text: str):
+        try:
+            self.time_zoom_factor = max(1.0, float(str(text).replace("x", "")))
+        except Exception:
+            self.time_zoom_factor = 1.0
+        self._render_plot()
+
+    def _on_amp_changed(self, value: int):
+        self.amplification = max(0.25, float(value) / 100.0)
+        self.amp_label.setText(f"{self.amplification:.2f}x")
+        self._render_plot()
+
+    def _run_analysis(self):
+        if self.raw_data.size < 20:
+            self.analysis = {}
+            self.rr_lbl.setText("RR: -- ms")
+            self.pr_lbl.setText("PR: -- ms")
+            self.qrs_lbl.setText("QRS: -- ms")
+            self.p_lbl.setText("P: No waveform")
+            self.interpret_lbl.setText("Arrhythmia Interpretation: Not enough data.")
+            return
+
+        analysis = {}
+        try:
+            if PQRSTAnalyzer is not None:
+                analyzer = PQRSTAnalyzer(self.sampling_rate)
+                analysis = analyzer.analyze_signal(self.raw_data) or {}
+        except Exception:
+            analysis = {}
+
+        r_peaks = np.asarray(analysis.get("r_peaks", []), dtype=int)
+        p_peaks = np.asarray(analysis.get("p_peaks", []), dtype=int)
+        q_peaks = np.asarray(analysis.get("q_peaks", []), dtype=int)
+        s_peaks = np.asarray(analysis.get("s_peaks", []), dtype=int)
+
+        rr_ms = 0.0
+        if r_peaks.size >= 2:
+            rr_ms = float(np.median(np.diff(r_peaks)) * 1000.0 / max(self.sampling_rate, 1.0))
+
+        pr_values = []
+        if p_peaks.size and r_peaks.size:
+            for r in r_peaks:
+                prior_p = p_peaks[p_peaks < r]
+                if prior_p.size:
+                    pr_values.append((int(r) - int(prior_p[-1])) * 1000.0 / max(self.sampling_rate, 1.0))
+        pr_ms = float(np.median(pr_values)) if pr_values else 0.0
+
+        qrs_values = []
+        if q_peaks.size and s_peaks.size:
+            for r in r_peaks:
+                q_before = q_peaks[q_peaks < r]
+                s_after = s_peaks[s_peaks > r]
+                if q_before.size and s_after.size:
+                    qrs_values.append((int(s_after[0]) - int(q_before[-1])) * 1000.0 / max(self.sampling_rate, 1.0))
+        qrs_ms = float(np.median(qrs_values)) if qrs_values else 0.0
+
+        p_status = "Present" if p_peaks.size > 0 else "Absent"
+        self.rr_lbl.setText(f"RR: {rr_ms:.0f} ms" if rr_ms > 0 else "RR: -- ms")
+        self.pr_lbl.setText(f"PR: {pr_ms:.0f} ms" if pr_ms > 0 else "PR: -- ms")
+        self.qrs_lbl.setText(f"QRS: {qrs_ms:.0f} ms" if qrs_ms > 0 else "QRS: -- ms")
+        self.p_lbl.setText(f"P: {p_status} ({int(p_peaks.size)})")
+
+        interpretation_text = "No arrhythmia interpretation available."
+        try:
+            if ArrhythmiaDetector is not None:
+                det = ArrhythmiaDetector(self.sampling_rate, counts_per_mv=500.0)
+                arr = det.detect_arrhythmias(
+                    self.raw_data,
+                    analysis,
+                    lead_signals={"II": self.raw_data}
+                )
+                summary_lines = []
+                if get_interpretation is not None:
+                    result_stub = {
+                        "heart_rate_bpm": (60000.0 / rr_ms) if rr_ms > 0 else 0.0,
+                        "rr_ms": rr_ms,
+                        "pr_ms": pr_ms,
+                        "qrs_ms": qrs_ms,
+                        "qtc_bazett": 0.0,
+                        "arrhythmias": arr or [],
+                        "st_levels": {},
+                        "is_nsr": any("Normal Sinus Rhythm" in str(x) for x in (arr or [])),
+                        "nsr_failed_criteria": [],
+                    }
+                    summary_lines = [line for line in get_interpretation(result_stub) if line]
+                if not summary_lines:
+                    summary_lines = arr or ["Normal Sinus Rhythm"]
+                interpretation_text = " | ".join(summary_lines)
+        except Exception:
+            pass
+
+        self.interpret_lbl.setText(f"Arrhythmia Interpretation: {interpretation_text}")
+        self.analysis = analysis
+
+    def _render_plot(self):
+        self.ax.clear()
+        self.ax.set_facecolor("#080e08")
+        self.ax.grid(True, color="#1a3a1a", linewidth=0.35, linestyle="-", alpha=1.0)
+
+        if self.raw_data.size < 2:
+            self.ax.text(0.5, 0.5, "No data", transform=self.ax.transAxes,
+                         ha="center", va="center", color="#97a78f")
+            self.canvas.draw_idle()
+            return
+
+        fs = max(self.sampling_rate, 1.0)
+        total_samples = int(self.raw_data.size)
+        total_sec = total_samples / fs
+        window_sec = max(1.0, total_sec / max(self.time_zoom_factor, 1.0))
+        window_samples = max(2, int(round(window_sec * fs)))
+        max_start = max(0, total_samples - window_samples)
+        start = int(round((self.pos_slider.value() / 1000.0) * max_start))
+        end = min(total_samples, start + window_samples)
+
+        seg = self.raw_data[start:end]
+        time_axis = np.arange(start, end) / fs
+        baseline = float(np.mean(seg)) if seg.size else 0.0
+        display = (seg - baseline) * self.amplification + baseline
+
+        self.ax.plot(time_axis, display, color="#00d000", linewidth=1.0, antialiased=True)
+        self.ax.set_xlim(time_axis[0], time_axis[-1] if len(time_axis) > 1 else time_axis[0] + 1.0)
+
+        # Keep the classic ECG ADC range while respecting amplification.
+        margin = 200.0
+        y_min = float(np.min(display)) - margin
+        y_max = float(np.max(display)) + margin
+        if y_max <= y_min:
+            y_min, y_max = baseline - 500.0, baseline + 500.0
+        self.ax.set_ylim(y_min, y_max)
+        self.ax.set_title(
+            f"Lead {self.lead_name} | Zoom {self.time_zoom_factor:.0f}x | Amp {self.amplification:.2f}x",
+            color="#ffdcb5", fontsize=10
+        )
+        self.ax.tick_params(axis="x", colors="#b9c9b0", labelsize=8)
+        self.ax.tick_params(axis="y", colors="#b9c9b0", labelsize=8)
+        self.canvas.draw_idle()
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  MAIN WINDOW
 # ─────────────────────────────────────────────────────────────────────────────
@@ -523,7 +766,6 @@ class ECGAnalysisWindow(QDialog):
         super().__init__(parent)
         self.setWindowTitle("ECG Waveform Analysis — Clinical Edition")
         self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
-        self.showMaximized()
 
         # ── Tool state ──────────────────────────────────────────────────
         self.current_tool  = TOOL_SELECT
@@ -543,7 +785,9 @@ class ECGAnalysisWindow(QDialog):
 
         self.pending_mark_start_sec = None
         self.manual_annotations     = []
-        self._expanded_lead         = None   # lead name or None
+        self._expanded_lead         = None   # Deprecated: old in-grid expand path
+        self._lead_popup_windows    = {}     # lead -> LeadExpandedPopup
+        self._active_lead_popup     = None
 
         # Paths
         project_root = Path(__file__).resolve().parents[2]
@@ -552,6 +796,7 @@ class ECGAnalysisWindow(QDialog):
         self._apply_stylesheet()
         self._build_ui()
         self.load_reports()
+        QTimer.singleShot(0, self._fit_window_to_screen)
 
     # ─────────────────────────────────────────────────────────────────────────
     #  STYLESHEET
@@ -742,13 +987,16 @@ class ECGAnalysisWindow(QDialog):
         content = QHBoxLayout()
         content.setContentsMargins(6, 6, 6, 6)
         content.setSpacing(6)
-        content.addWidget(self._build_tool_sidebar())
-        content.addWidget(self._build_plot_panel(), stretch=1)
+        self._tool_sidebar = self._build_tool_sidebar()
+        self._plot_panel = self._build_plot_panel()
+        content.addWidget(self._tool_sidebar)
+        content.addWidget(self._plot_panel, stretch=1)
 
         mid = QWidget()
         mid.setLayout(content)
         root.addWidget(mid, stretch=4)
-        root.addWidget(self._build_bottom_panel(), stretch=0)
+        self._bottom_panel = self._build_bottom_panel()
+        root.addWidget(self._bottom_panel, stretch=0)
 
     # ── TOP BAR ──────────────────────────────────────────────────────────────
     def _build_top_bar(self):
@@ -930,6 +1178,7 @@ class ECGAnalysisWindow(QDialog):
     def _build_plot_panel(self):
         frame = QFrame()
         frame.setObjectName("plotpanel")
+        frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         v = QVBoxLayout(frame)
         v.setContentsMargins(4, 4, 4, 2)
         v.setSpacing(4)
@@ -976,7 +1225,7 @@ class ECGAnalysisWindow(QDialog):
         controls.addStretch()
 
         # Expand/collapse hint
-        expand_hint = QLabel("dbl-click lead = expand  |  right-click = annotate menu")
+        expand_hint = QLabel("click lead = expanded popup  |  right-click = annotate menu")
         expand_hint.setStyleSheet("color:#c59768;font-size:9px;")
         controls.addWidget(expand_hint)
 
@@ -994,6 +1243,7 @@ class ECGAnalysisWindow(QDialog):
         from PyQt5.QtWidgets import QGridLayout, QWidget as _QW
         self._grid_widget = _QW()
         self._grid_widget.setStyleSheet("background:#0f1220;")
+        self._grid_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._lead_grid = QGridLayout(self._grid_widget)
         self._lead_grid.setContentsMargins(0, 0, 0, 0)
         self._lead_grid.setSpacing(4)
@@ -1039,8 +1289,7 @@ class ECGAnalysisWindow(QDialog):
                 canvas.ruler_measured.connect(self.measure_lbl.setText)
                 canvas.caliper_measured.connect(self.measure_lbl.setText)
                 canvas.annotation_req.connect(self._on_canvas_annotation)
-                canvas.expand_requested.connect(self._toggle_lead_expand)
-
+                canvas.expand_requested.connect(self._open_lead_expanded_popup)
                 cell_lay.addWidget(canvas, stretch=1)
                 self._lead_grid.addWidget(cell, row, col)
 
@@ -1079,7 +1328,7 @@ class ECGAnalysisWindow(QDialog):
             "color:#7adf7a;border:none;background:transparent;")
 
     def _toggle_lead_expand(self, lead_name):
-        """Double-click: expand one lead to fill grid, or collapse back."""
+        """Deprecated old in-grid expand behavior. Kept commented-out logically and not used."""
         if self._expanded_lead == lead_name:
             # Collapse — show all
             self._expanded_lead = None
@@ -1109,10 +1358,30 @@ class ECGAnalysisWindow(QDialog):
 
         self._render_current_frame()
 
+    def _open_lead_expanded_popup(self, lead_name):
+        """Open dedicated expanded lead popup with metrics + rhythm interpretation."""
+        data = np.asarray(self.lead_data.get(lead_name, np.array([])), dtype=float)
+        if data.size < 20:
+            QMessageBox.information(self, "No Data", f"No usable waveform data for lead {lead_name}.")
+            return
+
+        popup = self._lead_popup_windows.get(lead_name)
+        if popup is None or not popup.isVisible():
+            popup = LeadExpandedPopup(lead_name, data, self.sampling_rate, parent=self)
+            self._lead_popup_windows[lead_name] = popup
+        else:
+            popup.refresh_from_data(data, self.sampling_rate)
+
+        self._active_lead_popup = popup
+        popup.show()
+        popup.raise_()
+        popup.activateWindow()
+
     # ── BOTTOM PANEL ─────────────────────────────────────────────────────────
     def _build_bottom_panel(self):
         frame = QFrame()
         frame.setObjectName("bottompanel")
+        frame.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         h = QHBoxLayout(frame)
         h.setContentsMargins(12, 8, 12, 8)
         h.setSpacing(14)
@@ -1120,6 +1389,7 @@ class ECGAnalysisWindow(QDialog):
         # ── Manual marking ───────────────────────────────────────────────────
         mark_box = QFrame()
         mark_box.setStyleSheet("background:transparent;border:none;")
+        mark_box.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         av = QVBoxLayout(mark_box)
         av.setSpacing(4)
 
@@ -1188,7 +1458,7 @@ class ECGAnalysisWindow(QDialog):
         self.annotation_table.setHorizontalHeaderLabels(
             ["Start (s)", "End (s)", "Type", "Lead", "Notes"])
         self.annotation_table.horizontalHeader().setStretchLastSection(True)
-        self.annotation_table.setMaximumHeight(110)
+        self.annotation_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
         av.addWidget(self.annotation_table)
 
         h.addWidget(mark_box, stretch=2)
@@ -1204,7 +1474,7 @@ class ECGAnalysisWindow(QDialog):
         self.metrics_table = QTableWidget(0, 2)
         self.metrics_table.setHorizontalHeaderLabels(["Parameter", "Value"])
         self.metrics_table.horizontalHeader().setStretchLastSection(True)
-        self.metrics_table.setMaximumHeight(120)
+        self.metrics_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
         right_col.addWidget(self.metrics_table)
 
         findings_lbl = QLabel("▌ Clinical Findings")
@@ -1213,7 +1483,7 @@ class ECGAnalysisWindow(QDialog):
         right_col.addWidget(findings_lbl)
         self.findings_text = QTextEdit()
         self.findings_text.setReadOnly(True)
-        self.findings_text.setMaximumHeight(70)
+        self.findings_text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
         right_col.addWidget(self.findings_text)
 
         # Hide per original user instruction (kept for PDF gen logic)
@@ -1222,6 +1492,39 @@ class ECGAnalysisWindow(QDialog):
 
         h.addLayout(right_col, stretch=1)
         return frame
+
+    def _fit_window_to_screen(self):
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is not None:
+            available = screen.availableGeometry()
+            self.setGeometry(available.adjusted(6, 6, -6, -6))
+        self._apply_responsive_window_layout()
+
+    def _apply_responsive_window_layout(self):
+        size = self.size()
+        screen_h = max(size.height(), 1)
+        screen_w = max(size.width(), 1)
+
+        if hasattr(self, "_tool_sidebar") and self._tool_sidebar is not None:
+            sidebar_width = max(76, min(96, int(screen_w * 0.055)))
+            self._tool_sidebar.setFixedWidth(sidebar_width)
+
+        if hasattr(self, "_bottom_panel") and self._bottom_panel is not None:
+            bottom_max = max(170, min(260, int(screen_h * 0.22)))
+            self._bottom_panel.setMaximumHeight(bottom_max)
+
+        if hasattr(self, "annotation_table") and self.annotation_table is not None:
+            self.annotation_table.setMaximumHeight(max(72, min(110, int(screen_h * 0.10))))
+
+        if hasattr(self, "metrics_table") and self.metrics_table is not None:
+            self.metrics_table.setMaximumHeight(max(72, min(120, int(screen_h * 0.11))))
+
+        if hasattr(self, "findings_text") and self.findings_text is not None:
+            self.findings_text.setMaximumHeight(max(56, min(84, int(screen_h * 0.07))))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._apply_responsive_window_layout()
 
     # ─────────────────────────────────────────────────────────────────────────
     #  KEYBOARD SHORTCUTS
@@ -1250,8 +1553,8 @@ class ECGAnalysisWindow(QDialog):
         elif key == Qt.Key_Space:
             self.toggle_play()
         elif key == Qt.Key_Escape:
-            if self._expanded_lead:
-                self._toggle_lead_expand(self._expanded_lead)
+            if self._active_lead_popup is not None and self._active_lead_popup.isVisible():
+                self._active_lead_popup.close()
         else:
             super().keyPressEvent(event)
 

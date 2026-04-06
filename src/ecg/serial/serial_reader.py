@@ -454,14 +454,16 @@ class SerialStreamReader:
         # Final packet loss statistics
         if hasattr(self, 'start_time') and self.start_time > 0:
             elapsed_time = time.time() - self.start_time
-            expected_packets = int(500 * elapsed_time)  # 500 Hz
-            total_lost = max(0, expected_packets - self.data_count)
-            loss_percent = (total_lost / expected_packets * 100) if expected_packets > 0 else 0
+            measured_rate = (self.data_count / elapsed_time) if elapsed_time > 0 else 500.0
+            seq_lost = getattr(self, '_total_sequence_lost', 0)
+            total_processed = self.data_count + seq_lost
+            loss_percent = (seq_lost / total_processed * 100) if total_processed > 0 else 0.0
             print(f" Total data packets received: {self.data_count}")
-            if total_lost > 0:
-                print(f" Packet loss summary: {total_lost}/{expected_packets} packets lost ({loss_percent:.2f}% loss)")
+            print(f" Measured rate: {measured_rate:.1f} pkt/s")
+            if seq_lost > 0:
+                print(f" Packet loss summary: {seq_lost}/{total_processed} packets lost ({loss_percent:.2f}% loss, sequence-based)")
             else:
-                print(f" No packet loss detected - all {expected_packets} expected packets received")
+                print(" No packet loss detected — perfect packet continuity!")
             
             # Report sequence-based packet loss
             if hasattr(self, '_total_sequence_lost') and self._total_sequence_lost > 0:
@@ -500,10 +502,10 @@ class SerialStreamReader:
             # But ensure we read enough to drain the buffer if possible
             # Logic: Read available bytes, but respect our "catch up" logic sizes if they are larger/smaller
             target_read_size = 4096
-            if len(self.buf) > 20000:
-                target_read_size = 8192
-            elif len(self.buf) > 50000:
+            if len(self.buf) > 50000:
                 target_read_size = 16384
+            elif len(self.buf) > 20000:
+                target_read_size = 8192
                 
             # Read whichever is smaller: what's available or our max chunk size
             # (Actually, we should read all available to clear hardware buffer, but in chunks)
@@ -614,12 +616,12 @@ class SerialStreamReader:
             
             # Update packet loss statistics
             if self.running and self.data_count > 0:
-                elapsed_time = time.time() - self.start_time
-                expected_packets = int(500 * elapsed_time)  # 500 Hz = 500 packets/second
-                self.total_packets_expected = expected_packets
-                self.total_packets_lost = max(0, expected_packets - self.data_count)
-                if expected_packets > 0:
-                    self.packet_loss_percent = (self.total_packets_lost / expected_packets) * 100
+                seq_lost = getattr(self, '_total_sequence_lost', 0)
+                total_processed = self.data_count + seq_lost
+                self.total_packets_expected = total_processed
+                self.total_packets_lost = seq_lost
+                if total_processed > 0:
+                    self.packet_loss_percent = (seq_lost / total_processed) * 100
                     
         except Exception as e:
             self.error_count += 1
