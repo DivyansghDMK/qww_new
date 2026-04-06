@@ -3296,19 +3296,28 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     # First graph y=400 means top at 400+75=475, safely below settings at 490 (15pt gap)
     y_positions = [350, 270, 190, 110, 30]  # 5 graphs (80pt spacing) with proper spacing from params - SHIFTED DOWN 50 points total (25+25)
     
-    # 🎯 Configuration: Match 6:2 Lead II strip density for each HRV minute strip.
-    samples_per_strip = 5500
-    segment_duration = (samples_per_strip / float(sampling_rate)) if 'sampling_rate' in locals() else 11.0
-    num_segments = 5  # Always 5 strips
-    
+    # Use the same Lead II plotting style as the hyperkalemia report:
+    # same calibration notch placement, same baseline centering, and the same
+    # time-based horizontal scaling tied to wave speed.
+    mm_unit = mm
+    ecg_large_box_mm_height = 210.0 / 40.0
+    ecg_large_box_mm_width = 297.0 / 56.0
+    ecg_speed_scale = ecg_large_box_mm_height / 5.0
+    effective_wave_speed_mm_s = wave_speed_mm_s * ecg_speed_scale
+    box_height_points = ecg_large_box_mm_height * mm_unit
+    strip_width_points = min(54.0 * ecg_large_box_mm_width * mm_unit, total_width)
+    ecg_height = 75
+
+    samples_per_strip = int(12.0 * float(sampling_rate)) if 'sampling_rate' in locals() else 6000
+    segment_duration = (samples_per_strip / float(sampling_rate)) if 'sampling_rate' in locals() else 12.0
+    num_segments = 5
+
     print(f"📊 HRV Report Configuration:")
     print(f"   Samples per strip: {samples_per_strip} ADC samples (sampling_rate={sampling_rate} Hz)")
     print(f"   Duration per strip: {segment_duration}s")
     print(f"   Total strips: {num_segments}")
-     
-    # HRV report supports ONLY these leads (same as HRV UI lead combo)
+
     allowed_hrv_leads = ["I", "II", "V1", "V2", "V3", "V4", "V5", "V6"]
-    # Lead-specific ADC per box multipliers (HRV report only)
     ADC_PER_BOX_CONFIG = {
         "V6": 6400.0,
         "V5": 6400.0,
@@ -3319,249 +3328,182 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
         "II": 6400.0,
         "I": 6400.0,
     }
-    def _get_adc_per_box_multiplier(lead_name, default=6400.0):
-        return ADC_PER_BOX_CONFIG.get(lead_name, default)
     if selected_lead not in allowed_hrv_leads:
         print(f"⚠️ HRV lead '{selected_lead}' not supported, defaulting to Lead II")
         selected_lead = "II"
     adc_per_box_multiplier = ADC_PER_BOX_CONFIG.get(selected_lead, 6400.0)
-    baseline_adc = ECG_BASELINE_ADC  # Use common constant
-    
+
+    def _create_hrv_strip_paths(values, strip_x, strip_y, strip_width, strip_height):
+        center_y = strip_y + (strip_height / 2.0)
+        notch_path = None
+
+        try:
+            notch_boxes = settings_manager.get_calibration_notch_boxes()
+        except Exception:
+            notch_boxes = 2.0
+
+        notch_width = 5.0 * mm_unit
+        notch_tail = 2.0 * mm_unit
+        notch_height = (notch_boxes * 5.0) * mm_unit
+        notch_x = strip_x + (1.0 * mm_unit)
+
+        notch_path = Path(
+            fillColor=None,
+            strokeColor=colors.HexColor("#000000"),
+            strokeWidth=0.8,
+            strokeLineCap=1,
+            strokeLineJoin=0,
+        )
+        notch_path.moveTo(notch_x, center_y)
+        notch_path.lineTo(notch_x, center_y + notch_height)
+        notch_path.lineTo(notch_x + notch_width, center_y + notch_height)
+        notch_path.lineTo(notch_x + notch_width, center_y)
+        notch_path.lineTo(notch_x + notch_width + notch_tail, center_y)
+
+        if values is None or len(values) < 2:
+            baseline_path = Path(
+                fillColor=None,
+                strokeColor=colors.HexColor("#000000"),
+                strokeWidth=0.4,
+                strokeLineCap=1,
+                strokeLineJoin=1,
+            )
+            baseline_path.moveTo(strip_x, center_y)
+            baseline_path.lineTo(strip_x + strip_width, center_y)
+            return baseline_path, notch_path, None
+
+        adc_data = np.array(values, dtype=float)
+        try:
+            from ecg.ecg_filters import apply_dft_filter, apply_emg_filter, apply_ac_filter, stabilize_report_edges
+
+            dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
+            emg_setting = str(settings_manager.get_setting("filter_emg", "off")).strip()
+            ac_setting = str(settings_manager.get_setting("filter_ac", "off")).strip()
+
+            if dft_setting not in ("off", ""):
+                adc_data = apply_dft_filter(adc_data, float(sampling_rate), dft_setting)
+            if emg_setting not in ("off", ""):
+                adc_data = apply_emg_filter(adc_data, float(sampling_rate), emg_setting)
+            if ac_setting in ("50", "60"):
+                adc_data = apply_ac_filter(adc_data, float(sampling_rate), ac_setting)
+            adc_data = stabilize_report_edges(adc_data, float(sampling_rate))
+        except Exception as filter_err:
+            print(f"⚠️ HRV report filter apply failed for selected lead strip: {filter_err}")
+
+        data_mean = float(np.mean(adc_data))
+        if abs(data_mean - ECG_BASELINE_ADC) < 500:
+            centered_adc = adc_data - ECG_BASELINE_ADC
+        else:
+            centered_adc = adc_data.copy()
+
+        centered_adc = centered_adc - float(np.mean(centered_adc))
+        if centered_adc.size > 20:
+            x_idx = np.arange(centered_adc.size, dtype=float)
+            trend = np.polyval(np.polyfit(x_idx, centered_adc, 1), x_idx)
+            centered_adc = centered_adc - trend
+
+        adc_per_box = adc_per_box_multiplier / max(1e-6, wave_gain_mm_mv)
+        ecg_normalized = center_y + ((centered_adc / adc_per_box) * box_height_points)
+
+        seconds = np.arange(centered_adc.size, dtype=float) / max(1e-6, float(sampling_rate))
+        t = strip_x + (seconds * effective_wave_speed_mm_s * mm_unit)
+        visible_mask = t <= (strip_x + strip_width)
+        if not np.any(visible_mask):
+            baseline_path = Path(
+                fillColor=None,
+                strokeColor=colors.HexColor("#000000"),
+                strokeWidth=0.4,
+                strokeLineCap=1,
+                strokeLineJoin=1,
+            )
+            baseline_path.moveTo(strip_x, center_y)
+            baseline_path.lineTo(strip_x + strip_width, center_y)
+            return baseline_path, notch_path, None
+
+        t = t[visible_mask]
+        ecg_normalized = ecg_normalized[visible_mask]
+
+        trace_path = Path(
+            fillColor=None,
+            strokeColor=colors.HexColor("#000000"),
+            strokeWidth=0.4,
+            strokeLineCap=1,
+            strokeLineJoin=1,
+        )
+        trace_path.moveTo(t[0], ecg_normalized[0])
+        for i in range(1, len(t)):
+            trace_path.lineTo(t[i], ecg_normalized[i])
+
+        dotted_path = None
+        if t[-1] < (strip_x + strip_width - 1.0):
+            dotted_path = Path(
+                fillColor=None,
+                strokeColor=colors.HexColor("#000000"),
+                strokeWidth=0.4,
+                strokeLineCap=1,
+                strokeLineJoin=1,
+                strokeDashArray=[2, 3],
+            )
+            dotted_path.moveTo(t[-1], center_y)
+            dotted_path.lineTo(strip_x + strip_width, center_y)
+
+        return trace_path, notch_path, dotted_path
+
     successful_graphs = 0
-    
+
     for segment_idx in range(num_segments):
-        # Calculate actual minute start times (0s, 60s, 120s, 180s, 240s)
-        minute_start = segment_idx * 60.0  # Start of each minute
+        minute_start = segment_idx * 60.0
         segment_start = minute_start
-        segment_end = minute_start + segment_duration  # First 10 seconds of this minute
-        
-        # Filter data for this segment (first 10 seconds of each minute)
+        segment_end = minute_start + segment_duration
+
         full_segment_data = [d for d in captured_data if segment_start <= d['time'] < segment_end]
-        
-        # LIMIT: Use only first N samples per strip based on sampling_rate
+
         if len(full_segment_data) > samples_per_strip:
             segment_data = full_segment_data[:samples_per_strip]
             print(f"📊 Strip {segment_idx + 1} ({int(segment_start)}s-{int(segment_end)}s): Plotting first {samples_per_strip} samples (trimmed from {len(full_segment_data)})")
         else:
             segment_data = full_segment_data
             print(f"📊 Strip {segment_idx + 1} ({int(segment_start)}s-{int(segment_end)}s): Plotting {len(segment_data)} samples (all available)")
-        
-        if len(segment_data) == 0:
-            print(f"⚠️ No data for Strip {segment_idx + 1}")
-            continue
-        
+
         y_pos = y_positions[segment_idx]
-        # 🎯 SHIFTED 2 BOXES LEFT: Plot now starts from 1mm (to prevent notch in box 2)
-        # Grid calculation: 1 box = 5mm, 1mm = minor box
-        from reportlab.lib.units import mm as mm_unit
-        box_width = 5.0 * mm_unit  # 1 major box = 5mm = 14.173228 points
-        
-        # Match the hyperkalemia Lead II strip geometry as closely as possible:
-        # wide strip, notch inside the strip, and waveform starting after the notch gap.
         x_pos = 0.0
-        plot_start_gap = 4.0 * mm_unit
-        notch_start_offset = 1.0 * mm_unit
-        notch_width_points = 5.0 * mm_unit
-        notch_tail = 2.0 * mm_unit
-        plot_start_x = x_pos + notch_start_offset + notch_width_points + notch_tail + plot_start_gap
-        ecg_width = min(54.0 * box_width, total_width - x_pos)
-        ecg_height = 75  # Fits 5 graphs in landscape height with 80pt spacing
-        
-        print(f"📐 Strip {segment_idx + 1}: x={x_pos:.2f}, Width={ecg_width:.2f}, End={x_pos+ecg_width:.2f}")
-        
-        # ==================== ADD CALIBRATION NOTCH (FOR ALL STRIPS - ALWAYS) ====================
-        # Notch appears at the beginning of each strip, regardless of data availability
-        from reportlab.graphics.shapes import Path as PathShape
-        
-        # Calibration notch specifications:
-        # Width: Fixed at 5mm (standard calibration pulse width)
-        notch_width_mm = 5.0
-        notch_width = notch_width_mm * mm_unit  # Convert to points
-        
-        # Height: Based on wave gain (1mV calibration signal)
-        # Standard: 1mV should produce 10mm deflection at 10mm/mV gain
-        # Formula: Height (mm) = 1mV × wave_gain_mm_mv
-        notch_height_mm = 1.0 * wave_gain_mm_mv  # 1mV × gain
-        notch_height = notch_height_mm * mm_unit  # Convert to points
-        
-        # Position notch inside the strip area like the reference report.
-        notch_x = x_pos + notch_start_offset
-        
-        # Y position: Center of the strip baseline - SHIFTED DOWN 25 points
-        center_y = y_pos + (ecg_height / 2.0)  # Center of the graph in points
-        notch_y_base = center_y + 25  # Center baseline of the strip shifted down 25 points
-        
-        # Draw the calibration notch as a rectangular pulse
-        notch_path = PathShape(
-            fillColor=None,
-            strokeColor=colors.HexColor("#000000"),
-            strokeWidth=0.8,  # Thicker line for visibility
-            strokeLineCap=1,
-            strokeLineJoin=0  # Sharp corners for calibration box
-        )
-        
-        # Draw calibration notch:
-        # Start at baseline
-        notch_path.moveTo(notch_x, notch_y_base)
-        # Go up (calibration height)
-        notch_path.lineTo(notch_x, notch_y_base + notch_height)
-        # Go right (calibration width)
-        notch_path.lineTo(notch_x + notch_width, notch_y_base + notch_height)
-        # Go down back to baseline
-        notch_path.lineTo(notch_x + notch_width, notch_y_base)
-        # Small forward baseline tick after the notch, same style as clean ECG reports.
-        notch_path.lineTo(notch_x + notch_width + notch_tail, notch_y_base)
 
-        # Add notch to drawing (ALWAYS, regardless of data)
-        master_drawing.add(notch_path)
-
-        # Calculate connection details for logging
-        notch_end_x = notch_x + notch_width
-        connection_distance_mm = (plot_start_x - (notch_x + notch_width + notch_tail)) / mm_unit
-        print(f"✅ Strip {segment_idx + 1}: Calibration notch added (ALWAYS)")
-        print(f"   📏 Notch: Width={notch_width_mm}mm, Height={notch_height_mm}mm (1mV @ {wave_gain_mm_mv}mm/mV)")
-        print(f"   📏 Plot gap: {connection_distance_mm:.2f}mm from notch end to ECG start")
-        print(f"   📍 Positions: Notch@{notch_x:.2f}pt → ECG@{plot_start_x:.2f}pt")
-
-        from reportlab.graphics.shapes import String as TextString
         minute_labels = ["(First minute)", "(Second minute)", "(Third minute)", "(Fourth minute)", "(Fifth minute)"]
         if 0 <= segment_idx < len(minute_labels):
-            label_text = f"Lead {selected_lead} {minute_labels[segment_idx]}"
-            label_y = notch_y_base + notch_height + 4  # just above notch top
-            label = TextString(
-                notch_x + notch_width + 4,  # start just after notch right edge
-                label_y,
-                label_text,
-                fontSize=8,
-                fontName="Helvetica-Bold",
-                fillColor=colors.black,
+            master_drawing.add(
+                String(
+                    x_pos + (3.5 * mm_unit),
+                    y_pos + ecg_height + 4,
+                    f"Lead {selected_lead} {minute_labels[segment_idx]}",
+                    fontSize=8,
+                    fontName=FONT_TYPE_BOLD,
+                    fillColor=colors.black,
+                )
             )
-            master_drawing.add(label)
-        
-        if len(segment_data) == 0:
-            print(f"⚠️ No data for Strip {segment_idx + 1} - Calibration notch added anyway")
-            continue
-        
+
         try:
-            # REMOVED: No segment labels
-            # Plot starts from 1mm offset (just inside box 1) - prevents notch in box 2
-            
-            # Get ECG data for this segment
-            if len(segment_data) > 0:
-                values = np.array([d['value'] for d in segment_data], dtype=float)
+            values = np.array([d['value'] for d in segment_data], dtype=float) if segment_data else None
+            trace_path, notch_path, dotted_path = _create_hrv_strip_paths(
+                values,
+                x_pos,
+                y_pos,
+                strip_width_points,
+                ecg_height,
+            )
 
-                # The generated PDF reflects the same filtered signal quality.
-                adc_data = np.array(values, dtype=float)
-                try:
-                    from ecg.ecg_filters import apply_dft_filter, apply_emg_filter, apply_ac_filter, stabilize_report_edges
-                    dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
-                    emg_setting = str(settings_manager.get_setting("filter_emg", "off")).strip()
-                    ac_setting = str(settings_manager.get_setting("filter_ac", "off")).strip()
+            if trace_path:
+                master_drawing.add(trace_path)
+            if notch_path:
+                master_drawing.add(notch_path)
+            if dotted_path:
+                master_drawing.add(dotted_path)
 
-                    if dft_setting not in ("off", ""):
-                        adc_data = apply_dft_filter(adc_data, float(sampling_rate), dft_setting)
-                    if emg_setting not in ("off", ""):
-                        adc_data = apply_emg_filter(adc_data, float(sampling_rate), emg_setting)
-                    if ac_setting in ("50", "60"):
-                        adc_data = apply_ac_filter(adc_data, float(sampling_rate), ac_setting)
-                    adc_data = stabilize_report_edges(adc_data, float(sampling_rate))
-                except Exception as filter_err:
-                    print(f"⚠️ HRV report filter apply failed for strip {segment_idx + 1}: {filter_err}")
-
-                # Keep the final strip visually aligned with the live display path.
-                try:
-                    if len(adc_data) > 5:
-                        from scipy.ndimage import gaussian_filter1d
-                        adc_data = gaussian_filter1d(adc_data, sigma=2)
-                except Exception as smooth_err:
-                    print(f"⚠️ HRV gaussian smoothing failed for strip {segment_idx + 1}: {smooth_err}")
-                
-                from reportlab.lib.units import mm as mm_unit
-                t = np.linspace(plot_start_x, x_pos + ecg_width, len(adc_data))
-                
-                # ========== EXACT SAME SCALING LOGIC AS MAIN REPORT (Lines 2665-2740) ==========
-                
-                # Step 1: Apply baseline correction for Lead II
-                data_mean = np.mean(adc_data)
-                baseline_adc = ECG_BASELINE_ADC
-                
-                if abs(data_mean - ECG_BASELINE_ADC) < 500:  # Data is close to baseline 2000 (raw ADC)
-                    baseline_corrected = adc_data - baseline_adc
-                else:
-                    baseline_corrected = adc_data  # Already processed data
-                
-                # Step 2: FORCE CENTER for report - subtract mean to ensure perfect centering
-                # IMPORTANT: Report me selected lead apni grid line ke center me dikhni chahiye
-                # Chahe baseline wander kitna bhi ho (respiration mode, Fluke data, etc.)
-                # This ensures waveform is exactly centered on grid line regardless of baseline wander
-                centered_adc = baseline_corrected - np.mean(baseline_corrected)
-
-                # Final strip-edge settling:
-                # gently taper the strip edges back to the centered baseline so
-                # the printed strip starts/ends flat like the reference reports.
-                try:
-                    edge_n = max(12, int(0.18 * float(sampling_rate)))
-                except Exception:
-                    edge_n = 90
-                edge_n = min(edge_n, max(12, len(centered_adc) // 8))
-                if len(centered_adc) > (edge_n * 3):
-                    settled_adc = centered_adc.copy()
-                    baseline_target = 0.0
-
-                    head_ramp = np.linspace(0.0, 1.0, edge_n, endpoint=True)
-                    tail_ramp = np.linspace(0.0, 1.0, edge_n, endpoint=True)
-
-                    # Start from baseline and smoothly release into the waveform.
-                    settled_adc[:edge_n] = ((1.0 - head_ramp) * baseline_target) + (head_ramp * settled_adc[:edge_n])
-                    # Force the tail to settle back onto baseline at the final sample.
-                    settled_adc[-edge_n:] = ((1.0 - tail_ramp) * settled_adc[-edge_n:]) + (tail_ramp * baseline_target)
-
-                    # Give the final ~80 ms an extra clamp to remove any visible tail kick.
-                    hard_tail_n = max(4, edge_n // 3)
-                    settled_adc[-hard_tail_n:] = np.linspace(settled_adc[-hard_tail_n], baseline_target, hard_tail_n, endpoint=True)
-                    centered_adc = settled_adc
-                
-                # Step 3: Calculate ADC per box (EXACT SAME AS MAIN REPORT line 2689-2714)
-                # LEAD-SPECIFIC ADC PER BOX CONFIGURATION
-                # Selected Lead: {selected_lead} (from config)
-                # Formula: ADC_per_box = adc_per_box_multiplier / wave_gain_mm_mv
-                # For 10mm/mV with multiplier {adc_per_box_multiplier}: {adc_per_box_multiplier} / 10 = {adc_per_box_multiplier/10} ADC per box
-                # This means: {adc_per_box_multiplier/10} ADC offset = 1 box (5mm) vertical movement
-                adc_per_box = adc_per_box_multiplier / max(1e-6, wave_gain_mm_mv)  # Avoid division by zero
-                
-                # Step 4: Convert ADC offset to boxes (EXACT SAME AS MAIN REPORT line 2722)
-                # Direct calculation: boxes_offset = centered_adc / adc_per_box
-                boxes_offset = centered_adc / adc_per_box
-                
-                 
-                center_y = y_pos + (ecg_height / 2.0)  # Center of the graph in points
-                # IMPORTANT: Standard ECG paper uses 5mm per box
-                # 5mm = 5 * 2.834645669 points = 14.17 points per box
-                from reportlab.lib.units import mm as mm_unit
-                box_height_points = 5.0 * mm_unit  # Standard ECG: 5mm = 14.17 points per box
-                
-                # Convert boxes offset to Y position (EXACT FORMULA FROM MAIN REPORT) - SHIFTED DOWN 25 points
-                ecg_normalized = center_y + 25 + (boxes_offset * box_height_points)
-                
-                # Draw ECG waveform (EXACT SAME AS MAIN REPORT line 2240-2263)
-                ecg_path = Path(fillColor=None, 
-                               strokeColor=colors.HexColor("#000000"), 
-                               strokeWidth=0.4,  # Same as main report
-                               strokeLineCap=1,
-                               strokeLineJoin=1)
-                
-                # Start path and draw all ECG points
-                ecg_path.moveTo(t[0], ecg_normalized[0])
-                for i in range(1, len(t)):
-                    ecg_path.lineTo(t[i], ecg_normalized[i])
-                
-                # Add path to master drawing
-                master_drawing.add(ecg_path)
-                
-                successful_graphs += 1
-                
-                print(f" Drew {len(segment_data)} ECG data points for Strip {segment_idx + 1} ({int(segment_start)}s-{int(segment_end)}s, 2500 max samples)")
-        
+            successful_graphs += 1
+            print(f"📐 Strip {segment_idx + 1}: x={x_pos:.2f}, Width={strip_width_points:.2f}, End={x_pos + strip_width_points:.2f}")
+            if segment_data:
+                print(f"✅ Drew {len(segment_data)} ECG data points for Strip {segment_idx + 1} using hyperkalemia-style plotting")
+            else:
+                print(f"⚠️ Strip {segment_idx + 1} has no data; kept hyperkalemia-style notch and baseline")
         except Exception as e:
             print(f" Error adding Strip {segment_idx + 1}: {e}")
             import traceback
@@ -3744,7 +3686,7 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     story.append(master_drawing)
     # story.append(Spacer(1, 15))  # REMOVED - was creating unwanted 3rd page
     
-    print(f"📊 Added master drawing with {successful_graphs}/5 Lead II strips (each: 5,500 samples, first 10s of each minute)!")
+    print(f"📊 Added master drawing with {successful_graphs}/5 selected-lead strips using hyperkalemia-style plotting!")
     
     # ==================== PAGE 2: TIME DOMAIN & FREQUENCY DOMAIN ANALYSIS (LANDSCAPE MODE) ====================
     

@@ -3454,14 +3454,14 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     # Switch to Landscape template directly (no Page 1)
     # No need for NextPageTemplate since landscape is now default
     
-    # ==================== PAGE 1: V1-V6 LEADS + LEAD II (LANDSCAPE MODE) ====================
+    # ==================== PAGE 1: 4:3 12-LEAD ECG (LANDSCAPE MODE) ====================
     
-    print(" Creating master drawing with V1-V6 leads (2 columns) + Lead II (bottom) in LANDSCAPE...")
+    print(" Creating master drawing with 4:3 12-lead ECG layout in LANDSCAPE...")
     
     # Landscape A4 frame dimensions (landscape_width - 20, landscape_height - 20)
     # A4 landscape: 842 x 595, minus margins (10 each side) = 822 x 575 frame
     # Keep drawing slightly smaller than frame to avoid LayoutError
-    total_width = 800  # Fits in landscape frame
+    total_width = 810  # Fits in landscape frame with 3 short columns + rhythm strip
     total_height = 560  # Must be <= frame height (~575) with some tolerance
     master_drawing = Drawing(total_width, total_height)
     
@@ -3517,73 +3517,156 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     
     # Reuse reportlab mm unit locally for clarity
     mm_unit = mm
-    
-    # Function to add grid lines to a drawing area
-    def add_grid_lines(drawing, x_pos, y_pos, width, height):
-        """Add ECG grid lines (major and minor)"""
-        box_width_points = ECG_LARGE_BOX_MM_WIDTH * mm_unit
-        minor_box_width = ECG_SMALL_BOX_MM_WIDTH * mm_unit
-        box_height_points = ECG_LARGE_BOX_MM_HEIGHT * mm_unit
-        minor_box_height = ECG_SMALL_BOX_MM_HEIGHT * mm_unit
-        
-        # Major grid lines (every 5mm)
-        major_color = colors.HexColor("#FF0000")  # Red for major lines
-        minor_color = colors.HexColor("#FF9999")  # Light red for minor lines
-        
-        # Vertical major lines (every 5mm)
-        num_major_x = int(width / box_width_points) + 1
-        for i in range(num_major_x):
-            x = x_pos + (i * box_width_points)
-            if x <= x_pos + width:
-                line = Line(x, y_pos, x, y_pos + height, 
-                          strokeColor=major_color, strokeWidth=0.5)
-                drawing.add(line)
-        
-        # Vertical minor lines (every 1mm)
-        num_minor_x = int(width / minor_box_width) + 1
-        for i in range(num_minor_x):
-            x = x_pos + (i * minor_box_width)
-            if x <= x_pos + width and i % 5 != 0:  # Skip major lines
-                line = Line(x, y_pos, x, y_pos + height,
-                          strokeColor=minor_color, strokeWidth=0.3)
-                drawing.add(line)
-        
-        # Horizontal major lines (every 5mm)
-        num_major_y = int(height / box_height_points) + 1
-        for i in range(num_major_y):
-            y = y_pos + (i * box_height_points)
-            if y <= y_pos + height:
-                line = Line(x_pos, y, x_pos + width, y,
-                          strokeColor=major_color, strokeWidth=0.5)
-                drawing.add(line)
-        
-        # Horizontal minor lines (every 1mm)
-        num_minor_y = int(height / minor_box_height) + 1
-        for i in range(num_minor_y):
-            y = y_pos + (i * minor_box_height)
-            if y <= y_pos + height and i % 5 != 0:  # Skip major lines
-                line = Line(x_pos, y, x_pos + width, y,
-                          strokeColor=minor_color, strokeWidth=0.3)
-                drawing.add(line)
-    
-    # Function to create ECG drawing for a lead
-    def create_lead_drawing(lead_name, lead_data, x_pos, y_pos, width, height):
-        """Create ECG drawing for a single lead; returns (ecg_path, notch_path, dotted_path)"""
-        if lead_data is None or len(lead_data) == 0 or width <= 0:
-            return None
-        
-        # Get lead-specific ADC per box multiplier
-        adc_per_box_multiplier = ADC_PER_BOX_CONFIG.get(lead_name, 6400.0)
-        
-        # Convert to numpy array
-        adc_data = np.array(lead_data, dtype=float)
+    if saved_ecg_data and isinstance(saved_ecg_data, dict):
+        try:
+            saved_fs = _safe_float(saved_ecg_data.get("sampling_rate"), report_sampling_rate)
+            if 50.0 <= saved_fs <= 1000.0:
+                report_sampling_rate = saved_fs
+        except Exception:
+            pass
 
-        # Apply report filters (DFT -> EMG -> AC) on lead data
+    short_lead_samples = int(6.0 * report_sampling_rate)
+    rhythm_lead_samples = int(12.0 * report_sampling_rate)
+    four_three_box_points = ECG_LARGE_BOX_MM_HEIGHT * mm_unit
+    four_three_column_boxes = 17.5
+    four_three_column_pitch = 18.0 * four_three_box_points
+    four_three_rhythm_boxes = 51.0
+    four_three_column_samples = 1750
+    four_three_rhythm_samples = 5100
+    effective_wave_speed_mm_s = wave_speed_mm_s * ECG_SPEED_SCALE
+
+    def _normalize_saved_signal(values):
+        if values is None:
+            return None
+        try:
+            signal = np.array(values, dtype=float).flatten()
+        except Exception:
+            return None
+        return signal if signal.size > 0 else None
+
+    def _calculate_derived_lead(lead_name, lead_i_signal, lead_ii_signal):
+        lead_i = np.array(lead_i_signal, dtype=float)
+        lead_ii = np.array(lead_ii_signal, dtype=float)
+
+        if abs(float(np.mean(lead_i)) - ECG_BASELINE_ADC) < 500:
+            lead_i = lead_i - ECG_BASELINE_ADC
+        else:
+            lead_i = lead_i - float(np.mean(lead_i))
+
+        if abs(float(np.mean(lead_ii)) - ECG_BASELINE_ADC) < 500:
+            lead_ii = lead_ii - ECG_BASELINE_ADC
+        else:
+            lead_ii = lead_ii - float(np.mean(lead_ii))
+
+        if lead_name == "III":
+            return lead_ii - lead_i
+        if lead_name == "aVR":
+            return -(lead_i + lead_ii) / 2.0
+        if lead_name == "aVL":
+            lead_iii = lead_ii - lead_i
+            return (lead_i - lead_iii) / 2.0
+        if lead_name == "aVF":
+            lead_iii = lead_ii - lead_i
+            return (lead_ii + lead_iii) / 2.0
+        if lead_name == "-aVR":
+            return (lead_i + lead_ii) / 2.0
+        return None
+
+    def _select_target_samples(is_rhythm_strip=False):
+        if abs(wave_speed_mm_s - 50.0) < 0.1:
+            return (four_three_rhythm_samples if is_rhythm_strip else four_three_column_samples) // 2
+        return four_three_rhythm_samples if is_rhythm_strip else four_three_column_samples
+
+    def _clip_signal(signal, target_samples):
+        if signal is None:
+            return None
+        signal = np.array(signal, dtype=float).flatten()
+        if signal.size == 0:
+            return None
+        if target_samples and signal.size > target_samples:
+            signal = signal[-target_samples:]
+        return signal
+
+    saved_lead_map = {}
+    if saved_ecg_data and isinstance(saved_ecg_data, dict):
+        for lead_name, lead_values in (saved_ecg_data.get("leads") or {}).items():
+            normalized = _normalize_saved_signal(lead_values)
+            if normalized is not None:
+                saved_lead_map[lead_name] = normalized
+
+    if "II" not in saved_lead_map and lead_ii_data:
+        saved_lead_map["II"] = np.array([sample.get("value", 0.0) for sample in lead_ii_data], dtype=float)
+
+    base_lead_i = saved_lead_map.get("I")
+    base_lead_ii = saved_lead_map.get("II")
+    if base_lead_i is not None and base_lead_ii is not None:
+        min_len = min(len(base_lead_i), len(base_lead_ii))
+        if min_len > 0:
+            lead_i_slice = base_lead_i[-min_len:]
+            lead_ii_slice = base_lead_ii[-min_len:]
+            for derived_lead in ("III", "aVR", "aVL", "aVF", "-aVR"):
+                if derived_lead not in saved_lead_map:
+                    derived_signal = _calculate_derived_lead(derived_lead, lead_i_slice, lead_ii_slice)
+                    if derived_signal is not None:
+                        saved_lead_map[derived_lead] = derived_signal
+
+    if "aVR" in saved_lead_map and "-aVR" not in saved_lead_map:
+        saved_lead_map["-aVR"] = -1.0 * np.array(saved_lead_map["aVR"], dtype=float)
+
+    def create_lead_drawing(lead_name, lead_data, x_pos, y_pos, width, height, draw_notch=False):
+        """Create ECG drawing for a single 4:3 strip; returns (trace_path, notch_path, dotted_path)."""
+        if width <= 0:
+            return None
+
+        center_y = y_pos + (height / 2.0)
+        trace_start_x = x_pos
+        notch_path = None
+        notch_width = 0.0
+        notch_tail = 0.0
+        if draw_notch:
+            try:
+                notch_boxes = settings_manager.get_calibration_notch_boxes()
+            except Exception:
+                notch_boxes = 2.0
+
+            notch_width = 5.0 * mm_unit
+            notch_tail = 2.0 * mm_unit
+            notch_height = (notch_boxes * 5.0) * mm_unit
+            notch_x = x_pos + (1.0 * mm_unit)
+
+            notch_path = Path(
+                fillColor=None,
+                strokeColor=colors.HexColor("#000000"),
+                strokeWidth=0.8,
+                strokeLineCap=1,
+                strokeLineJoin=0,
+            )
+            notch_path.moveTo(notch_x, center_y)
+            notch_path.lineTo(notch_x, center_y + notch_height)
+            notch_path.lineTo(notch_x + notch_width, center_y + notch_height)
+            notch_path.lineTo(notch_x + notch_width, center_y)
+            notch_path.lineTo(notch_x + notch_width + notch_tail, center_y)
+
+        adc_data = _normalize_saved_signal(lead_data)
+        if adc_data is None or adc_data.size < 2:
+            baseline_path = Path(
+                fillColor=None,
+                strokeColor=colors.HexColor("#000000"),
+                strokeWidth=0.4,
+                strokeLineCap=1,
+                strokeLineJoin=1,
+            )
+            baseline_path.moveTo(trace_start_x, center_y)
+            baseline_path.lineTo(x_pos + width, center_y)
+            return baseline_path, notch_path, None
+
         try:
             from ecg.ecg_filters import apply_dft_filter, apply_emg_filter, apply_ac_filter, stabilize_report_edges
+
             dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
             emg_setting = str(settings_manager.get_setting("filter_emg", "off")).strip()
             ac_setting = str(settings_manager.get_setting("filter_ac", "off")).strip()
+
             if dft_setting not in ("off", ""):
                 adc_data = apply_dft_filter(adc_data, float(report_sampling_rate), dft_setting)
             if emg_setting not in ("off", ""):
@@ -3593,243 +3676,150 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
             adc_data = stabilize_report_edges(adc_data, float(report_sampling_rate))
         except Exception as filter_err:
             print(f" Report filter apply failed for {lead_name}: {filter_err}")
-                
-        # Apply baseline
-        baseline_adc = ECG_BASELINE_ADC
-        data_mean = np.mean(adc_data)
+
+        data_mean = float(np.mean(adc_data))
         if abs(data_mean - ECG_BASELINE_ADC) < 500:
-            centered_adc = adc_data - baseline_adc
+            centered_adc = adc_data - ECG_BASELINE_ADC
         else:
-            centered_adc = adc_data
-        # Match main ECG report: force centering on baseline
-        centered_adc = centered_adc - np.mean(centered_adc)
-        
-        # Calculate ADC per box
+            centered_adc = adc_data.copy()
+
+        centered_adc = centered_adc - float(np.mean(centered_adc))
+        if centered_adc.size > 20:
+            x_idx = np.arange(centered_adc.size, dtype=float)
+            trend = np.polyval(np.polyfit(x_idx, centered_adc, 1), x_idx)
+            centered_adc = centered_adc - trend
+
+        adc_per_box_multiplier = ADC_PER_BOX_CONFIG.get(lead_name if lead_name in ADC_PER_BOX_CONFIG else "II", 6400.0)
         adc_per_box = adc_per_box_multiplier / max(1e-6, wave_gain_mm_mv)
-                
-        # Convert to boxes offset
-        boxes_offset = centered_adc / adc_per_box
-        
-        # Calculate Y positions
-        center_y = y_pos + (height / 2.0)
-        box_height_points = ECG_LARGE_BOX_MM_HEIGHT * mm_unit
-        ecg_normalized = center_y + (boxes_offset * box_height_points)
-                
-        box_width_points = ECG_LARGE_BOX_MM_WIDTH * mm_unit
-        ecg_width = (54.0 if lead_name == "II" else 27.0) * box_width_points
-        if ecg_width <= 0:
-            return None
+        ecg_normalized = center_y + ((centered_adc / adc_per_box) * four_three_box_points)
 
-        notched_leads = ["V1", "V2", "V3", "II"]
-        trace_start_x = x_pos
-        if lead_name in notched_leads:
-            # Leave visible room for the calibration pulse and a short baseline before the waveform begins.
-            notch_start_offset = 1.0 * mm_unit
-            notch_width = 5.0 * mm_unit
-            notch_tail = 2.0 * mm_unit
-            post_notch_gap = 4.0 * mm_unit
-            trace_start_x = x_pos + notch_start_offset + notch_width + notch_tail + post_notch_gap
-        t = np.linspace(trace_start_x, x_pos + ecg_width, len(adc_data))
-        
-        # Draw ECG waveform
-        ecg_path = Path(fillColor=None, 
-                       strokeColor=colors.HexColor("#000000"), 
-                       strokeWidth=0.4,
-                       strokeLineCap=1,
-                       strokeLineJoin=1)
-        
-        ecg_path.moveTo(t[0], ecg_normalized[0])
+        seconds = np.arange(centered_adc.size, dtype=float) / max(1e-6, float(report_sampling_rate))
+        t = trace_start_x + (seconds * effective_wave_speed_mm_s * mm_unit)
+        visible_mask = t <= (x_pos + width)
+        if not np.any(visible_mask):
+            baseline_path = Path(
+                fillColor=None,
+                strokeColor=colors.HexColor("#000000"),
+                strokeWidth=0.4,
+                strokeLineCap=1,
+                strokeLineJoin=1,
+            )
+            baseline_path.moveTo(trace_start_x, center_y)
+            baseline_path.lineTo(x_pos + width, center_y)
+            return baseline_path, notch_path, None
+
+        t = t[visible_mask]
+        ecg_normalized = ecg_normalized[visible_mask]
+
+        trace_path = Path(
+            fillColor=None,
+            strokeColor=colors.HexColor("#000000"),
+            strokeWidth=0.4,
+            strokeLineCap=1,
+            strokeLineJoin=1,
+        )
+        trace_path.moveTo(t[0], ecg_normalized[0])
         for i in range(1, len(t)):
-            ecg_path.lineTo(t[i], ecg_normalized[i])
-                
-        # Calibration notch styled like the test report for the requested leads only.
-        notch_path = None
-        if lead_name in notched_leads:
-            try:
-                notch_boxes = settings_manager.get_calibration_notch_boxes()
-            except Exception:
-                notch_boxes = 2.0
+            trace_path.lineTo(t[i], ecg_normalized[i])
 
-            notch_width_mm = 5.0
-            notch_height_mm = notch_boxes * 5.0
-            notch_width = notch_width_mm * mm_unit
-            notch_height = notch_height_mm * mm_unit
-
-            # Draw the notch inside the strip instead of hanging outside the page margin.
-            notch_x = x_pos + (1.0 * mm_unit)
-            notch_y_base = center_y
-            
-            notch_path = Path(
-                fillColor=None,
-                strokeColor=colors.HexColor("#000000"),
-                strokeWidth=0.8,
-                strokeLineCap=1,
-                strokeLineJoin=0
-            )
-            notch_path.moveTo(notch_x, notch_y_base)
-            notch_path.lineTo(notch_x, notch_y_base + notch_height)
-            notch_path.lineTo(notch_x + notch_width, notch_y_base + notch_height)
-            notch_path.lineTo(notch_x + notch_width, notch_y_base)
-            # Small forward tail to match the clinical calibration pulse look.
-            notch_path.lineTo(notch_x + notch_width + (2.0 * mm_unit), notch_y_base)
-
-        # Dotted continuation / markers
         dotted_path = None
-        if lead_name in ["V1", "V2", "V3"]:
-            # Vertical dotted marker at end of graph (after 27 boxes ≈ 140.7mm)
+        if t[-1] < (x_pos + width - 1.0):
             dotted_path = Path(
                 fillColor=None,
                 strokeColor=colors.HexColor("#000000"),
                 strokeWidth=0.4,
                 strokeLineCap=1,
                 strokeLineJoin=1,
-                strokeDashArray=[2, 3]
+                strokeDashArray=[2, 3],
             )
-            marker_x = x_pos + (27.0 * box_width_points)  # Mark at end of 27-box width
-            dotted_path.moveTo(marker_x, y_pos)
-            dotted_path.lineTo(marker_x, y_pos + height)
-        elif width > ecg_width:
-            dotted_path = Path(
-                fillColor=None,
-                strokeColor=colors.HexColor("#000000"),
-                strokeWidth=0.4,
-                strokeLineCap=1,
-                strokeLineJoin=1,
-                strokeDashArray=[2, 3]
-            )
-            dotted_path.moveTo(x_pos + ecg_width, center_y)
+            dotted_path.moveTo(t[-1], center_y)
             dotted_path.lineTo(x_pos + width, center_y)
-        
-        return ecg_path, notch_path, dotted_path
-    
-    # Layout configuration
-    # Left column: V1, V2, V3 (stacked vertically)
-    # Right column: V4, V5, V6 (stacked vertically)
-    # Bottom: Lead II (full width)
-    
-    lead_height = 60  # Height per lead
-    lead_spacing = 10  # Spacing between leads
-    column_width = 360  # Width for each column
-    left_col_x = 0    # Further left
-    right_col_x = 360  # Further left
-    
-    # Y positions for V1-V6 (starting from top, below patient info)
-    v_leads_y_start = 390  # Top of V1/V4 row, leaving room for header labels
-    v_leads_y_positions = [
-        v_leads_y_start,  # V1/V4
-        v_leads_y_start - (lead_height + lead_spacing),  # V2/V5
-        v_leads_y_start - 2 * (lead_height + lead_spacing),  # V3/V6
-    ]
-    
-    # Lead II position (bottom, full width)
-    lead_ii_y = 140
-    lead_ii_height = 80
-    lead_ii_x = 0
-    lead_ii_width = total_width - 10  # Wider span
-    
-    # Get V1-V6 data from saved ECG data
-    v_leads_data = {}
-    if saved_ecg_data and 'leads' in saved_ecg_data:
-        for lead_name in ['V1', 'V2', 'V3', 'V4', 'V5', 'V6']:
-            if lead_name in saved_ecg_data['leads']:
-                lead_data = saved_ecg_data['leads'][lead_name]
-                if isinstance(lead_data, list) and len(lead_data) > 0:
-                    lead_array = np.array(lead_data, dtype=float)
-                    if num_samples_to_capture and len(lead_array) > num_samples_to_capture:
-                        lead_array = lead_array[-num_samples_to_capture:]
-                    v_leads_data[lead_name] = lead_array
-                elif isinstance(lead_data, np.ndarray) and len(lead_data) > 0:
-                    lead_array = lead_data
-                    if num_samples_to_capture and len(lead_array) > num_samples_to_capture:
-                        lead_array = lead_array[-num_samples_to_capture:]
-                    v_leads_data[lead_name] = lead_array
-    
-    # Draw V1-V6 leads
-    left_leads = ['V1', 'V2', 'V3']
-    right_leads = ['V4', 'V5', 'V6']
-    
-    for idx, lead_name in enumerate(left_leads):
-        y_pos = v_leads_y_positions[idx]
-        if lead_name in v_leads_data:
-            graph_x = left_col_x + 10 - (4 * mm_unit)  # shift 4mm further left
-            graph_y = y_pos
-            graph_width = column_width - 40
-            
-            # Add lead label
-            lead_label = String(left_col_x + 5, y_pos + lead_height + 4, lead_name,
-                               fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
-            master_drawing.add(lead_label)
-            
-            # Create and add ECG drawing
-            result = create_lead_drawing(lead_name, v_leads_data[lead_name],
-                                          graph_x, graph_y, graph_width, lead_height)
+
+        return trace_path, notch_path, dotted_path
+
+    chest_lead_rows = [("V1", "V4"), ("V2", "V5"), ("V3", "V6")]
+    short_lead_height = 60
+    rhythm_lead_height = 80
+    row_y_positions = [390, 320, 250]
+    rhythm_y = 140
+    short_strip_width = 27.0 * ECG_LARGE_BOX_MM_WIDTH * mm_unit
+    rhythm_strip_width = 54.0 * ECG_LARGE_BOX_MM_WIDTH * mm_unit
+    left_column_x = 0.0
+    right_column_x = total_width - short_strip_width
+
+    successful_graphs = 0
+    for row_index, (left_lead, right_lead) in enumerate(chest_lead_rows):
+        y_pos = row_y_positions[row_index]
+        for col_index, lead_name in enumerate((left_lead, right_lead)):
+            x_pos = left_column_x if col_index == 0 else right_column_x
+            master_drawing.add(
+                String(
+                    x_pos + (3.5 * mm_unit),
+                    y_pos + short_lead_height + 4,
+                    lead_name,
+                    fontSize=10,
+                    fontName=FONT_TYPE_BOLD,
+                    fillColor=colors.black,
+                )
+            )
+
+            lead_signal = _clip_signal(saved_lead_map.get(lead_name), short_lead_samples)
+            result = create_lead_drawing(
+                lead_name,
+                lead_signal,
+                x_pos,
+                y_pos,
+                short_strip_width,
+                short_lead_height,
+                draw_notch=(col_index == 0),
+            )
             if result:
-                ecg_path, notch_path, dotted_path = result
-                if ecg_path:
-                    master_drawing.add(ecg_path)
+                trace_path, notch_path, dotted_path = result
+                if trace_path:
+                    master_drawing.add(trace_path)
                 if notch_path:
                     master_drawing.add(notch_path)
                 if dotted_path:
                     master_drawing.add(dotted_path)
-    
-    # Shift V4, V5, V6 graphs and labels 20mm to the right
-    v4_v5_v6_shift = 20.0 * mm_unit  # 20mm shift to the right
-    
-    for idx, lead_name in enumerate(right_leads):
-        y_pos = v_leads_y_positions[idx]
-        if lead_name in v_leads_data:
-            # V4, V5, V6 should be in right column, shifted 20mm to the right
-            graph_x = right_col_x + 10 - (4 * mm_unit) + v4_v5_v6_shift  # Shift 20mm to the right
-            graph_y = y_pos
-            graph_width = column_width - 40 + (27.0 * mm_unit)  
-            
-            # Add lead label, also shifted 20mm to the right
-            lead_label_x = right_col_x + 5 + v4_v5_v6_shift  # Shift label 20mm to the right
-            lead_label = String(lead_label_x, y_pos + lead_height + 4, lead_name,
-                               fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
-            master_drawing.add(lead_label)
-            
-            # Create and add ECG drawing
-            result = create_lead_drawing(lead_name, v_leads_data[lead_name],
-                                          graph_x, graph_y, graph_width, lead_height)
-            if result:
-                ecg_path, notch_path, dotted_path = result
-                if ecg_path:
-                    master_drawing.add(ecg_path)
-                if notch_path:
-                    master_drawing.add(notch_path)
-                if dotted_path:
-                    master_drawing.add(dotted_path)
-                
-    # Draw Lead II at bottom (full width)
-    if lead_ii_data and len(lead_ii_data) > 0:
-        # Get first segment of Lead II data (first 10 seconds or available)
-        lead_ii_values = np.array([d['value'] for d in lead_ii_data[:5500]], dtype=float)
-        
-        graph_x = lead_ii_x + 10 - (4 * mm_unit)  # shift 4mm further left
-        graph_y = lead_ii_y
-        graph_width = lead_ii_width - 40
-        
-        # Add Lead II label
-        lead_ii_label = String(lead_ii_x + 5, lead_ii_y + lead_ii_height + 4, "Lead II",
-                              fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
-        master_drawing.add(lead_ii_label)
-        
-        # Create and add Lead II ECG drawing
-        result = create_lead_drawing('II', lead_ii_values,
-                                      graph_x, graph_y, graph_width, lead_ii_height)
-        if result:
-            ecg_path, notch_path, dotted_path = result
-            if ecg_path:
-                master_drawing.add(ecg_path)
-            if notch_path:
-                master_drawing.add(notch_path)
-            if dotted_path:
-                master_drawing.add(dotted_path)
-        print(f" Added Lead II graph at bottom ({len(lead_ii_values)} samples)")
-                
-    successful_graphs = len([l for l in left_leads + right_leads if l in v_leads_data]) + (1 if lead_ii_data else 0)
-    print(f" Created {successful_graphs} ECG graphs: V1-V6 ({len([l for l in left_leads + right_leads if l in v_leads_data])}) + Lead II")
+                successful_graphs += 1
+
+    rhythm_signal = _clip_signal(saved_lead_map.get("II"), rhythm_lead_samples)
+    if rhythm_signal is None and lead_ii_data:
+        rhythm_signal = _clip_signal(
+            np.array([sample.get("value", 0.0) for sample in lead_ii_data], dtype=float),
+            rhythm_lead_samples,
+        )
+
+    master_drawing.add(
+        String(
+            3.5 * mm_unit,
+            rhythm_y + rhythm_lead_height + 4,
+            "Lead II",
+            fontSize=10,
+            fontName=FONT_TYPE_BOLD,
+            fillColor=colors.black,
+        )
+    )
+    rhythm_result = create_lead_drawing(
+        "II",
+        rhythm_signal,
+        0.0,
+        rhythm_y,
+        rhythm_strip_width,
+        rhythm_lead_height,
+        draw_notch=True,
+    )
+    if rhythm_result:
+        trace_path, notch_path, dotted_path = rhythm_result
+        if trace_path:
+            master_drawing.add(trace_path)
+        if notch_path:
+            master_drawing.add(notch_path)
+        if dotted_path:
+            master_drawing.add(dotted_path)
+        successful_graphs += 1
+
+    print(f" Created {successful_graphs} ECG strips in hyperkalemia chest-lead layout (V1-V6 + long Lead II)")
     
     # ==================== ADD PATIENT INFO TO PAGE 2 (LANDSCAPE MODE - POSITIONED PROPERLY) ====================
     header_y_shift = 5.2 * mm_unit
