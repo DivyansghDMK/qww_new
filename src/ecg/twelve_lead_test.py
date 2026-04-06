@@ -725,6 +725,7 @@ class ECGTestPage(QWidget):
         self.countdown_timers = []  # Store active QTimer instances for cancellation
 
         self.grid_widget = QWidget()
+        self.grid_widget.setStyleSheet("background: #f3f4f6;")
         self.detailed_widget = QWidget()
         self.page_stack = QStackedLayout()
         self.page_stack.addWidget(self.grid_widget)
@@ -808,6 +809,10 @@ class ECGTestPage(QWidget):
 
         # Flatline detection state: track leads where we've already shown an alert
         self._flatline_alert_shown = [False] * 12
+        # Lead connection tracking (from packet connected flags)
+        self._lead_connection_state = {lead: True for lead in self.leads}
+        self._lead_last_valid_value = {lead: 0.0 for lead in self.leads}
+        self._last_off_leads_signature = None
         self._prev_p_axis = None  # Track P-axis for safety assertions
         self._prev_qrs_axis = None
         self._prev_t_axis = None
@@ -820,26 +825,6 @@ class ECGTestPage(QWidget):
         self.elapsed_timer.timeout.connect(self.update_elapsed_time)
 
         main_vbox = QVBoxLayout()
-
-        menu_frame = QGroupBox("Menu")
-
-        menu_frame.setStyleSheet("""
-            QGroupBox {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                    stop:0 #ffffff, stop:1 #f8f9fa);
-                border: 2px solid #e9ecef;
-                border-radius: 16px;
-                margin-top: 12px;
-                padding: 16px;
-                font-weight: bold;
-            }
-            QGroupBox::title {
-                color: #495057;
-                font-size: 16px;
-                font-weight: bold;
-                padding: 8px;
-            }
-        """)
 
         # Enhanced Menu Panel - Make it responsive and compact
         menu_container = QWidget()
@@ -1153,6 +1138,16 @@ class ECGTestPage(QWidget):
         self.metrics_frame.setMaximumHeight(120)
         self.metrics_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         main_vbox.addWidget(self.metrics_frame)
+        
+        # Lead connection status (top label only; no popup alerts)
+        self.lead_status_label = QLabel("Leads: All connected")
+        self.lead_status_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.lead_status_label.setStyleSheet(
+            "color: #2e7d32; font-size: 12px; font-weight: bold; padding: 2px 6px;"
+        )
+        self.lead_status_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        main_vbox.addWidget(self.lead_status_label)
+        self._set_lead_status_label([])
         
         # Ensure metrics are reset to zero after frame creation
         self.reset_metrics_to_zero()
@@ -4058,6 +4053,53 @@ class ECGTestPage(QWidget):
         
         return metrics_frame
 
+    def _set_lead_status_label(self, off_leads: List[str]):
+        """Show lead-off status in top label (never use popup for lead-off)."""
+        try:
+            if not hasattr(self, 'lead_status_label') or self.lead_status_label is None:
+                return
+            off_leads = list(off_leads or [])
+            signature = tuple(off_leads)
+            if signature == self._last_off_leads_signature:
+                return
+            self._last_off_leads_signature = signature
+            if not off_leads:
+                self.lead_status_label.setText("Leads: All connected")
+                self.lead_status_label.setStyleSheet(
+                    "color: #2e7d32; font-size: 12px; font-weight: bold; padding: 2px 6px;"
+                )
+            elif len(off_leads) == 1:
+                self.lead_status_label.setText(f"Lead Off: {off_leads[0]}")
+                self.lead_status_label.setStyleSheet(
+                    "color: #c62828; font-size: 12px; font-weight: bold; padding: 2px 6px;"
+                )
+            else:
+                joined = ", ".join(off_leads)
+                self.lead_status_label.setText(f"Leads Off ({len(off_leads)}): {joined}")
+                self.lead_status_label.setStyleSheet(
+                    "color: #c62828; font-size: 12px; font-weight: bold; padding: 2px 6px;"
+                )
+        except Exception:
+            pass
+
+    def _on_lead_reconnected(self, lead_index: int, lead_name: str, value: float):
+        """Reset per-lead state when a previously disconnected lead reconnects."""
+        try:
+            if lead_index < len(self.data):
+                self.data[lead_index].fill(float(value))
+            if hasattr(self, '_baseline_anchors') and lead_index < len(self._baseline_anchors):
+                self._baseline_anchors[lead_index] = float(value)
+            if hasattr(self, '_sweep_cursor_state') and isinstance(self._sweep_cursor_state, dict):
+                self._sweep_cursor_state.pop(('serial', lead_index), None)
+                self._sweep_cursor_state.pop(('live', lead_index), None)
+            if hasattr(self, '_y_range_update_count') and isinstance(self._y_range_update_count, dict):
+                self._y_range_update_count[lead_index] = 0
+            if lead_index < len(self._flatline_alert_shown):
+                self._flatline_alert_shown[lead_index] = False
+            print(f"Lead reconnected: {lead_name}")
+        except Exception as e:
+            print(f"Error restoring lead after reconnect ({lead_name}): {e}")
+
     def update_ecg_metrics_on_top_of_lead_graphs(self, intervals):
         # BPM FREEZE: Don't update heart rate display during report generation
         if getattr(self, '_report_generating', False):
@@ -5629,6 +5671,11 @@ class ECGTestPage(QWidget):
         baud = self.settings_manager.get_baud_rate()
 
         print(f"Starting acquisition with configured Port: {port}, Baud: {baud}")
+        # Reset lead connection tracking for fresh acquisition session.
+        self._lead_connection_state = {lead: True for lead in self.leads}
+        self._lead_last_valid_value = {lead: 0.0 for lead in self.leads}
+        self._last_off_leads_signature = None
+        self._set_lead_status_label([])
 
         # --- START HOLTER SESSION IF ENABLED ---
         if self.holter_mode_enabled:
@@ -8142,9 +8189,20 @@ class ECGTestPage(QWidget):
             session_dir = os.path.dirname(ecgh_path)
             self._holter_ui.load_completed_session(session_dir)
         
+        if show_record_mgmt and hasattr(self._holter_ui, '_record_mgmt_panel'):
+            try:
+                from .holter.holter_ui import _resolve_recordings_dir
+                self._holter_ui._record_mgmt_panel.output_dir = _resolve_recordings_dir(
+                    getattr(self._holter_ui, 'session_dir', '')
+                )
+                self._holter_ui._record_mgmt_panel.refresh_records()
+            except Exception:
+                pass
+
         if show_record_mgmt and hasattr(self._holter_ui, '_tabs'):
             for i in range(self._holter_ui._tabs.count()):
-                if "Record Mgmt" in self._holter_ui._tabs.tabText(i):
+                tab_text = self._holter_ui._tabs.tabText(i)
+                if "Record Mgmt" in tab_text or "Manage Records" in tab_text:
                     self._holter_ui._tabs.setCurrentIndex(i)
                     break
 
@@ -8267,7 +8325,8 @@ class ECGTestPage(QWidget):
         self._holter_writer = HolterStreamWriter(
             output_dir=out_dir,
             patient_info=patient_info,
-            fs=500
+            fs=500,
+            chunk_seconds=5,
         )
         
         # Start recording
@@ -8276,9 +8335,7 @@ class ECGTestPage(QWidget):
         # Start analysis worker thread
         self._holter_worker = HolterAnalysisWorker(
             analysis_queue=self._holter_writer.analysis_queue,
-            on_chunk_done=lambda result: self._holter_writer.update_live_stats(
-                result.get('hr_mean', 0), result.get('arrhythmias', [])
-            ),
+            on_chunk_done=self._holter_writer.update_live_analysis,
             fs=500
         )
         self._holter_worker.start()
@@ -8516,15 +8573,6 @@ class ECGTestPage(QWidget):
                                 lead_name = self.leads[i] if i < len(self.leads) else f"Lead {i+1}"
                                 if is_flat and not self._flatline_alert_shown[i]:
                                     self._flatline_alert_shown[i] = True
-                                    try:
-                                        QMessageBox.warning(
-                                            self,
-                                            "Flatline Detected",
-                                            f"{lead_name} appears flat (no significant signal).\n"
-                                            "Please check the electrode/lead connection."
-                                        )
-                                    except Exception as warn_err:
-                                        print(f" Flatline warning failed for {lead_name}: {warn_err}")
                                 elif not is_flat:
                                     # Reset flag when signal returns
                                     self._flatline_alert_shown[i] = False
@@ -8653,13 +8701,28 @@ class ECGTestPage(QWidget):
                             try:
                                 if i < len(self.data) and lead_name in packet:
                                     value = packet[lead_name]
+                                    was_connected = self._lead_connection_state.get(lead_name, True)
+                                    if value is None:
+                                        self._lead_connection_state[lead_name] = False
+                                        # Keep stable flat trace while disconnected.
+                                        write_value = float(self._lead_last_valid_value.get(lead_name, 0.0))
+                                    else:
+                                        write_value = float(value)
+                                        self._lead_last_valid_value[lead_name] = write_value
+                                        self._lead_connection_state[lead_name] = True
+                                        if not was_connected:
+                                            self._on_lead_reconnected(i, lead_name, write_value)
                                     # Update circular buffer
                                     self.data[i] = np.roll(self.data[i], -1)
                                     # Store raw data (filtering happens during display)
-                                    self.data[i][-1] = value
+                                    self.data[i][-1] = write_value
                             except Exception as e:
                                 print(f" Error updating data buffer {i} ({lead_name}): {e}")
                                 continue
+
+                        # Top status label: show all disconnected leads (no popup).
+                        off_leads = [ld for ld in lead_order if not self._lead_connection_state.get(ld, True)]
+                        self._set_lead_status_label(off_leads)
 
                         # Publish a multi-lead snapshot for fusion detectors.
                         # (Key names must match what ArrhythmiaDetector expects.)
@@ -8953,15 +9016,6 @@ class ECGTestPage(QWidget):
                                 lead_name = self.leads[i] if i < len(self.leads) else f"Lead {i+1}"
                                 if is_flat and not self._flatline_alert_shown[i]:
                                     self._flatline_alert_shown[i] = True
-                                    try:
-                                        QMessageBox.warning(
-                                            self,
-                                            "Flatline Detected",
-                                            f"{lead_name} appears flat (no significant signal).\n"
-                                            f"Please check the electrode/lead connection."
-                                        )
-                                    except Exception as warn_err:
-                                        print(f" Flatline warning failed for {lead_name}: {warn_err}")
                                 elif not is_flat:
                                     # Reset flag when signal returns
                                     self._flatline_alert_shown[i] = False

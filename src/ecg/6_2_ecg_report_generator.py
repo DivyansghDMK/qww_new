@@ -3009,15 +3009,15 @@ def generate_6_2_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
 
     # LEFT SIDE: Patient Info (TOP LEFT CORNER - moved up by 10 points)
     patient_name_label = String(-5, 550, f"Name: {full_name}",  # Moved up 10 points (550)
-                           fontSize=10, fontName="Helvetica", fillColor=colors.black)
+                           fontSize=9, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(patient_name_label)
 
     patient_age_label = String(-5, 530, f"Age: {age}",  # Moved up 10 points (530)
-                          fontSize=10, fontName="Helvetica", fillColor=colors.black)
+                          fontSize=9, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(patient_age_label)
 
     patient_gender_label = String(-5, 510, f"Gender: {gender}",  # Moved up 10 points (510)
-                             fontSize=10, fontName="Helvetica", fillColor=colors.black)
+                             fontSize=9, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(patient_gender_label)
 
     # RIGHT SIDE: Vital Parameters at SAME LEVEL as patient info (ABOVE ECG GRAPH)
@@ -3034,34 +3034,34 @@ def generate_6_2_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
     # Add vital parameters in TWO COLUMNS (ALIGNED with patient info - moved up by 10 points) - SHIFTED UP 5 more points
     # FIRST COLUMN (Left side - x=130) - ALIGNED and moved up
     hr_label = String(130, 555, f"HR    : {HR} bpm",  # Moved up 5 points from 550 to 555
-                     fontSize=10, fontName="Helvetica", fillColor=colors.black)
+                     fontSize=9, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(hr_label)
 
     pr_label = String(130, 541, f"PR    : {PR} ms",  # Moved up 5 points from 530 to 535
-                     fontSize=10, fontName="Helvetica", fillColor=colors.black)
+                     fontSize=9, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(pr_label)
 
     qrs_label = String(130, 527, f"QRS : {QRS} ms",  # Moved up 5 points from 510 to 515
-                      fontSize=10, fontName="Helvetica", fillColor=colors.black)
+                      fontSize=9, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(qrs_label)
     
     rr_label = String(130, 510, f"RR    : {RR} ms",  # Moved up 5 points from 490 to 495
-                     fontSize=10, fontName="Helvetica", fillColor=colors.black)
+                     fontSize=9, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(rr_label)
 
     qt_label = String(130, 496, f"QT    : {int(round(QT))} ms",  # Moved up 5 points from 470 to 475
-                     fontSize=10, fontName="Helvetica", fillColor=colors.black)
+                     fontSize=9, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(qt_label)
 
     qtc_label = String(130, 482, f"QTc  : {int(round(QTc))} ms",  # Moved up 5 points from 450 to 455
-                      fontSize=10, fontName="Helvetica", fillColor=colors.black)
+                      fontSize=9, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(qtc_label)
 
     # SECOND COLUMN (Right side) - QTcF replaces ST
     _qtcf_val = data.get('QTc_Fridericia') or data.get('QTcF_ms') or data.get('QTcF') or data.get('QTcF_interval')
     _qtcf_display = f"{int(round(float(_qtcf_val)))} ms" if _qtcf_val and float(_qtcf_val) > 0 else "-- ms"
     qtcf_header_label = String(240, 496, f"QTcF : {_qtcf_display}",
-                               fontSize=10, fontName="Helvetica", fillColor=colors.black)
+                               fontSize=9, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(qtcf_header_label)
 
     # CALCULATED wave amplitudes and lead-specific measurements
@@ -3666,20 +3666,25 @@ def generate_6_2_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
     except Exception:
         doctor = ""
   
+    # Reference Report Confirmed by (above Doctor Name)
+    confirmed_label = String(-15, 35, "Reference Report Confirmed by: ", 
+                              fontSize=8, fontName="Helvetica", fillColor=colors.black)
+    master_drawing.add(confirmed_label)
+
     # Doctor Name (below V6 lead) - SHIFTED 15 points right and 30 points up
     doctor_name_label = String(-15, 20, "Doctor Name: ",  # X: -30→-15 (right 15), Y: -10→20 (up 30)
-                              fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
+                              fontSize=8, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(doctor_name_label)
     
     if doctor:
-        value_x = -15 + stringWidth("Doctor Name: ", "Helvetica-Bold", 10) + 5  # Updated X position
+        value_x = -15 + stringWidth("Doctor Name: ", "Helvetica", 8) + 5  # Updated X position
         doctor_name_value = String(value_x, 20, doctor,  # Updated Y position
-                                fontSize=10, fontName="Helvetica", fillColor=colors.black)
+                                fontSize=8, fontName="Helvetica", fillColor=colors.black)
         master_drawing.add(doctor_name_value)
 
     # Doctor Signature (below Doctor Name) - SHIFTED 15 points right and 30 points up
     doctor_sign_label = String(-15, 5, "Doctor Sign: ",  # X: -30→-15 (right 15), Y: -25→5 (up 30)
-                              fontSize=10, fontName="Helvetica-Bold", fillColor=colors.black)
+                              fontSize=8, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(doctor_sign_label)
 
     # Add RIGHT-SIDE Conclusion Box (moved to the right) - NOW DYNAMIC FROM DASHBOARD (12 conclusions max) - MADE SMALLER
@@ -3702,47 +3707,32 @@ def generate_6_2_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
                               textAnchor="middle")  # This centers the text
     master_drawing.add(conclusion_header)
     
-    # DYNAMIC conclusions from dashboard in the box - ONLY REAL CONCLUSIONS (no empty/---)
-    # Split filtered conclusions into rows (2 conclusions per row) - COMPACT SPACING
+    # DYNAMIC conclusions from dashboard in the box - SINGLE COLUMN to avoid overlapping
     print(f" Drawing conclusions in graph from filtered list: {filtered_conclusions}")
     
-    # Calculate how many rows we need based on actual conclusions
-    num_conclusions = len(filtered_conclusions)
-    num_rows = (num_conclusions + 1) // 2  # Round up division for rows
+    # Draw conclusions vertically in a single column
+    row_spacing = 10  # Increased vertical spacing
+    start_y = conclusion_y_start - 12  # Starting Y position (further down from top)
+    box_bottom = conclusion_y_start - 55  # Bottom edge of the box
     
-    # Split into rows (2 conclusions per row)
-    conclusion_rows = []
-    for i in range(0, num_conclusions, 2):
-        row_conclusions = filtered_conclusions[i:i+2]
-        conclusion_rows.append(row_conclusions)
-    
-    print(f"   Total conclusions: {num_conclusions}, Rows needed: {num_rows}")
-    for idx, row in enumerate(conclusion_rows):
-        print(f"   Row {idx+1}: {row}")
-    
-    # Draw conclusions row by row - ONLY REAL ONES with proper numbering
-    row_spacing = 8  # Vertical spacing between rows
-    start_y = conclusion_y_start - 10  # Starting Y position
-    
-    conclusion_num = 1  # Start numbering from 1
-    for row_idx, row_conclusions in enumerate(conclusion_rows):
-        row_y = start_y - (row_idx * row_spacing)
+    for idx, conclusion in enumerate(filtered_conclusions):
+        row_y = start_y - (idx * row_spacing)
         
-        for col_idx, conclusion in enumerate(row_conclusions):
-            # Truncate long conclusions
-            display_conclusion = conclusion[:30] + "..." if len(conclusion) > 30 else conclusion
-            conc_text = f"{conclusion_num}. {display_conclusion}"
+        # User request: If getting cropped (exceeds box height), don't put in this.
+        if row_y < box_bottom + 5:  # 5 points padding from bottom
+            print(f" Skipping conclusion {idx+1} as it would be cropped")
+            continue
             
-            # Position horizontally across the box (2 conclusions per row) - shifted right 75 points
-            x_pos = 460 + (col_idx * 160)  # Shifted right 75 points from 385 to 460
+        conc_text = f"{idx + 1}. {conclusion}"
+        
+        # Position horizontally in a single column - shifted right
+        x_pos = 460  # Align with the box's left side
+        
+        conc = String(x_pos, row_y, conc_text, 
+                     fontSize=9, fontName="Helvetica", fillColor=colors.black)
+        master_drawing.add(conc)
             
-            conc = String(x_pos, row_y, conc_text, 
-                         fontSize=9, fontName="Helvetica", fillColor=colors.black)
-            master_drawing.add(conc)
-            
-            conclusion_num += 1  # Increment for next conclusion
-
-    print(f" Added Patient Info, Vital Parameters, {len(filtered_conclusions)} REAL Conclusions (no empty/---), and Doctor Name/Signature to ECG grid")
+    print(f" Added {len(filtered_conclusions)} REAL Conclusions in single column (no cropping)")
     
     # STEP 5: Add SINGLE master drawing to story (NO containers)
     story.append(master_drawing)
@@ -3862,27 +3852,27 @@ def generate_6_2_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
             y_pos = doc.height + doc.bottomMargin - 5  # 20 points from top
             
             # Always draw "Org." label with value
-            canvas.setFont("Helvetica-Bold", 10)
+            canvas.setFont("Helvetica-Bold", 9)
             canvas.setFillColor(colors.black)
             org_label = "Org:"
             canvas.drawString(x_pos, y_pos, org_label)
             
             # Calculate width of label and add small gap
-            org_label_width = canvas.stringWidth(org_label, "Helvetica-Bold", 10)
-            canvas.setFont("Helvetica", 10)
+            org_label_width = canvas.stringWidth(org_label, "Helvetica-Bold", 9)
+            canvas.setFont("Helvetica", 9)
             canvas.drawString(x_pos + org_label_width + 5, y_pos, patient.get("Org.", "") if patient else "")
             
             y_pos -= 15  # Move down for next line
             
             # Always draw "Phone No." label with value
-            canvas.setFont("Helvetica-Bold", 10)
+            canvas.setFont("Helvetica-Bold", 9)
             canvas.setFillColor(colors.black)
             phone_label = "Phone No:"
             canvas.drawString(x_pos, y_pos, phone_label)
             
             # Calculate width of label and add small gap
-            phone_label_width = canvas.stringWidth(phone_label, "Helvetica-Bold", 10)
-            canvas.setFont("Helvetica", 10)
+            phone_label_width = canvas.stringWidth(phone_label, "Helvetica-Bold", 9)
+            canvas.setFont("Helvetica", 9)
             canvas.drawString(x_pos + phone_label_width + 5, y_pos, patient.get("doctor_mobile", "") if patient else "")
             
             canvas.restoreState()

@@ -17,7 +17,6 @@ from PyQt5.QtGui import QFont, QColor
 from PyQt5.QtCore import Qt, QTimer
 # import pyqtgraph as pg  # Lazy loaded in methods
 from scipy.signal import find_peaks, butter, filtfilt
-from scipy.ndimage import gaussian_filter1d
 
 # Try to import serial
 try:
@@ -44,6 +43,7 @@ except ImportError:
 from utils.settings_manager import SettingsManager
 from utils.crash_logger import get_crash_logger
 from utils.patient_profile import resolve_patient_profile
+from ecg.ui import display_updates as shared_display_updates
 from dashboard.history_window import append_history_entry
 
 # Import ECGTestPage + helpers to reuse EXACT same calculation + smoothing as 12‑lead test
@@ -381,8 +381,16 @@ class HyperkalemiaTestWindow(QWidget):
             'V6': '#ee5a24'      # Dark Orange
         }
         
-        # Arrange in 2 columns (II on top full width, then V1-V6 in 3 rows)
-        positions = [(0, 0), (1, 0), (1, 1), (2, 0), (2, 1), (3, 0), (3, 1)]
+        # Arrange in 2 columns (V1-V6 first, Lead II at the last bottom row full width)
+        positions = {
+            'V1': (0, 0),
+            'V2': (0, 1),
+            'V3': (1, 0),
+            'V4': (1, 1),
+            'V5': (2, 0),
+            'V6': (2, 1),
+            'II': (3, 0),
+        }
         
         # Consistent colors from 12-lead dashboard
         lead_colors = {
@@ -402,26 +410,32 @@ class HyperkalemiaTestWindow(QWidget):
             plot_widget.setMenuEnabled(False)
             plot_widget.showGrid(x=False, y=False)
             
-            # Show Y-axis labels to indicate 0-4096 range
+            # Hide Y-axis numeric labels (clean clinical look)
             plot_widget.getAxis('left').setPen('k')
-            plot_widget.getAxis('left').setTextPen('k')
+            plot_widget.getAxis('left').setStyle(showValues=False)
             plot_widget.getAxis('bottom').setTextPen('k')
             plot_widget.getAxis('bottom').setPen('k')
             
             lead_color = lead_colors.get(lead_name, '#000000')
             plot_widget.setTitle(f"Lead {lead_name}", color=lead_color, size='11pt')
             
-            # Set initial Y-range (matching 12-lead dashboard style)
-            # Set initial Y-range (Raw ADC 0-4096)
-            plot_widget.setYRange(0, 4096, padding=0)
+            # Fixed raw-ADC Y ranges (same as 12-lead style)
+            if lead_name == 'aVR':
+                plot_widget.setYRange(0, -4096, padding=0)
+            else:
+                plot_widget.setYRange(0, 4096, padding=0)
             
             # Add center line at 2048
-            center_line = pg.InfiniteLine(pos=2048, angle=0, pen=pg.mkPen(color='gray', width=0.5, style=Qt.DashLine))
+            center_pos = -2048 if lead_name == 'aVR' else 2048
+            center_line = pg.InfiniteLine(pos=center_pos, angle=0, pen=pg.mkPen(color='gray', width=0.5, style=Qt.DashLine))
             plot_widget.addItem(center_line)
 
             vb = plot_widget.getViewBox()
             if vb is not None:
-                vb.setLimits(yMin=0, yMax=4096)
+                if lead_name == 'aVR':
+                    vb.setLimits(yMin=-4096, yMax=0)
+                else:
+                    vb.setLimits(yMin=0, yMax=4096)
                 try:
                     vb.setRange(xRange=(0.0, 3.0))
                 except Exception:
@@ -434,9 +448,9 @@ class HyperkalemiaTestWindow(QWidget):
             self.plot_curves[lead_name] = plot_curve
             self.data_lines[lead_name] = plot_curve
             
-            row, col = positions[i]
+            row, col = positions[lead_name]
             if lead_name == 'II':
-                plot_layout.addWidget(plot_widget, 0, 0, 1, 2) # Lead II spanning 2 columns
+                plot_layout.addWidget(plot_widget, row, col, 1, 2) # Lead II spanning 2 columns at bottom
             else:
                 plot_layout.addWidget(plot_widget, row, col)
         
@@ -500,6 +514,15 @@ class HyperkalemiaTestWindow(QWidget):
             self.ecg_calculator.last_qrs_duration = 0
             self.ecg_calculator.last_qt_interval = 0
             self.ecg_calculator.last_qtc_interval = 0
+            self.ecg_calculator.last_qtcf_interval = 0
+            self.ecg_calculator.last_rr_interval = 0
+            self.ecg_calculator.last_heart_rate = 0
+
+        try:
+            shared_display_updates._last_valid.clear()
+        except Exception:
+            pass
+        self._last_metric_update_ts = 0.0
 
         # Get port from settings or auto-detect
         port_to_use = self.settings_manager.get_serial_port()
@@ -606,6 +629,15 @@ class HyperkalemiaTestWindow(QWidget):
             self.status_label.setText("Status: Capturing from serial port...")
             self.status_label.setStyleSheet("color: #28a745; padding: 5px;")
             self._silent_data_warned = False
+
+            if 'heart_rate' in self.metric_labels:
+                self.metric_labels['heart_rate'].setText("00 BPM")
+            if 'pr_interval' in self.metric_labels:
+                self.metric_labels['pr_interval'].setText("0 ms")
+            if 'qrs_duration' in self.metric_labels:
+                self.metric_labels['qrs_duration'].setText("0 ms")
+            if 'qtc_interval' in self.metric_labels:
+                self.metric_labels['qtc_interval'].setText("0 ms")
             
             # ── Start HolterBPMController ───────────────────────────────────────
             # Bar removed as per user request
@@ -866,12 +898,15 @@ class HyperkalemiaTestWindow(QWidget):
             # Update all plots with stable display window
             for lead_name in self.lead_data.keys():
                 if len(self.lead_data[lead_name]) > 0:
-                    # 25 mm/s → ~3 s window (wave speed logic disabled for Hyperkalemia test)
+                    # Match 12-lead style window size for sharper, consistent motion.
                     seconds_to_show = 3.0
-
-                    # Lead II: use a larger window for wave movement visibility
-                    if lead_name == 'II':
-                        seconds_to_show = 6.0
+                    try:
+                        if self.ecg_calculator is not None and hasattr(self.ecg_calculator, 'window_size'):
+                            ws = int(getattr(self.ecg_calculator, 'window_size', 0) or 0)
+                            if ws > 0:
+                                seconds_to_show = max(1.0, ws / float(fs))
+                    except Exception:
+                        pass
 
 
                     # try:
@@ -908,10 +943,7 @@ class HyperkalemiaTestWindow(QWidget):
                         display_times = [t for i, t in enumerate(times) if mask[i]]
                         display_values = [v for i, v in enumerate(values) if mask[i]]
 
-                        # --- Add Gaussian smoothing here ---
-                        if len(display_values) > 5:
-                            gaussian_sigma = 2  # You can adjust this value for more/less smoothing
-                            display_values = gaussian_filter1d(display_values, sigma=gaussian_sigma)
+                        # Keep waveform sharp: do not apply additional display-time Gaussian blur.
                         
                         if len(display_times) > 0:
                             
@@ -919,8 +951,11 @@ class HyperkalemiaTestWindow(QWidget):
                             self.plot_curves[lead_name].setData(display_times, display_values)
                             self.plot_widgets[lead_name].setXRange(min(display_times), max(display_times), padding=0)
                             
-                            # Fixed Y-axis scaling (0-4096)
-                            self.plot_widgets[lead_name].setYRange(0, 4096, padding=0)
+                            # Fixed Y-axis scaling: standard leads 0..4096, aVR 0..-4096
+                            if lead_name == 'aVR':
+                                self.plot_widgets[lead_name].setYRange(0, -4096, padding=0)
+                            else:
+                                self.plot_widgets[lead_name].setYRange(0, 4096, padding=0)
         
         except Exception as e:
             pass
@@ -977,15 +1012,12 @@ class HyperkalemiaTestWindow(QWidget):
                     except:
                         return fallback
 
-                # If Holter BPM is active, recompute QTc from waveform QT + stable BPM.
-                # This ensures QTc updates whenever BPM changes, even if QT waveform hasn't changed.
-                if _bpm_active and _current_bpm > 0:
-                    qt_raw = getattr(self.ecg_calculator, 'last_qt_interval', 0)
-                    if qt_raw > 0:
-                        import math
-                        rr_s = 60.0 / _current_bpm
-                        qtc_recomputed = int(round((qt_raw / 1000.0) / math.sqrt(rr_s) * 1000.0))
-                        self.ecg_calculator.last_qtc_interval = qtc_recomputed
+                def _attr_to_num(attr_name, fallback=0):
+                    v = getattr(self.ecg_calculator, attr_name, fallback)
+                    try:
+                        return int(round(float(v))) if v else fallback
+                    except Exception:
+                        return fallback
 
                 # Also call get_current_metrics as a secondary/fallback source
                 metrics = self.ecg_calculator.get_current_metrics()
@@ -1006,17 +1038,40 @@ class HyperkalemiaTestWindow(QWidget):
 
                 print(f"Heart Rate: {hr_val} BPM, PR Interval: {pr_val} ms, QRS Duration: {qrs_val} ms, QTC Interval: {qtc_val} ms")
 
-                if not _bpm_active and 'heart_rate' in self.metric_labels:
-                    self.metric_labels['heart_rate'].setText(f"{hr_val} BPM" if hr_val != '0' else "00 BPM")
+                display_hr = _attr_to_num('last_heart_rate', 0)
+                display_pr = _attr_to_num('pr_interval', 0)
+                display_qrs = _attr_to_num('last_qrs_duration', 0)
+                display_qt = _attr_to_num('last_qt_interval', 0)
+                display_qtc = _attr_to_num('last_qtc_interval', 0)
+                display_rr = _attr_to_num('last_rr_interval', 0)
+                display_qtcf = _attr_to_num('last_qtcf_interval', 0)
+
+                self._last_metric_update_ts = shared_display_updates.update_ecg_metrics_display(
+                    self.metric_labels,
+                    display_hr,
+                    display_pr,
+                    display_qrs,
+                    0,
+                    display_qt,
+                    display_qtc,
+                    display_qtcf,
+                    getattr(self, '_last_metric_update_ts', 0.0),
+                    rr_interval=display_rr,
+                    skip_heart_rate=_bpm_active,
+                )
+
                 if 'pr_interval' in self.metric_labels:
-                    self.metric_labels['pr_interval'].setText(f"{pr_val} ms" if pr_val != '0' else "0 ms")
+                    pr_text = self.metric_labels['pr_interval'].text().strip()
+                    if pr_text and not pr_text.endswith("ms"):
+                        self.metric_labels['pr_interval'].setText(f"{pr_text} ms")
                 if 'qrs_duration' in self.metric_labels:
-                    self.metric_labels['qrs_duration'].setText(f"{qrs_val} ms" if qrs_val != '0' else "0 ms")
+                    qrs_text = self.metric_labels['qrs_duration'].text().strip()
+                    if qrs_text and not qrs_text.endswith("ms"):
+                        self.metric_labels['qrs_duration'].setText(f"{qrs_text} ms")
                 if 'qtc_interval' in self.metric_labels:
-                    if qt_val not in ('', '0') and qtc_val not in ('', '0'):
-                        self.metric_labels['qtc_interval'].setText(f"{qt_val}/{qtc_val} ms")
-                    else:
-                        self.metric_labels['qtc_interval'].setText(f"{qtc_val} ms" if qtc_val not in ('', '0') else "0 ms")
+                    qtqtc_text = self.metric_labels['qtc_interval'].text().strip()
+                    if qtqtc_text and not qtqtc_text.endswith("ms"):
+                        self.metric_labels['qtc_interval'].setText(f"{qtqtc_text} ms")
 
 
         
@@ -1314,12 +1369,14 @@ class HyperkalemiaTestWindow(QWidget):
             )
             if not patient.get("first_name") and not patient.get("patient_name"):
                 patient = {
-                    "first_name": "Patient",
-                    "last_name": "Hyperkalemia",
+                    "first_name": "",
+                    "last_name": "",
                     "age": "",
                     "gender": "",
                     "date_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     "Org.": "",
+                    "Org. Name": "",
+                    "Org. Address": "",
                     "doctor_mobile": "",
                     "doctor": "",
                 }

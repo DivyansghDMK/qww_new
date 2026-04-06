@@ -118,6 +118,20 @@ def generate_report(snap_raw, frozen, patient, filename, fmt,
     print(f"[ecg_report_android] Filter settings — AC:{ac_setting}  EMG:{emg_setting}  DFT:{dft_setting}")
 
     # Read wave_gain from settings to set correct ADC→mm scaling
+    ac_freq = f"{ac_setting}Hz" if ac_setting in ("50", "60") else "Off"
+    if dft_setting not in ("off", "") and emg_setting not in ("off", ""):
+        filter_band = f"{dft_setting}-{emg_setting}Hz"
+    elif dft_setting not in ("off", ""):
+        filter_band = f"HP:{dft_setting}Hz"
+    elif emg_setting not in ("off", ""):
+        filter_band = f"LP:{emg_setting}Hz"
+    else:
+        filter_band = "Filter: Off"
+    frozen = dict(frozen or {})
+    frozen["filter_band"] = filter_band
+    frozen["ac_frequency"] = ac_freq
+    frozen["speed_text"] = f"{FIXED_SPEED:.1f} mm/s"
+    frozen["gain_text"] = f"{FIXED_GAIN:.1f} mm/mV"
     wave_gain_val = 10.0
     try:
         wg = _get_filter_setting("wave_gain", "10")
@@ -233,101 +247,191 @@ def _draw_header(ax, frozen, patient, PW, fmt):
     # Lead sequence (Standard / Cabrera) from settings
     lead_seq = frozen.get('lead_seq', 'Standard') or 'Standard'
 
-    # Col 1: patient
-    _t(ax, f"Name: {full}",       x, yb,       9)
-    _t(ax, f"Age: {age}",         x, yb+lh,    9)
-    _t(ax, f"Gender: {gender}",   x, yb+lh*2,  9)
-    _t(ax, f"Type: {lead_seq}",   x, yb+lh*4,  9)   # ← shows setting value
+    if is_portrait:
+        dt = patient.get('date_time', '') or ''
+        date_part = dt[:10] if len(dt) >= 10 else ''
+        time_part = dt[11:19] if len(dt) >= 19 else ''
+        org   = (patient.get('org', '') or patient.get('Org.', '') or '').strip()
+        phone = (patient.get('phone', '') or patient.get('doctor_mobile', '') or '').strip()
+        filter_band = frozen.get('filter_band', '0.5-150Hz')
+        ac_freq     = frozen.get('ac_frequency', '50Hz')
+        speed_text  = frozen.get('speed_text', f"{FIXED_SPEED:.1f} mm/s")
+        gain_text   = frozen.get('gain_text', f"{FIXED_GAIN:.1f} mm/mV")
 
-    # Col 2: ECG measurements
-    x += 50.0 if is_portrait else (12*5+2*5+10)
-    _t(ax, f"HR  : {frozen.get('HR',0)} bpm", x, yb,       9, bold=True)
-    _t(ax, f"RR  : {_rr_ms(frozen)} ms",       x, yb+lh,   9, bold=True)
-    _t(ax, f"PR  : {frozen.get('PR',0)} ms",   x, yb+lh*2, 9, bold=True)
-    _t(ax, f"QRS : {frozen.get('QRS',0)} ms",  x, yb+lh*3, 9, bold=True)
-    _t(ax, f"QT  : {frozen.get('QT',0)} ms",   x, yb+lh*4, 9, bold=True)
+        hr   = frozen.get('HR',  0) or 0
+        rr   = _rr_ms(frozen)
+        pr   = frozen.get('PR',  0) or 0
+        qrs  = frozen.get('QRS', 0) or 0
+        qt   = frozen.get('QT',  0) or 0
+        qtc  = frozen.get('QTc', 0) or 0
+        qtcf = frozen.get('QTcF',0) or 0
 
-    # Col 3: extra measurements
-    x += 35.0 if is_portrait else (5*5+2*5)
-    rv5 = float(frozen.get('rv5', 0.0) or 0.0)
-    sv1 = float(frozen.get('sv1', 0.0) or 0.0)
+        rv5     = float(frozen.get('rv5', 0.0) or 0.0)
+        sv1     = float(frozen.get('sv1', 0.0) or 0.0)
+        idx_val = rv5 - abs(sv1)
+        p_ax    = frozen.get('p_axis',   '--')
+        q_ax    = frozen.get('QRS_axis', '--')
+        t_ax    = frozen.get('t_axis',   '--')
+
+        # ── 4-COLUMN layout exactly matching reference image ─────────────────
+        #
+        #  COL1 (x=10):  Patient info — 6 rows at 7pt
+        #                At 7pt, "Date & Time: YYYY-MM-DD HH:MM:SS" ≈ 43mm wide
+        #                → ends at x≈53, safely before COL2 at x=60
+        #
+        #  COL2 (x=60):  HR / RR / PR / QRS / QT  (5 rows, bold 8.5pt)
+        #
+        #  COL3 (x=100): QTc / QTcF / RV5/SV1 / RV5+SV1 / P/QRS/T (5 rows, bold 8.5pt)
+        #
+        #  COL4 (x=152): Org name / address / phone  (up to 3 rows, bold 8.5pt)
+        #                This is the "hospital info" block visible top-right in reference
+        #
+        left_x  = 5.0
+        col2_x  = 72.0
+        col3_x  = 115.0
+        col4_x  = 160.0
+        row_gap = 4.8   # 5 metric rows × 4.8mm = 24mm; 6 left rows = 28.8mm
+
+        # COL1: patient details (6 rows)
+        # Use 7pt so long "Date & Time" line stays within ~50mm
+        left_lines = [
+            f"Name: {full}",
+            f"Age: {age}",
+            f"Gender: {gender}",
+            f"ECG Type: {lead_seq}",
+            f"Date & Time: {date_part} {time_part}".strip(),
+            f"{speed_text}  {filter_band}  AC:{ac_freq}  {gain_text}",
+        ]
+
+        # COL2: primary ECG metrics (5 rows — NO QTc here)
+        col2_lines = [
+            f"HR: {hr} bpm",
+            f"RR: {rr} ms",
+            f"PR: {pr} ms",
+            f"QRS: {qrs} ms",
+            f"QT: {qt} ms",
+        ]
+
+        # COL3: secondary ECG metrics (5 rows)
+        col3_lines = [
+            f"QTc: {qtc} ms",
+            f"QTcF: {qtcf} ms",
+            f"RV5/SV1: {rv5:.3f}/{sv1:.3f} mV",
+            f"RV5+SV1: {idx_val:.3f} mV",
+            f"P/QRS/T: {p_ax}/{q_ax}/{t_ax}\u00b0",
+        ]
+
+        # COL4: hospital / org info — displayed bold, right side (rows 0-2)
+        col4_lines = []
+        if org:
+            col4_lines.append(org)
+        if phone:
+            col4_lines.append(phone)
+
+        # Draw COL1 — 9pt
+        for i, text in enumerate(left_lines):
+            fs = 9.0
+            _t(ax, text, left_x, yb + i * row_gap, fs)
+
+        # Draw COL2 — 9pt
+        for i, text in enumerate(col2_lines):
+            _t(ax, text, col2_x, yb + i * row_gap, 9.0, bold=False)
+
+        # Draw COL3 — 9pt
+        for i, text in enumerate(col3_lines):
+            _t(ax, text, col3_x, yb + i * row_gap, 9.0, bold=False)
+
+        # Draw COL4 — bold, 9pt (hospital info top-right)
+        for i, text in enumerate(col4_lines[:3]):
+            _t(ax, text, col4_x, yb + i * row_gap, 9.0, bold=True)
+
+        return
+
+    # ── LANDSCAPE 4-COLUMN layout — same structure as 12:1 portrait ─────────
+    #
+    #  COL1 (x=10):   Patient info — 6 rows at 7pt
+    #  COL2 (x=95):   HR / RR / PR / QRS / QT  (5 rows, bold)
+    #  COL3 (x=163):  QTc / QTcF / RV5/SV1 / RV5+SV1 / P/QRS/T (5 rows, bold)
+    #  COL4 (x=228):  Org name / phone  (bold, top-right of header)
+    #
+    #  Landscape page is 297mm wide — columns spread proportionally.
+    #  At 7pt, "Date & Time: YYYY-MM-DD HH:MM:SS" ≈ 43mm wide →
+    #  ends at x≈53mm, safely before COL2 at x=95.
+    #
+    dt         = patient.get('date_time', '') or ''
+    date_part  = dt[:10] if len(dt) >= 10 else ''
+    time_part  = dt[11:19] if len(dt) >= 19 else ''
+    org        = (patient.get('org', '') or patient.get('Org.', '') or '').strip()
+    phone      = (patient.get('phone', '') or patient.get('doctor_mobile', '') or '').strip()
+    filter_band = frozen.get('filter_band', '0.5-150Hz')
+    ac_freq     = frozen.get('ac_frequency', '50Hz')
+    speed_text  = frozen.get('speed_text', f'{FIXED_SPEED:.1f} mm/s')
+    gain_text   = frozen.get('gain_text',  f'{FIXED_GAIN:.1f} mm/mV')
+
+    hr   = frozen.get('HR',  0) or 0
+    rr   = _rr_ms(frozen)
+    pr   = frozen.get('PR',  0) or 0
+    qrs  = frozen.get('QRS', 0) or 0
+    qt   = frozen.get('QT',  0) or 0
+    qtc  = frozen.get('QTc', 0) or 0
+    qtcf = frozen.get('QTcF',0) or 0
+    rv5     = float(frozen.get('rv5', 0.0) or 0.0)
+    sv1     = float(frozen.get('sv1', 0.0) or 0.0)
     idx_val = rv5 - abs(sv1)
-    idx_str = f"{idx_val:.3f} mV" + (" *" if idx_val >= 3.5 else "")
-    p_ax = frozen.get('p_axis','--')
-    q_ax = frozen.get('QRS_axis','--')
-    t_ax = frozen.get('t_axis','--')
+    p_ax    = frozen.get('p_axis',   '--')
+    q_ax    = frozen.get('QRS_axis', '--')
+    t_ax    = frozen.get('t_axis',   '--')
 
-    _t(ax, f"QTc : {frozen.get('QTc',0)} ms",            x, yb,       9, bold=True)
-    _t(ax, f"QTcF: {frozen.get('QTcF',0)} ms",           x, yb+lh,    9, bold=True)
-    _t(ax, f"RV5/SV1: {rv5:.3f}/{sv1:.3f} mV",          x, yb+lh*2,  9, bold=True)
-    _t(ax, f"RV5+SV1: {idx_str}",                        x, yb+lh*3,  9, bold=True)
-    _t(ax, f"P/QRS/T: {p_ax}/{q_ax}/{t_ax}\u00b0",       x, yb+lh*4,  9, bold=True)
+    # Column X positions calibrated against reference images 1 & 3:
+    # Page = 297mm wide. Proportions from image measurement:
+    #   COL1 ends ≈ x53mm  → COL2 starts at 88mm (32% of 270mm usable)
+    #   COL3 starts ≈ 155mm (58% of 270mm usable)
+    #   COL4 starts ≈ 213mm (79% of 270mm usable)
+    L_left  = 10.0
+    L_col2  = 88.0
+    L_col3  = 155.0
+    L_col4  = 213.0
+    L_gap   = 4.5    # 6 rows × 4.5mm = 27mm → fits in HEADER_H=30mm
 
-    # ── Logo top-right — no crop, full aspect ──────────────────────────────
-    logo_w = 55.0   # mm width budget
-    logo_h = 18.0   # mm height budget
-    logo_x = PW - 7.0 - logo_w
-    logo_y = yb
+    ls_left = [
+        f'Name: {full}',
+        f'Age: {age}',
+        f'Gender: {gender}',
+        f'ECG Type: {lead_seq}',
+        f'Date & Time: {date_part} {time_part}'.strip(),
+        f'{speed_text}  {filter_band}  AC:{ac_freq}  {gain_text}',
+    ]
+    ls_col2 = [
+        f'HR: {hr} bpm',
+        f'RR: {rr} ms',
+        f'PR: {pr} ms',
+        f'QRS: {qrs} ms',
+        f'QT: {qt} ms',
+    ]
+    ls_col3 = [
+        f'QTc: {qtc} ms',
+        f'QTcF: {qtcf} ms',
+        f'RV5/SV1: {rv5:.3f}/{sv1:.3f} mV',
+        f'RV5+SV1: {idx_val:.3f} mV',
+        f'P/QRS/T: {p_ax}/{q_ax}/{t_ax}\u00b0',
+    ]
+    ls_col4 = [t for t in [org, phone] if t]
 
-    # Find logo file
-    logo_path = frozen.get('logo_path', '') or ''
-    if not logo_path or not os.path.exists(logo_path):
-        logo_path = _find_logo() or ''
-
-    logo_placed = False
-    if logo_path and os.path.exists(logo_path):
-        try:
-            from matplotlib.image import imread as _imread
-            img = _imread(logo_path)
-
-            # Compute actual pixel aspect ratio
-            img_h_px, img_w_px = img.shape[:2]
-            aspect = img_w_px / img_h_px   # width/height
-
-            # Fit inside budget keeping aspect ratio (no crop/stretch)
-            if logo_w / logo_h >= aspect:
-                # height is the limiting dimension
-                actual_h = logo_h
-                actual_w = logo_h * aspect
-            else:
-                # width is the limiting dimension
-                actual_w = logo_w
-                actual_h = logo_w / aspect
-
-            # Centre in allocated box
-            x_off = (logo_w - actual_w) / 2.0
-            y_off = (logo_h - actual_h) / 2.0
-            x0 = logo_x + x_off
-            y0 = logo_y + y_off
-            x1 = x0 + actual_w
-            y1 = y0 + actual_h
-
-            ax.imshow(img,
-                      extent=[x0, x1, y1, y0],   # [xmin,xmax,ymax,ymin]
-                      aspect='auto', zorder=10, interpolation='bilinear')
-            logo_placed = True
-        except Exception as e:
-            print(f"Logo load failed: {e}")
-
-    if not logo_placed:
-        _t(ax, "DECK\u26a1MOUNT", logo_x + logo_w/2, logo_y+4, 11,
-           bold=True, color='#0000cc', ha='center')
-
-    # Specs row — technical specs + date
-    dt        = patient.get('date_time','') or ''
-    date_part = dt[:10] if len(dt) >= 10 else ''
-    time_part = dt[11:19] if len(dt) >= 19 else ''
-
-    spec_y = logo_y + logo_h + 2.0
-    spec   = f"{FIXED_SPEED:.1f} mm/s   0.5-25Hz   AC:50Hz   {FIXED_GAIN:.1f} mm/mV"
-    _t(ax, spec,                                      logo_x, spec_y,     7)
-    _t(ax, f"Date & Time: {date_part} {time_part}",  logo_x, spec_y+4.0, 7)
+    for i, txt in enumerate(ls_left):
+        fs = 9.0
+        _t(ax, txt, L_left, yb + i * L_gap, fs)
+    for i, txt in enumerate(ls_col2):
+        _t(ax, txt, L_col2, yb + i * L_gap, 9.0, bold=False)
+    for i, txt in enumerate(ls_col3):
+        _t(ax, txt, L_col3, yb + i * L_gap, 9.0, bold=False)
+    for i, txt in enumerate(ls_col4[:3]):
+        _t(ax, txt, L_col4, yb + i * L_gap, 9.0, bold=True)
 
 
 # ─── 12:1 Portrait — waves fill header→footer, no white gap ──────────────────
 
 def _draw_1x12(ax, lead_mv, PW, PH, target_samples=None):
-    HEADER_H  = 28.0
+    HEADER_H  = 35.0   # increased from 28 → fits 6 header rows at 4.8mm each
     FOOTER_H  = 25.0
     top_offset = MT + HEADER_H                   # 33mm
     bot_limit  = PH - MB - FOOTER_H              # 267mm
@@ -353,7 +457,7 @@ def _draw_1x12(ax, lead_mv, PW, PH, target_samples=None):
 # ─── 6:2 Landscape ────────────────────────────────────────────────────────────
 
 def _draw_2x6(ax, lead_mv, PW, PH, target_samples=None):
-    HEADER_H  = 25.0
+    HEADER_H  = 30.0   # increased: 6 header rows × 4.5mm = 27mm fits here
     FOOTER_H  = 20.0
     start_y   = MT + HEADER_H
     bot_limit = PH - MB - FOOTER_H
@@ -367,10 +471,18 @@ def _draw_2x6(ax, lead_mv, PW, PH, target_samples=None):
     pair_map = [("I","V1"),("II","V2"),("III","V3"),
                 ("aVR","V4"),("aVF","V5"),("aVL","V6")]
 
+    # Dashed vertical column divider — stops at TOP of rhythm strip (not through it)
+    # Image 2 reference: dividers end cleanly where the full-width II row begins
+    div_x   = left_margin + 14 + lead_w + div_pad
+    right_x = div_x + div_pad
+    rhythm_top = start_y + 6 * row_h   # top edge of rhythm strip row
+    ax.plot([div_x, div_x], [start_y, rhythm_top],
+            color='black', linewidth=0.6,
+            linestyle=(0, (4, 4)), zorder=6)
+
     for r, (l1, l2) in enumerate(pair_map):
         mid_y   = start_y + r*row_h + row_h/2.0
         label_y = mid_y - 9.0
-        # half_clip: 90% of row half-height to show true peak amplitude
         half_clip = row_h * 0.90
 
         _draw_calibration_pad(ax, left_margin-4, mid_y, FIXED_GAIN)
@@ -379,10 +491,6 @@ def _draw_2x6(ax, lead_mv, PW, PH, target_samples=None):
         _draw_waveform(ax, lead_mv.get(l1, np.array([])),
                        left_margin+14, mid_y, lead_w, half_clip, target_samples=target_samples)
 
-        div_x = left_margin + 14 + lead_w + div_pad
-        # Removed vertical dashes completely
-
-        right_x = div_x + div_pad
         _t(ax, l2, right_x, label_y, 10, bold=True)
         _draw_waveform(ax, lead_mv.get(l2, np.array([])),
                        right_x+5, mid_y, lead_w, half_clip, target_samples=target_samples)
@@ -398,7 +506,7 @@ def _draw_2x6(ax, lead_mv, PW, PH, target_samples=None):
 # ─── 4:3 Landscape ────────────────────────────────────────────────────────────
 
 def _draw_3x4(ax, lead_mv, PW, PH, target_samples=None):
-    HEADER_H  = 25.0
+    HEADER_H  = 30.0   # increased: 6 header rows × 4.5mm = 27mm fits here
     FOOTER_H  = 20.0
     start_y   = MT + HEADER_H
     bot_limit = PH - MB - FOOTER_H
@@ -438,20 +546,21 @@ def _draw_3x4(ax, lead_mv, PW, PH, target_samples=None):
                 if div_x not in col_dividers:
                     col_dividers.append(div_x)
 
-    # Draw full-column-height dashed dividers in one pass
-    strip_top = start_y
-    strip_bot = start_y + 5*row_h
-    for div_x in col_dividers:
-        ax.plot([div_x, div_x], [strip_top, strip_bot],
-                color='black', linewidth=0.6,
-                linestyle=(0, (4, 4)), zorder=4)
-
     rhythm_mid = start_y + 4*row_h + row_h/2.0
     _draw_calibration_pad(ax, left_margin-4, rhythm_mid, FIXED_GAIN)
     _t(ax, "II", left_margin+10, rhythm_mid-9, 12.5, bold=True)
     _draw_waveform(ax, lead_mv.get("II", np.array([])),
                    left_margin+14, rhythm_mid,
                    PW - left_margin - MR - 25, row_h*0.90, target_samples=5000)
+
+    # Draw column dividers AFTER all waveforms, stopping at TOP of rhythm strip
+    # (rhythm strip is full-width — no dividers should cross through it)
+    strip_top = start_y
+    strip_bot = start_y + 4*row_h   # stop at top edge of II rhythm strip row
+    for div_x in col_dividers:
+        ax.plot([div_x, div_x], [strip_top, strip_bot],
+                color='black', linewidth=0.6,
+                linestyle=(0, (4, 4)), zorder=6)
 
 
 # ─── Footer ───────────────────────────────────────────────────────────────────
@@ -487,19 +596,16 @@ def _draw_footer_portrait(ax, frozen, patient, conc_list, PW, PH):
     _t(ax, "CONCLUSION",
        box_x+box_w/2, box_y+1, 7, bold=True, ha='center', zorder=9)
 
-    # Max 5 conclusions, 3 columns
+    # Draw conclusions in a single column to avoid overlapping
     items = conc_list[:5]
-    cols  = 3
-    col_w = (box_w - 4.0) / cols
-    row_h = 3.5
+    row_h = 4.0
     sx    = box_x + 2.0
     sy    = box_y + 6.0
     for i, line in enumerate(items):
-        row = i // cols; col = i % cols
-        tx  = sx + col*col_w
-        ty  = sy + row*row_h
-        if ty + row_h > box_y + box_h: break
-        _t(ax, f"{i+1}. {line}", tx, ty, 6, zorder=9)
+        ty  = sy + i*row_h
+        # User request: If getting cropped (exceeds box height), don't put in this.
+        if ty + row_h > box_y + box_h - 1.0: break 
+        _t(ax, f"{i+1}. {line}", sx, ty, 9, zorder=9)
 
     # Brand line
     brand = "Deckmount Electronics Pvt Ltd  |  Rhythm Ultra ECG  |  IEC 60601  |  Made in India"
@@ -527,23 +633,20 @@ def _draw_footer_landscape(ax, frozen, patient, conc_list, PW, PH):
                             facecolor='none', zorder=8))
 
     _t(ax, "CONCLUSION",
-       box_x+box_w/2, box_y+2, 8, bold=True, ha='center', zorder=9)
+       box_x+box_w/2, box_y+2, 9, bold=True, ha='center', zorder=9)
 
-    # Max 5 conclusions, 3 columns
+    # Draw conclusions in a single column to avoid overlapping
     items   = conc_list[:5]
-    cols    = 3; col_gap = 5.0
-    col_w   = (box_w - 10.0 - col_gap*2) / cols
-    sx      = box_x+5.0; sy = box_y+7.0; row_gap=5.0
+    sx      = box_x+5.0; sy = box_y+8.0; row_gap=5.0
     for i, txt in enumerate(items):
-        row=i//cols; col=i%cols
-        tx = sx + col*(col_w+col_gap)
-        ty = sy + row*row_gap
-        if ty+row_gap > box_y+box_h-1: break
-        _t(ax, f"{i+1}. {txt}", tx, ty, 6, zorder=9)
+        ty = sy + i*row_gap
+        # User request: If getting cropped (exceeds box height), don't put in this.
+        if ty+row_gap > box_y+box_h-1.5: break
+        _t(ax, f"{i+1}. {txt}", sx, ty, 9, zorder=9)
 
     # Brand line
     brand = "Deckmount Electronics Pvt Ltd  |  Rhythm Ultra ECG  |  IEC 60601  |  Made in India"
-    _t(ax, brand, PW/2, PH-MB+1.5, 5.5, ha='center', zorder=9)
+    _t(ax, brand, PW/2, PH-MB+1.5, 9, ha='center', zorder=9)
 
 
 # ─── Calibration pulse ────────────────────────────────────────────────────────
@@ -554,7 +657,7 @@ def _draw_calibration(ax, x_mm, y_mm, gain_mm):
            (x_mm+7, y_mm), (x_mm+9, y_mm)]
     ax.plot([p[0] for p in pts], [p[1] for p in pts],
             color='black', linewidth=0.8,
-            solid_capstyle='projecting', zorder=6)
+            solid_capstyle='butt', zorder=6)   # 'butt' = no cap beyond endpoints → no grey dot
 
 def _draw_calibration_pad(ax, x_mm, y_mm, gain_mm):
     _draw_calibration(ax, x_mm+4, y_mm, gain_mm)

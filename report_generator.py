@@ -113,11 +113,11 @@ def _generate_pdf_report(session_dir: str,
     org    = pat.get('Org.') or pat.get('org') or '—'
     phone  = pat.get('phone') or pat.get('doctor_mobile') or '—'
 
-    ax.text(x1, yb,       f"Name: {pname}",     fontsize=7, va='top')
-    ax.text(x1, yb+lh,    f"Age: {age}",         fontsize=7, va='top')
-    ax.text(x1, yb+lh*2,  f"Gender: {gender}",   fontsize=7, va='top')
-    ax.text(x1, yb+lh*3,  f"Org: {org}",         fontsize=7, va='top')
-    ax.text(x1, yb+lh*4,  f"Phone: {phone}",     fontsize=7, va='top')
+    ax.text(x1, yb,       f"Name: {pname}",     fontsize=9, va='top')
+    ax.text(x1, yb+lh,    f"Age: {age}",         fontsize=9, va='top')
+    ax.text(x1, yb+lh*2,  f"Gender: {gender}",   fontsize=9, va='top')
+    ax.text(x1, yb+lh*3,  f"Org: {org}",         fontsize=9, fontweight='bold', va='top')
+    ax.text(x1, yb+lh*4,  f"Phone: {phone}",     fontsize=9, fontweight='bold', va='top')
 
     # ── vitals (middle col) ──────────────────────────────────────────────────
     x2 = x1 + 55
@@ -139,18 +139,18 @@ def _generate_pdf_report(session_dir: str,
         f"SDNN: {sdnn:.1f} ms  rMSSD: {rmssd:.1f} ms",
     ]
     for i, v in enumerate(vitals):
-        ax.text(x2, yb + i * lh, v, fontsize=7, va='top', fontweight='bold')
+        ax.text(x2, yb + i * lh, v, fontsize=9, va='top')
 
     # ── DECK⚡MOUNT brand (top-right) ────────────────────────────────────────
     ax.text(PAGE_W - MR, yb,       "DECK\u26a1MOUNT",
             fontsize=10, fontweight='bold', color='#0000cc', ha='right', va='top')
     ax.text(PAGE_W - MR, yb+lh*2, "HOLTER ECG ANALYSIS REPORT",
-            fontsize=6.5, ha='right', va='top', color='#333', fontweight='bold')
+            fontsize=9, ha='right', va='top', color='#333', fontweight='bold')
     ax.text(PAGE_W - MR, yb+lh*3, "25.0mm/s  0.5–40Hz  AC:50Hz  10.0mm/mV",
-            fontsize=5.5, ha='right', va='top', color='#555')
+            fontsize=9, ha='right', va='top', color='#555')
     ax.text(PAGE_W - MR, yb+lh*4,
             f"Date & Time: {datetime.now().strftime('%d/%m/%Y  %H:%M')}",
-            fontsize=5.5, ha='right', va='top', color='#555')
+            fontsize=9, ha='right', va='top', color='#555')
 
     # ── 12-lead ECG strips ───────────────────────────────────────────────────
     LEADS = ["I", "II", "III", "aVR", "aVL", "aVF",
@@ -222,10 +222,12 @@ def _generate_pdf_report(session_dir: str,
 
     # --- Doctor signature block ---
     sig_x = PAGE_W - MR - 70
+    ax.text(sig_x, ft_top - 7,  "Reference Report Confirmed by:",
+            fontsize=8, va='top', color='black')
     ax.text(sig_x, ft_top,      "Doctor Name: _______________________",
-            fontsize=6.5, va='top', color='black')
+            fontsize=8, va='top', color='black')
     ax.text(sig_x, ft_top + 7,  "Doctor Sign:  _______________________",
-            fontsize=6.5, va='top', color='black')
+            fontsize=8, va='top', color='black')
 
     # ── Conclusion box ────────────────────────────────────────────────────────
     conc_y  = ft_top + 28.0
@@ -235,17 +237,17 @@ def _generate_pdf_report(session_dir: str,
                  linewidth=0.8, edgecolor='black', facecolor='white', zorder=8)
     ax.add_patch(rect)
     ax.text(bx + bw / 2, by + 1.0, "CONCLUSION",
-            fontsize=6.5, fontweight='bold', ha='center', va='top', zorder=9)
+            fontsize=7, fontweight='bold', ha='center', va='top', zorder=9)
 
     conclusions = _build_conclusions(summary)
-    cols2 = 3;  col_w2 = (bw - 4.0) / cols2;  rh2b = 3.5
-    for idx, line in enumerate(conclusions[:9]):
-        row2 = idx // cols2;  col2 = idx % cols2
-        tx = bx + 2.0 + col2 * col_w2
-        ty = by + 6.0 + row2 * rh2b
-        if ty + rh2b > by + bh:
+    cols2 = 3;  col_w2 = (bw - 4.0) / cols2;  rh2b = 4.0
+    for idx, line in enumerate(conclusions):
+        tx = bx + 2.0
+        ty = by + 6.0 + idx * rh2b
+        # User request: If getting cropped (exceeds box height), don't put in this.
+        if ty + rh2b > by + bh - 1.0:
             break
-        ax.text(tx, ty, f"{idx+1}. {line}", fontsize=5.5, va='top', zorder=9)
+        ax.text(tx, ty, f"{idx+1}. {line}", fontsize=9, va='top', zorder=9)
 
     # ── Footer brand line ────────────────────────────────────────────────────
     brand = "Deckmount Electronics Pvt Ltd | RhythmPro ECG | IEC 60601 | Made in India"
@@ -332,42 +334,20 @@ def _apply_ecg_filters(sig: np.ndarray, fs: float = 500.0) -> np.ndarray:
 
 
 def _build_conclusions(summary: dict) -> list:
-    """Build short conclusion lines for the conclusion box."""
+    """
+    Build conclusion lines for the conclusion box.
+    User request: Only show rhythm/arrhythmia findings, nothing extra.
+    """
     lines = []
-    avg_hr = summary.get('avg_hr', 0)
-    sdnn   = summary.get('sdnn', 0)
-    pauses = summary.get('pauses', 0)
-    arrhy  = summary.get('arrhythmia_counts', {})
-    dur_h  = int(summary.get('duration_sec', 0) // 3600)
-    dur_m  = int((summary.get('duration_sec', 0) % 3600) // 60)
+    arrhy = summary.get('arrhythmia_counts', {})
 
-    lines.append(f"Duration: {dur_h}h {dur_m}m")
-
-    if avg_hr > 100:
-        lines.append(f"Sinus tachycardia (Avg HR {avg_hr:.0f} bpm)")
-    elif avg_hr < 60 and avg_hr > 0:
-        lines.append(f"Sinus bradycardia (Avg HR {avg_hr:.0f} bpm)")
-    elif avg_hr > 0:
-        lines.append(f"Normal sinus rhythm (Avg HR {avg_hr:.0f} bpm)")
-
-    if sdnn > 100:
-        lines.append("HRV (SDNN) within normal limits")
-    elif sdnn > 50:
-        lines.append("HRV (SDNN) borderline reduced")
-    elif sdnn > 0:
-        lines.append("HRV (SDNN) significantly reduced — review")
-
-    if arrhy:
-        top = list(sorted(arrhy.items(), key=lambda x: -x[1]))[:3]
-        for label, count in top:
-            lines.append(f"{label}: {count} episode(s)")
+    if not arrhy:
+        lines.append("Normal sinus rhythm")
     else:
-        lines.append("No significant arrhythmias detected")
+        # User said "if not then print that issue"
+        for label in arrhy.keys():
+            lines.append(label)
 
-    if pauses > 0:
-        lines.append(f"Pauses (RR>2s): {pauses} episode(s)")
-
-    lines.append("Automated analysis — physician review required")
     return lines
 
 

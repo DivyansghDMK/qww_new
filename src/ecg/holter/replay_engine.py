@@ -225,9 +225,14 @@ class HolterReplayEngine:
 
         # Arrhythmia counts
         arrhy_counts: Dict[str, int] = {}
+        beat_class_totals: Dict[str, int] = {}
+        template_counts: List[int] = []
         for m in self._metrics:
             for a in m.get('arrhythmias', []):
                 arrhy_counts[a] = arrhy_counts.get(a, 0) + 1
+            for cls, count in (m.get('beat_class_counts', {}) or {}).items():
+                beat_class_totals[cls] = beat_class_totals.get(cls, 0) + int(count or 0)
+            template_counts.append(int(m.get('template_count', 0) or 0))
 
         # ST per-lead averages
         st_vals = [m.get('st_mv', 0) for m in self._metrics]
@@ -268,6 +273,10 @@ class HolterReplayEngine:
             'avg_st_mv': round(float(np.mean(st_vals)), 4) if st_vals else 0.0,
             'patient_info': self.patient_info,
             'chunks_analyzed': len(self._metrics),
+            'beat_class_totals': beat_class_totals,
+            've_beats': int(beat_class_totals.get('VE', 0)),
+            'sve_beats': int(beat_class_totals.get('SVE', 0)),
+            'template_count': max(template_counts) if template_counts else 0,
         }
 
     # ── Helpers ────────────────────────────────────────────────────────────────

@@ -1136,7 +1136,7 @@ class ExpandedLeadView(QDialog):
             time = time[:min_len]
             scaled = scaled[:min_len]
         
-        self.ecg_line, = self.ax.plot([], [], color='#000080', linewidth=0.7, label='ECG Signal', antialiased=True)
+        self.ecg_line, = self.ax.plot([], [], color='#000080', linewidth=0.7, label='ECG Signal', antialiased=True, animated=True)
 
         if len(scaled) > 0:
             # Ensure we have valid (non-NaN) data
@@ -1212,14 +1212,16 @@ class ExpandedLeadView(QDialog):
             self.canvas.draw_idle()
 
     def _can_use_fast_live_path(self):
+        """Always use the fast (no ax.clear) path during live mode.
+
+        Copying the 12-lead ECG box: it only calls set_data() on the existing
+        Line2D artist every frame and never clears the axes.  Calling ax.clear()
+        20 times per second forces matplotlib to re-layout tick labels, spine
+        widths, and the canvas bounding box, which is the root cause of the
+        waveform jumping up and down at high BPM.
+        """
         try:
-            return (
-                self.is_live and
-                not self.show_respiration and
-                not self.show_markers and
-                not self.show_median_overlay and
-                not bool(getattr(self, "arrhythmia_events", None))
-            )
+            return self.is_live and self.ecg_line is not None
         except Exception:
             return False
     
@@ -1313,10 +1315,20 @@ class ExpandedLeadView(QDialog):
     def start_live_mode(self):
         """Start live data updates"""
         self.is_live = True
+        # Persistent overlay artists managed in-place (no ax.clear each frame)
+        self._iso_line_artist = None    # isoelectric dashed baseline
+        self._median_line_artist = None  # median beat overlay
+        self._blit_bg = None
+        # Pre-seed the centering EMA from the full buffer so it doesn't drift on startup
+        if hasattr(self, 'ecg_data') and len(self.ecg_data) > 0:
+            self._live_center_ema = float(np.nanmedian(self.ecg_data))
+        else:
+            self._live_center_ema = None
         self.timer.start(50)  # Faster refresh for smoother live feel
 
     def resizeEvent(self, event):
         """Respond to window resizing by scaling fonts and components."""
+        self._blit_bg = None  # invalidate background cache if resized
         try:
             # Baseline matches initial size above
             base_w, base_h = 1400.0, 900.0
@@ -1335,6 +1347,9 @@ class ExpandedLeadView(QDialog):
         """Stop live data updates"""
         self.is_live = False
         self.timer.stop()
+        # Reset persistent overlay artists so the slow (non-live) path starts clean
+        self._iso_line_artist = None
+        self._median_line_artist = None
 
     def _resolve_runtime_sampling_rate(self, parent=None):
         """Return stable runtime sampling rate for plotting/analysis.
@@ -1581,12 +1596,12 @@ class ExpandedLeadView(QDialog):
         except Exception:
             return signal
 
-    def _smooth_display_signal(self, signal, sigma=0.8):
-        """Smooth plotted data without introducing right-edge jumps.
+    def _smooth_display_signal(self, signal, sigma=1.2):
+        """One-pass Gaussian smooth — mirror-padded to avoid right-edge jump.
 
-        The expanded lead window usually follows the newest samples. If we
-        smooth with implicit zero-padding, the newest samples can dip or spike
-        at the end of the plot. Mirror-padding avoids that visible tail jump.
+        sigma=1.2 samples at 500 Hz is the sweet spot: smooths powerline noise
+        without blurring the QRS upstroke.  Don't call this twice on the same
+        data — compounding passes add group delay and make the waveform lag.
         """
         if signal is None:
             return signal
@@ -1595,22 +1610,18 @@ class ExpandedLeadView(QDialog):
         if arr.size <= 5:
             return arr
 
-        pad = max(3, int(np.ceil(max(0.5, float(sigma)) * 3)))
+        # Pad = 4*sigma is wide enough to avoid boundary effects
+        pad = max(3, int(np.ceil(float(sigma) * 4)))
         if arr.size <= pad:
             return arr
 
         try:
             from scipy.ndimage import gaussian_filter1d
-
             padded = np.pad(arr, pad_width=pad, mode='reflect')
             smoothed = gaussian_filter1d(padded, sigma=float(sigma), mode='nearest')
             return smoothed[pad:-pad]
         except Exception:
-            kernel_size = max(3, min(7, (pad * 2) + 1))
-            kernel = np.ones(kernel_size, dtype=float) / float(kernel_size)
-            padded = np.pad(arr, pad_width=pad, mode='edge')
-            smoothed = np.convolve(padded, kernel, mode='same')
-            return smoothed[pad:-pad]
+            return arr
     
     def calculate_respiration_ylim(self, respiration_signal):
         """Calculate dynamic Y-limits for respiration using percentiles.
@@ -1783,17 +1794,22 @@ class ExpandedLeadView(QDialog):
 
             # After all filters, crop back to the exact visible window to remove
             # edge transients introduced by filtering the padded segment.
+            # Bug 3 fix: explicit length guard before crop; fall back to raw slice
+            # if the mirror extension made the array shorter than expected so that
+            # filter ringing can't silently leak through.
             try:
-                if visible_len > 0 and len(display_signal) >= visible_offset + visible_len:
+                if (visible_len > 0 and
+                        len(display_signal) >= visible_offset + visible_len):
                     display_signal = display_signal[visible_offset:visible_offset + visible_len]
+                else:
+                    # Fallback: use raw unpadded slice — no edge-mitigation, but no ringing
+                    display_signal = self.ecg_data[start_idx:end_idx].copy()
             except Exception:
-                # In case of any indexing issues, fall back to the original (unpadded) slice
-                display_signal = self.ecg_data[start_idx:end_idx]
+                display_signal = self.ecg_data[start_idx:end_idx].copy()
 
-            sigma = 0.8
-            if hasattr(self._parent, 'SMOOTH_SIGMA'):
-                sigma = float(self._parent.SMOOTH_SIGMA)
-            display_signal = self._smooth_display_signal(display_signal, sigma=sigma)
+            # Single smooth pass at 500 Hz sweet-spot — never call twice (double-pass
+            # compounds group delay and makes the waveform visually lag the true signal)
+            display_signal = self._smooth_display_signal(display_signal, sigma=1.2)
 
             # ---------------- DISPLAY SCALING (apply gain ONCE, last) ----------------
             wave_gain_mm = 10.0
@@ -1804,42 +1820,53 @@ class ExpandedLeadView(QDialog):
                 wave_gain_mm = 10.0
             gain = wave_gain_mm / 10.0  # 10mm/mV = 1.0x baseline
 
-            center_slice = display_signal
-            if len(display_signal) > 20:
-                edge_trim = max(1, min(len(display_signal) // 10, int(self.sampling_rate * 0.2)))
-                if (len(display_signal) - (edge_trim * 2)) >= 5:
-                    center_slice = display_signal[edge_trim:-edge_trim]
-
-            # ── FIX: Percentile-based baseline — works at ALL BPM incl 219 ────
-            # median fails at high BPM: 36 beats in window → median IS the QRS
-            # P10 tracks the true isoelectric line regardless of heart rate
-            # (10th percentile ≈ TP segment baseline at any BPM)
-            if len(center_slice) > 0:
-                raw_center = float(np.percentile(center_slice, 10))
+            # ── STABLE CENTERING: quiet-mask EMA (alpha=0.005, ~1 s time constant) ──
+            # Only update the baseline EMA from the quiet (sub-75th-percentile) parts
+            # of the signal — QRS peaks are excluded so a spike entering the right
+            # edge cannot shift the entire waveform up or down.
+            if len(display_signal) > 0:
+                try:
+                    p75 = float(np.percentile(display_signal, 75))
+                    quiet_mask = display_signal < p75
+                    if np.any(quiet_mask):
+                        quiet_center = float(np.nanmedian(display_signal[quiet_mask]))
+                    else:
+                        quiet_center = float(np.nanmedian(display_signal))
+                except Exception:
+                    quiet_center = float(np.nanmedian(display_signal))
             else:
-                raw_center = 0.0
-
-            if (
-                not hasattr(self, '_display_center_ema')
-                or self._last_window_bounds is None
-                or abs(current_window_bounds[0] - self._last_window_bounds[0]) > max(1, int(self.sampling_rate * 30.0))
-            ):
-                self._display_center_ema = raw_center
-            # alpha=0.01 — very stable, won't react to individual beats
-            center_alpha = 0.01
-            self._display_center_ema = (center_alpha * raw_center) + ((1.0 - center_alpha) * self._display_center_ema)
+                quiet_center = 0.0
+            if not hasattr(self, '_live_center_ema') or self._live_center_ema is None:
+                self._live_center_ema = quiet_center
+            _ema_alpha = 0.005  # ~1 s time-constant at 50 ms refresh — very stable
+            self._live_center_ema = (1.0 - _ema_alpha) * self._live_center_ema + _ema_alpha * quiet_center
+            raw_center = self._live_center_ema
             self._last_window_bounds = current_window_bounds
-            # ─────────────────────────────────────────────────────────────────
+            # ─────────────────────────────────────────────────────────────────────
 
-            centered = display_signal - self._display_center_ema
+            centered = display_signal - raw_center
             scaled = centered * (gain * self.amplification)
             visual_gain = 1.5
             adc_center = -2048 if str(self.lead_name).upper() == 'AVR' else 2048
             display_adc = adc_center + scaled * visual_gain
             
-            # Create time array matching the signal length
+            # ── FIXED TIME AXIS for live mode (copies 12-lead ECG box) ──────────────
+            # The 12-lead box always sets xlim to [0, seconds_to_show] and maps
+            # data[-N:] onto that fixed range.  The x-axis NEVER changes between
+            # frames – only Y-data updates.  This eliminates tick-label regeneration
+            # (the root cause of the remaining jitter).
+            #
+            # In history / manual mode the absolute offset axis is still used so
+            # the user can see the correct wall-clock position of each beat.
             fs = max(1.0, float(self.sampling_rate))
-            time = np.arange(len(display_adc), dtype=float) / fs + (start_idx / fs)
+            live_fixed_axis = self.is_live and not self.manual_view and not self.history_slider_active
+            if live_fixed_axis:
+                # Fixed 0 → window_duration axis — never changes between frames
+                n_pts = len(display_adc)
+                time = np.linspace(0.0, self.view_window_duration, n_pts) if n_pts > 0 else np.array([])
+            else:
+                # History / manual mode: show absolute sample positions
+                time = np.arange(len(display_adc), dtype=float) / fs + (start_idx / fs)
 
             ylim_low, ylim_high = (-4096.0, 0.0) if str(self.lead_name).upper() == 'AVR' else (0.0, 4096.0)
             fast_live_path = self._can_use_fast_live_path() and self.ecg_line is not None
@@ -1871,22 +1898,20 @@ class ExpandedLeadView(QDialog):
                             quality_text = "Quality: Clean"
                     except Exception:
                         pass
-                    # Apply light smoothing for smooth wave appearance without
-                    # zero-padding artifacts at the newest/right edge.
-                    display_adc = self._smooth_display_signal(display_adc, sigma=0.5)
-                    
+                    # Bug 2 fix: remove second _smooth_display_signal call.
+                    # display_signal was already smoothed with sigma=0.8 above;
+                    # a second Gaussian pass compounds the group delay and makes
+                    # the waveform visually lag behind the true signal.
+
                     # Plot only valid points
                     if np.all(valid_mask):
                         plot_x = time
                         plot_y = display_adc
                     else:
-                        # Some NaN values - plot segments
+                        # Some NaN values - plot valid segments only
                         time_valid = time[valid_mask]
                         scaled_valid = display_adc[valid_mask]
                         if len(time_valid) > 1:
-                            # Apply smoothing to valid segment without edge
-                            # artifacts at the segment tail.
-                            scaled_valid = self._smooth_display_signal(scaled_valid, sigma=0.5)
                             plot_x = time_valid
                             plot_y = scaled_valid
                 else:
@@ -1895,38 +1920,89 @@ class ExpandedLeadView(QDialog):
                 print(f" No data to plot in expanded view for lead {self.lead_name}: len={len(display_adc)}")
 
             if fast_live_path:
+                # ── BLIT RENDERING: hospital-monitor quality ─────────────────────────
+                # Only the ECG Line2D artist is redrawn each frame.
+                # The axes background (grid, ticks, labels, title, spine) is
+                # captured once into self._blit_bg and restored cheaply every
+                # frame — identical to the technique used in oscilloscope UIs.
                 self.ecg_line.set_alpha(waveform_alpha)
                 self.ecg_line.set_data(plot_x, plot_y)
-                self.ax.set_ylabel('Amplitude (ADC)', fontsize=14, fontweight='bold', color='#34495e')
-                amp_text = f" (Zoom: {self.amplification:.2f}x)" if self.amplification != 1.0 else ""
-                self.ax.set_title(
-                    f'Lead {self.lead_name} - Live PQRST Analysis{amp_text}',
-                    fontsize=18,
-                    fontweight='bold',
-                    color='#2c3e50'
-                )
-                if len(time) > 0:
-                    self.ax.set_xlim(time[0], time[-1])
+
+                # X limits: NEVER change in live mode (fixed 0 → window_duration).
+                # Any set_xlim() call invalidates the blit background — only do it
+                # if the window duration actually changed (zoom in/out button).
+                if live_fixed_axis:
+                    cur_xlim = self.ax.get_xlim()
+                    if abs(cur_xlim[0]) > 0.01 or abs(cur_xlim[1] - self.view_window_duration) > 0.05:
+                        self.ax.set_xlim(0.0, self.view_window_duration)
+                        self._blit_bg = None  # invalidate so background is captured fresh
                 else:
-                    self.ax.set_xlim(0, 1)
-                self.ax.set_ylim(ylim_low, ylim_high)
-                self.ax.grid(True, which='both', linestyle='--', linewidth=0.5, color='#bdc3c7')
-                self.ax.spines['top'].set_visible(False)
-                self.ax.spines['right'].set_visible(False)
-                if self._quality_text_artist is not None:
-                    try:
-                        self._quality_text_artist.remove()
-                    except Exception:
-                        pass
-                    self._quality_text_artist = None
-                if quality_text and len(time) > 0:
-                    try:
-                        self._quality_text_artist = self.ax.text(
-                            time[0], ylim_high * 0.9, quality_text, color="#7f8c8d", fontsize=9, va="top"
+                    if len(time) > 0:
+                        cur_xlim = self.ax.get_xlim()
+                        new_xmin, new_xmax = float(time[0]), float(time[-1])
+                        if abs(cur_xlim[0] - new_xmin) > 0.05 or abs(cur_xlim[1] - new_xmax) > 0.05:
+                            self.ax.set_xlim(new_xmin, new_xmax)
+                            self._blit_bg = None
+                cur_ylim = self.ax.get_ylim()
+                if cur_ylim != (ylim_low, ylim_high):
+                    self.ax.set_ylim(ylim_low, ylim_high)
+                    self._blit_bg = None
+
+                # Title: update only when amplification changes (also invalidates bg)
+                amp_text = f" (Zoom: {self.amplification:.2f}x)" if self.amplification != 1.0 else ""
+                wanted_title = f'Lead {self.lead_name} - Live PQRST Analysis{amp_text}'
+                if self.ax.get_title() != wanted_title:
+                    self.ax.set_title(wanted_title, fontsize=18, fontweight='bold', color='#2c3e50')
+                    self._blit_bg = None
+
+                # Isoelectric baseline — persistent dashed line (part of background)
+                try:
+                    adc_center_val = -2048 if str(self.lead_name).upper() == 'AVR' else 2048
+                    if not hasattr(self, '_iso_line_artist') or self._iso_line_artist is None:
+                        self._iso_line_artist = self.ax.axhline(
+                            adc_center_val, color="#95a5a6", linestyle="--",
+                            linewidth=1.0, alpha=0.7, zorder=0
                         )
-                    except Exception:
+                        self._blit_bg = None  # new artist added, background must be refreshed
+                except Exception:
+                    pass
+
+                # Quality text — only update when text changes (rare)
+                new_qt = quality_text or ""
+                old_qt = getattr(self._quality_text_artist, 'get_text', lambda: "")() if self._quality_text_artist else ""
+                if new_qt != old_qt:
+                    if self._quality_text_artist is not None:
+                        try:
+                            self._quality_text_artist.remove()
+                        except Exception:
+                            pass
                         self._quality_text_artist = None
-                self.canvas.draw_idle()
+                    if quality_text:
+                        try:
+                            x_left = 0.0 if live_fixed_axis else (float(time[0]) if len(time) > 0 else 0.0)
+                            self._quality_text_artist = self.ax.text(
+                                x_left, ylim_high * 0.9, quality_text,
+                                color="#7f8c8d", fontsize=9, va="top"
+                            )
+                        except Exception:
+                            self._quality_text_artist = None
+                    self._blit_bg = None  # text changed — regenerate background
+
+                # ── BLIT DRAW: capture background once, restore + draw line each frame ─
+                try:
+                    fc = self.canvas.figure.canvas
+                    if getattr(self, '_blit_bg', None) is None:
+                        fc.draw()  # draws background WITHOUT the animated ecg_line
+                        self._blit_bg = fc.copy_from_bbox(self.ax.bbox)
+
+                    # Restore background + draw only the line — ~10x faster than draw_idle
+                    fc.restore_region(self._blit_bg)
+                    self.ax.draw_artist(self.ecg_line)
+                    fc.blit(self.ax.bbox)
+                except Exception:
+                    # Blit not supported by this backend — fall back gracefully
+                    self._blit_bg = None
+                    self.canvas.draw_idle()
                 return
 
             self.ax.clear()
@@ -3277,7 +3353,9 @@ class ExpandedLeadView(QDialog):
             if leg is not None:
                 leg.remove()
 
-            self.canvas.draw_idle()
+            # CRITICAL FIX: invalidate blit cache — artists changed, background is stale
+            self._blit_bg = None
+            # Do NOT call canvas.draw_idle() here — the next timer tick handles it
 
         except Exception as e:
             print(f"Error updating plot markers: {e}")
@@ -3362,8 +3440,6 @@ class ExpandedLeadView(QDialog):
         max_offset = max(0.0, total_duration - self.view_window_duration)
         slider_max = int(max_offset * 1000)
         current_val = int(min(self.view_window_offset, max_offset) * 1000)
-        
-        print(f" Updating history slider: max={slider_max}, current={current_val}, duration={total_duration:.1f}s")
         
         self.history_slider.blockSignals(True)
         self.history_slider.setMaximum(slider_max)

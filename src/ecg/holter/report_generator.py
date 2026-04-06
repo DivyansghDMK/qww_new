@@ -309,13 +309,13 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
 
     # Signature box
     sig_data = [
-        ['Physician Signature', 'Date', 'Stamp'],
-        ['', datetime.now().strftime('%Y-%m-%d'), ''],
+        ['Reference Report Confirmed by', 'Doctor Name', 'Doctor Sign'],
+        ['', patient_info.get('doctor', ''), ''],
     ]
     sig_table = Table(sig_data, colWidths=[70*mm, 50*mm, 60*mm])
     sig_table.setStyle(TableStyle([
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica'),
+        ('FONTSIZE', (0, 0), (-1, -1), 8),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
         ('ROWBACKGROUNDS', (0, 0), (-1, 0), [GRAY]),
         ('MINROWHEIGHT', (0, 1), (-1, 1), 20*mm),
@@ -384,37 +384,20 @@ def _compute_interval_stats(jsonl_path: str) -> dict:
 
 
 def _auto_conclusion(summary: dict) -> str:
-    """Generate an auto-summary conclusion text."""
+    """
+    Generate an auto-summary conclusion text.
+    User request: Only show rhythm/arrhythmia findings, nothing extra.
+    """
     lines = []
-    avg_hr = summary.get('avg_hr', 0)
-    max_hr = summary.get('max_hr', 0)
-    min_hr = summary.get('min_hr', 0)
-    sdnn   = summary.get('sdnn', 0)
-    arrhy  = summary.get('arrhythmia_counts', {})
-    pauses = summary.get('pauses', 0)
-
-    dur_h = int(summary.get('duration_sec', 0) // 3600)
-    dur_m = int((summary.get('duration_sec', 0) % 3600) // 60)
-    lines.append(f"Recording duration: {dur_h}h {dur_m}m. "
-                 f"Average HR: {avg_hr:.0f} bpm (Max: {max_hr:.0f}, Min: {min_hr:.0f} bpm).")
-
-    if sdnn > 100:
-        lines.append("Heart rate variability (SDNN) is within normal limits.")
-    elif sdnn > 50:
-        lines.append("Heart rate variability (SDNN) is borderline reduced.")
-    else:
-        lines.append("Heart rate variability (SDNN) is significantly reduced — clinical correlation advised.")
+    arrhy = summary.get('arrhythmia_counts', {})
 
     if not arrhy:
-        lines.append("No significant arrhythmias detected during this recording.")
+        lines.append("Normal sinus rhythm.")
     else:
-        arrhy_list = ', '.join(f"{k} ({v} episode{'s' if v>1 else ''})" for k, v in arrhy.items())
+        # Print detected issues/arrhythmias
+        arrhy_list = ', '.join(f"{k}" for k, v in arrhy.items())
         lines.append(f"Arrhythmias detected: {arrhy_list}.")
 
-    if pauses > 0:
-        lines.append(f"Pauses (RR interval >2.0s): {pauses} episode(s) detected.")
-
-    lines.append("\n[Physician to review and add clinical interpretation above.]")
     return " ".join(lines)
 
 

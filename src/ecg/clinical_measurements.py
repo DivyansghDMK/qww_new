@@ -474,91 +474,186 @@ def measure_qt_from_median_beat(median_beat, time_axis, fs, tp_baseline, rr_ms=N
         return None
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# RV5 / SV1 — Android-matched algorithm (ported from Kotlin)
+#
+# Algorithm:
+#   Baseline  : 10th-percentile of sorted samples (quietest TP-segment proxy)
+#   R peaks   : threshold = baseline + 60 % of (max − baseline),  ≥ MIN_RR_SAMPLES apart
+#   RV5       : top-3 R amplitudes above baseline, averaged  (positive mV)
+#   SV1       : S-nadir depth below baseline searched in 80 ms after each R peak,
+#               top-3 depths averaged, returned as negative mV
+#
+# Constants (per Android source):
+#   MIN_RR_SAMPLES  = 0.30 × fs   (i.e. 150 @ 500 Hz → max ~200 bpm)
+#   S_SEARCH_MS     = 80 ms       (S-trough window after R peak)
+#   MIN_R_AMPLITUDE = 0.05 mV     (reject noise spikes as R peaks)
+#   MIN_S_DEPTH     = 0.02 mV     (reject negligible S deflections)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _rv5sv1_get_baseline(samples: np.ndarray) -> float:
+    """10th-percentile of sorted samples — quietest part of signal (TP proxy)."""
+    if samples.size == 0:
+        return 0.0
+    sorted_s = np.sort(samples)
+    idx = int(sorted_s.size * 0.10)
+    idx = max(0, min(idx, sorted_s.size - 1))
+    return float(sorted_s[idx])
+
+
+def _rv5sv1_find_r_peaks(samples: np.ndarray, baseline: float, fs: float) -> list:
+    """
+    Detect R peaks matching the Android findRPeaks logic.
+
+    threshold = baseline + 60 % of (max − baseline)
+    Minimum distance between peaks = 30 % of fs (≈ 200 bpm guard).
+    Each candidate is refined within ±5 samples to the local maximum.
+    """
+    min_rr = max(1, int(0.30 * fs))          # MIN_RR_SAMPLES
+    max_above = float(np.max(samples)) - baseline
+    if max_above <= 0.01:
+        return []
+
+    threshold = baseline + max_above * 0.60
+    peaks = []
+    last_peak = -min_rr
+
+    for i in range(1, len(samples) - 1):
+        if (samples[i] >= threshold and
+                samples[i] > samples[i - 1] and
+                samples[i] >= samples[i + 1] and
+                i - last_peak >= min_rr):
+            # ±5-sample local refinement
+            lo = max(0, i - 5)
+            hi = min(len(samples) - 1, i + 5)
+            max_idx = lo + int(np.argmax(samples[lo:hi + 1]))
+            peaks.append(max_idx)
+            last_peak = max_idx
+
+    return peaks
+
+
+def _measure_r_wave(samples: np.ndarray, fs: float, sample_to_mv: float) -> float:
+    """
+    RV5: average amplitude of top-3 R-wave peaks above baseline.
+
+    Mirrors Kotlin measureRWave().
+    """
+    min_rr = max(1, int(0.30 * fs))
+    if len(samples) < min_rr * 2:
+        return 0.0
+
+    baseline = _rv5sv1_get_baseline(samples)
+    r_peaks  = _rv5sv1_find_r_peaks(samples, baseline, fs)
+    if not r_peaks:
+        return 0.0
+
+    amplitudes = sorted(
+        [(samples[idx] - baseline) * sample_to_mv for idx in r_peaks
+         if (samples[idx] - baseline) * sample_to_mv > 0.05],
+        reverse=True,
+    )
+    if not amplitudes:
+        return 0.0
+
+    top3 = amplitudes[:min(3, len(amplitudes))]
+    return float(np.mean(top3))
+
+
+def _measure_s_wave(samples: np.ndarray, fs: float, sample_to_mv: float) -> float:
+    """
+    SV1: average S-nadir depth below baseline (top-3), returned as negative mV.
+
+    Mirrors Kotlin measureSWave().  S_SEARCH_SAMPLES = 80 ms after each R peak.
+    """
+    min_rr         = max(1, int(0.30 * fs))
+    s_search_samps = max(1, int(0.080 * fs))   # 80 ms
+
+    if len(samples) < min_rr * 2:
+        return 0.0
+
+    baseline = _rv5sv1_get_baseline(samples)
+    r_peaks  = _rv5sv1_find_r_peaks(samples, baseline, fs)
+    if not r_peaks:
+        return 0.0
+
+    depths = []
+    for r_idx in r_peaks:
+        search_end = min(r_idx + s_search_samps, len(samples) - 1)
+        if r_idx + 5 >= len(samples):
+            continue
+        min_val = float(np.min(samples[r_idx + 1: search_end + 1]))
+        depth   = (baseline - min_val) * sample_to_mv   # positive magnitude
+        if depth > 0.02:
+            depths.append(depth)
+
+    if not depths:
+        return 0.0
+
+    top3 = sorted(depths, reverse=True)[:min(3, len(depths))]
+    return -float(np.mean(top3))   # SV1 is negative (below baseline)
+
+
 def measure_rv5_sv1_from_median_beat(v5_raw, v1_raw, r_peaks_v5, r_peaks_v1, fs,
                                       v5_adc_per_mv=2048.0, v1_adc_per_mv=1441.0):
     """
-    Measure RV5 and SV1 from median beat (GE/Philips standard).
-
-    FIX #8: Calibration factors are now named module-level constants
-    (V5_ADC_CALIBRATION_FACTOR and V1_ADC_CALIBRATION_FACTOR) instead of
-    magic numbers buried in the function body.  Adjust those constants when
-    hardware ADC gain changes.
+    Measure RV5 (V5 R-wave) and SV1 (V1 S-wave) using the Android-matched
+    peak-averaging algorithm.
 
     Args:
-        v5_raw:         Raw V5 lead signal.
-        v1_raw:         Raw V1 lead signal.
-        r_peaks_v5:     R-peak indices in V5.
-        r_peaks_v1:     R-peak indices in V1.
-        fs:             Sampling rate (Hz).
-        v5_adc_per_mv:  Nominal ADC counts per mV for V5.
-        v1_adc_per_mv:  Nominal ADC counts per mV for V1.
+        v5_raw:        Raw ADC samples for lead V5.
+        v1_raw:        Raw ADC samples for lead V1.
+        r_peaks_v5:    Pre-detected R-peak indices in V5  (used only to check
+                       data length; peaks are re-detected internally).
+        r_peaks_v1:    Pre-detected R-peak indices in V1  (same note).
+        fs:            Sampling rate in Hz.
+        v5_adc_per_mv: ADC counts per mV for V5 (hardware calibration).
+        v1_adc_per_mv: ADC counts per mV for V1 (hardware calibration).
 
     Returns:
-        (rv5_mv, sv1_mv) in mV, or (None, None) if not measurable.
+        (rv5_mv, sv1_mv) in mV.
+        rv5_mv  ≥ 0   (positive R amplitude)
+        sv1_mv  ≤ 0   (negative S depth)
+        Either may be None if the lead has insufficient data.
+
+    Sokolow-Lyon criterion:  rv5_mv + abs(sv1_mv)  ≥ 3.5 mV  → possible LVH
     """
-    if len(r_peaks_v5) < 8:
-        return None, None
+    v5  = np.asarray(v5_raw,  dtype=float)
+    v1  = np.asarray(v1_raw,  dtype=float)
+    min_rr = max(1, int(0.30 * fs))
 
-    _, median_v5 = build_median_beat(v5_raw, r_peaks_v5, fs, min_beats=8)
-    if median_v5 is None:
-        return None, None
+    # ── RV5 ──────────────────────────────────────────────────────────────────
+    rv5_mv = None
+    if v5.size >= min_rr * 2 and len(r_peaks_v5) >= 2:
+        sample_to_mv_v5 = 1.0 / v5_adc_per_mv
+        rv5_mv = _measure_r_wave(v5, fs, sample_to_mv_v5) or None
 
-    r_idx = len(median_v5) // 2
-    tp_start_median = max(0, r_idx - int(0.35 * fs))
-    tp_end_median   = max(0, r_idx - int(0.15 * fs))
-    tp_baseline_v5  = (np.median(median_v5[tp_start_median:tp_end_median])
-                       if tp_end_median > tp_start_median
-                       else np.median(median_v5[:int(0.05 * fs)]))
+    # ── SV1 ──────────────────────────────────────────────────────────────────
+    sv1_mv = None
+    if v1.size >= min_rr * 2 and len(r_peaks_v1) >= 2:
+        sample_to_mv_v1 = 1.0 / v1_adc_per_mv
+        sv1_mv = _measure_s_wave(v1, fs, sample_to_mv_v1) or None
 
-    qrs_start = max(0, r_idx - int(80 * fs / 1000))
-    qrs_end   = min(len(median_v5), r_idx + int(80 * fs / 1000))
-    r_max_adc = np.max(median_v5[qrs_start:qrs_end]) - tp_baseline_v5
-
-    # FIX #8: Use named calibration constant instead of magic literal 5.05
-    adjusted_v5_adc_per_mv = v5_adc_per_mv / V5_ADC_CALIBRATION_FACTOR
-    rv5_mv = (r_max_adc / adjusted_v5_adc_per_mv) if r_max_adc > 0 else None
-
-    if not hasattr(measure_rv5_sv1_from_median_beat, '_debug_count'):
-        measure_rv5_sv1_from_median_beat._debug_count = 0
-    measure_rv5_sv1_from_median_beat._debug_count += 1
-    if measure_rv5_sv1_from_median_beat._debug_count % 50 == 1:
-        rv5_str = f"{rv5_mv:.3f}" if rv5_mv is not None else "None"
-        print(f" RV5: r_max_adc={r_max_adc:.2f}, adj_factor={V5_ADC_CALIBRATION_FACTOR}, "
-              f"adj_adc_per_mv={adjusted_v5_adc_per_mv:.1f}, rv5_mv={rv5_str}")
-
-    if len(r_peaks_v1) < 8:
-        return rv5_mv, None
-
-    _, median_v1 = build_median_beat(v1_raw, r_peaks_v1, fs, min_beats=8)
-    if median_v1 is None:
-        return rv5_mv, None
-
-    r_idx = len(median_v1) // 2
-    tp_start_median = max(0, r_idx - int(0.35 * fs))
-    tp_end_median   = max(0, r_idx - int(0.15 * fs))
-    tp_baseline_v1  = (np.median(median_v1[tp_start_median:tp_end_median])
-                       if tp_end_median > tp_start_median
-                       else np.median(median_v1[:int(0.05 * fs)]))
-
-    qrs_start   = max(0, r_idx - int(80 * fs / 1000))
-    qrs_end     = min(len(median_v1), r_idx + int(80 * fs / 1000))
-    s_nadir_adc = np.min(median_v1[qrs_start:qrs_end])
-    sv1_adc     = s_nadir_adc - tp_baseline_v1
-
-    # FIX #8: Use named calibration constant instead of magic literal 16.3
-    adjusted_v1_adc_per_mv = v1_adc_per_mv / V1_ADC_CALIBRATION_FACTOR
-    sv1_mv = sv1_adc / adjusted_v1_adc_per_mv
-
-    # FIX #8: SV1 must always be ≤ 0 (S-wave is below baseline in V1).
-    if sv1_mv > 0:
-        print(f" ⚠️ SV1 sign error: got {sv1_mv:.3f} mV (must be ≤ 0). "
-              "QRS window likely misaligned — discarding.")
+    # ── Validate signs ────────────────────────────────────────────────────────
+    if rv5_mv is not None and rv5_mv < 0:
+        rv5_mv = None
+    if sv1_mv is not None and sv1_mv > 0:
         sv1_mv = None
 
-    if measure_rv5_sv1_from_median_beat._debug_count % 50 == 1:
-        sv1_str = f"{sv1_mv:.3f}" if sv1_mv is not None else "None"
-        print(f" SV1: sv1_adc={sv1_adc:.2f}, adj_factor={V1_ADC_CALIBRATION_FACTOR}, "
-              f"adj_adc_per_mv={adjusted_v1_adc_per_mv:.1f}, sv1_mv={sv1_str}")
+    # ── Debug log (every 50 calls) ────────────────────────────────────────────
+    if not hasattr(measure_rv5_sv1_from_median_beat, '_dbg'):
+        measure_rv5_sv1_from_median_beat._dbg = 0
+    measure_rv5_sv1_from_median_beat._dbg += 1
+    if measure_rv5_sv1_from_median_beat._dbg % 50 == 1:
+        sokolow = (rv5_mv + abs(sv1_mv)) if rv5_mv is not None and sv1_mv is not None else None
+        print(
+            f"╔═══════════════════════════════════════╗\n"
+            f"║  RV5 = {rv5_mv:.3f if rv5_mv is not None else '---'} mV  (R wave in V5)\n"
+            f"║  SV1 = {sv1_mv:.3f if sv1_mv is not None else '---'} mV  (S wave in V1)\n"
+            f"║  Sokolow-Lyon = {sokolow:.3f if sokolow is not None else '---'} mV\n"
+            f"║  {'⚠️ LVH POSSIBLE' if sokolow is not None and sokolow >= 3.5 else '✓ Normal range'}\n"
+            f"╚═══════════════════════════════════════╝"
+        )
 
     return rv5_mv, sv1_mv
 
