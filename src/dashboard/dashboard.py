@@ -191,8 +191,8 @@ class DashboardHomeWidget(QWidget):
         super().__init__()
 
 class Dashboard(QWidget):
-    def __init__(self, username=None, role=None, user_details=None):
-        super().__init__()
+    def __init__(self, username=None, role=None, user_details=None, parent=None):
+        super().__init__(parent)
         # Settings for wave speed/gain
         self.settings_manager = SettingsManager()
         self.current_language = self.settings_manager.get_setting("system_language", "en")
