@@ -29,7 +29,7 @@ ECG_BASELINE_ADC = 2000.0
 
 # ------------------------ Resource path helper for PyInstaller compatibility ------------------------
 
-def _get_resource_path(relative_path):
+def get_resource_path(relative_path):
     """
     Get resource path that works both in development and when packaged as exe.
     For PyInstaller: resources are in sys._MEIPASS
@@ -846,13 +846,13 @@ def load_latest_metrics_entry(reports_dir):
     except Exception as e:
         print(f" Could not read metrics file for HR: {e}")
 
-def _safe_int_metric(value, default=0):
+def safe_int_metric(value, default=0):
     try:
         return int(float(value))
     except Exception:
         return default
 
-def _read_live_hrv_metrics_from_ecg_page(page):
+def read_live_hrv_metrics_from_ecg_page(page):
     """
     Pull finalized HRV metrics from the live calculator/session object passed
     from the HRV test window so the PDF header can match the on-screen values.
@@ -869,15 +869,15 @@ def _read_live_hrv_metrics_from_ecg_page(page):
         return live
 
     try:
-        live["HR"] = _safe_int_metric(
+        live["HR"] = safe_int_metric(
             getattr(page, "last_heart_rate", 0)
             or getattr(page, "heart_rate", 0)
         )
-        live["PR"] = _safe_int_metric(getattr(page, "pr_interval", 0))
-        live["QRS"] = _safe_int_metric(getattr(page, "last_qrs_duration", 0))
-        live["QT"] = _safe_int_metric(getattr(page, "last_qt_interval", 0))
-        live["QTc"] = _safe_int_metric(getattr(page, "last_qtc_interval", 0))
-        live["ST"] = _safe_int_metric(getattr(page, "last_st_interval", 0))
+        live["PR"] = safe_int_metric(getattr(page, "pr_interval", 0))
+        live["QRS"] = safe_int_metric(getattr(page, "last_qrs_duration", 0))
+        live["QT"] = safe_int_metric(getattr(page, "last_qt_interval", 0))
+        live["QTc"] = safe_int_metric(getattr(page, "last_qtc_interval", 0))
+        live["ST"] = safe_int_metric(getattr(page, "last_st_interval", 0))
 
         if hasattr(page, "get_current_metrics"):
             try:
@@ -885,25 +885,23 @@ def _read_live_hrv_metrics_from_ecg_page(page):
             except Exception:
                 current = {}
             if live["HR"] <= 0:
-                live["HR"] = _safe_int_metric(current.get("heart_rate", 0))
+                live["HR"] = safe_int_metric(current.get("heart_rate", 0))
             if live["PR"] <= 0:
-                live["PR"] = _safe_int_metric(current.get("pr_interval", 0))
+                live["PR"] = safe_int_metric(current.get("pr_interval", 0))
             if live["QRS"] <= 0:
-                live["QRS"] = _safe_int_metric(current.get("qrs_duration", 0))
+                live["QRS"] = safe_int_metric(current.get("qrs_duration", 0))
             if live["QT"] <= 0:
-                live["QT"] = _safe_int_metric(current.get("qt_interval", 0))
+                live["QT"] = safe_int_metric(current.get("qt_interval", 0))
             if live["QTc"] <= 0:
-                live["QTc"] = _safe_int_metric(current.get("qtc_interval", 0))
+                live["QTc"] = safe_int_metric(current.get("qtc_interval", 0))
             if live["ST"] <= 0:
-                live["ST"] = _safe_int_metric(current.get("st_interval", 0))
+                live["ST"] = safe_int_metric(current.get("st_interval", 0))
     except Exception as e:
         print(f"⚠️ HRV Report: Could not read live metrics from ecg_test_page: {e}")
 
     return live
 
-    return None
-
-def _add_label_column(drawing, x_pos, y_text_pairs, font_size=10, font_name="Helvetica", text_color=colors.black):
+def add_label_column(drawing, x_pos, y_text_pairs, font_size=10, font_name="Helvetica", text_color=colors.black):
     """
     Add multiple text labels to a drawing at a fixed X position.
     """
@@ -2673,12 +2671,12 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
         # Prefer PNG (ReportLab-friendly); fallback to WebP if PNG missing
         # Use resource_path helper for PyInstaller compatibility
         logo_filename = "DeckmountLogo.png"
-        logo_path = _get_resource_path(f"assets/{logo_filename}")
+        logo_path = get_resource_path(f"assets/{logo_filename}")
         
         # Fallback to old names if the new one is missing
         if not os.path.exists(logo_path):
-            png_path = _get_resource_path("assets/Deckmountimg.png")
-            webp_path = _get_resource_path("assets/Deckmount.webp")
+            png_path = get_resource_path("assets/Deckmountimg.png")
+            webp_path = get_resource_path("assets/Deckmount.webp")
             logo_path = png_path if os.path.exists(png_path) else webp_path
 
         if os.path.exists(logo_path):
@@ -2896,7 +2894,7 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     # ==================== STEP 1: Use ONLY current HRV session metrics ====================
     # Prefer the live calculator/session values from the HRV window itself so the
     # generated PDF matches the metrics visible on the HRV test display.
-    live_session_metrics = _read_live_hrv_metrics_from_ecg_page(ecg_test_page)
+    live_session_metrics = read_live_hrv_metrics_from_ecg_page(ecg_test_page)
     if any(v > 0 for v in live_session_metrics.values()):
         print("📊 HRV Report: Live metrics pulled from active HRV session:")
         print(

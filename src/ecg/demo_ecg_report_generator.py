@@ -82,8 +82,8 @@ def _populate_demo_signals_from_dummycsv(ecg_test_page: Optional[object]) -> Non
             print("Demo report: dummycsv.csv is empty")
             return
 
-        target_fs = 500.0
-        target_seconds = 6.0
+        target_fs = 1000.0
+        target_seconds = 12.0
         target_samples = int(target_fs * target_seconds)
 
         lead_names = getattr(ecg_test_page, "leads", [])

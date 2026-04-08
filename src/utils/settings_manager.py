@@ -15,6 +15,7 @@ class SettingsManager:
 
             # Report Setup settings
             "printer_average_wave": "on",
+            "lead_sequence": "Standard",
 
             # Filter settings
             "filter_ac": "50",
