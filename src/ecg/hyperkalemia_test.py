@@ -899,14 +899,18 @@ class HyperkalemiaTestWindow(QWidget):
             for lead_name in self.lead_data.keys():
                 if len(self.lead_data[lead_name]) > 0:
                     # Match 12-lead style window size for sharper, consistent motion.
-                    seconds_to_show = 3.0
-                    try:
-                        if self.ecg_calculator is not None and hasattr(self.ecg_calculator, 'window_size'):
-                            ws = int(getattr(self.ecg_calculator, 'window_size', 0) or 0)
-                            if ws > 0:
-                                seconds_to_show = max(1.0, ws / float(fs))
-                    except Exception:
-                        pass
+                    # USER REQUEST: Lead II should show 5000 samples (10 seconds at 500Hz)
+                    if lead_name == 'II':
+                        seconds_to_show = 10.0
+                    else:
+                        seconds_to_show = 3.0
+                        try:
+                            if self.ecg_calculator is not None and hasattr(self.ecg_calculator, 'window_size'):
+                                ws = int(getattr(self.ecg_calculator, 'window_size', 0) or 0)
+                                if ws > 0:
+                                    seconds_to_show = max(1.0, ws / float(fs))
+                        except Exception:
+                            pass
 
 
                     # try:

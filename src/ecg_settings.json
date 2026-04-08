@@ -2,7 +2,7 @@
   "wave_speed": "25",
   "wave_gain": "10",
   "lead_sequence": "Standard",
-  "serial_port": "/dev/cu.usbserial-140",
+  "serial_port": "COM8",
   "baud_rate": "115200",
   "hardware_version": "",
   "printer_average_wave": "on",
@@ -14,6 +14,5 @@
   "factory_calibration": "skip",
   "factory_self_test": "skip",
   "factory_memory_reset": "keep",
-  "factory_reset": "cancel",
-  "report_format": "12_1"
+  "factory_reset": "cancel"
 }

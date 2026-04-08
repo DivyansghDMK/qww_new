@@ -2907,6 +2907,9 @@ def generate_hyperkalemia_report(filename, analysis_results, lead_ii_data, sampl
         "HR_avg": hr,
         "Heart_Rate": hr,
         "QRS_axis": analysis_results.get("qrs_axis", "--"),
+        "risk_level": analysis_results.get("risk_level", "Normal/Low"),
+        "risk_score": analysis_results.get("risk_score", 0),
+        "indicators": analysis_results.get("indicators", [])
     }
 
     # Optional patient info passthrough
@@ -3436,19 +3439,28 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     # Get conclusions for landscape page
     dashboard_conclusions = get_dashboard_conclusions_from_image(None)
     
-    # Filter conclusions (SAME AS MAIN REPORT)
-    filtered_conclusions = []
-    for conclusion in dashboard_conclusions:
-        if conclusion and conclusion.strip() and conclusion.strip() != "---":
-            filtered_conclusions.append(conclusion.strip())
-            if len(filtered_conclusions) >= 12:
-                break
+    # ==================== STEP 4: Get Conclusions (HYPERKALEMIA ONLY) ====================
+    risk_level = data.get("risk_level", "Normal/Low")
+    indicators = data.get("indicators", [])
     
-    # If no real conclusions, use Hyperkalemia-specific defaults
+    # ONLY SHOW THINGS RELATED TO HYPERKALEMIA
+    filtered_conclusions = []
+    if risk_level:
+        filtered_conclusions.append(f"Hyperkalemia Risk Level: {risk_level}")
+    
+    if indicators:
+        # Add all morphological indicators
+        for ind in indicators:
+            if ind not in filtered_conclusions:
+                filtered_conclusions.append(ind)
+    
+    # REMOVED dashboard_conclusions loop to prevent non-hyperkalemia indicators (like Bradycardia, HRV)
+    
+    # If NO conclusions at all, use generic defaults
     if not filtered_conclusions:
         filtered_conclusions = [
-            "5-minute Lead II Hyperkalemia analysis completed",
-            "Heart rate variability recorded successfully"
+            "Hyperkalemia analysis completed (Normal/Low risk)",
+            "No specific morphological indicators detected"
         ]
     
     # Switch to Landscape template directly (no Page 1)
@@ -3629,8 +3641,8 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
             except Exception:
                 notch_boxes = 2.0
 
+            # EXACT MATCH FOR IMAGE 2: Notch starts from baseline, goes UP, then stays UP, then goes DOWN to baseline
             notch_width = 5.0 * mm_unit
-            notch_tail = 2.0 * mm_unit
             notch_height = (notch_boxes * 5.0) * mm_unit
             notch_x = x_pos + (1.0 * mm_unit)
 
@@ -3641,11 +3653,17 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
                 strokeLineCap=1,
                 strokeLineJoin=0,
             )
+            # Start at baseline
             notch_path.moveTo(notch_x, center_y)
+            # Vertical up
             notch_path.lineTo(notch_x, center_y + notch_height)
+            # Horizontal top
             notch_path.lineTo(notch_x + notch_width, center_y + notch_height)
+            # Vertical down back to baseline
             notch_path.lineTo(notch_x + notch_width, center_y)
-            notch_path.lineTo(notch_x + notch_width + notch_tail, center_y)
+            
+            # Update trace start to avoid overlap
+            trace_start_x = notch_x + notch_width + (1.0 * mm_unit)
 
         adc_data = _normalize_saved_signal(lead_data)
         if adc_data is None or adc_data.size < 2:
@@ -3771,7 +3789,7 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
                 y_pos,
                 short_strip_width,
                 short_lead_height,
-                draw_notch=(col_index == 0),
+                draw_notch=True,
             )
             if result:
                 trace_path, notch_path, dotted_path = result
@@ -4034,16 +4052,17 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
         fillColor=colors.black,
     ))
     
+    # Grey divider line between columns
+    divider_x = total_width / 2.0
+    # Stop line ABOVE Lead II rhythm strip (V-leads start at y=250)
+    master_drawing.add(Line(divider_x, 250, divider_x, 480, 
+                           strokeColor=colors.grey, strokeWidth=0.5, strokeDashArray=[2, 2]))
+
     # ==================== DOCTOR INFO (LANDSCAPE MODE - POSITIONED INSIDE DRAWING) ====================
     
     doctor = doctor or ""
     label_text = "Doctor Name: "
 
-    # Reference Report Confirmed by (above Doctor Name)
-    confirmed_label = String(10, 89, "Reference Report Confirmed by: ", 
-                              fontSize=8, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(confirmed_label)
-    
     reference_y = 86
     doctor_name_y = 70
     doctor_sign_y = 56
@@ -4098,10 +4117,10 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     for row_idx, row_conclusions in enumerate(conclusion_rows):
         row_y = start_y - (row_idx * row_spacing)
         for col_idx, conclusion in enumerate(row_conclusions):
-            # More space in landscape, so can show longer conclusions
-            display_conclusion = conclusion[:42] + "..." if len(conclusion) > 42 else conclusion
+            # Cleanly show only Hyperkalemia related findings without truncation if possible
+            display_conclusion = conclusion
             conc_text = f"{conclusion_num}. {display_conclusion}"
-            x_pos = conclusion_x_start + 10 + (col_idx * 230)  # Adjusted: start from box x + margin
+            x_pos = conclusion_x_start + 10 + (col_idx * 230)
             conc = String(x_pos, row_y, conc_text, 
                          fontSize=9, fontName=FONT_TYPE, fillColor=colors.black)
             master_drawing.add(conc)

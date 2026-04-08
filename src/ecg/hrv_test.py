@@ -1007,6 +1007,16 @@ class HRVTestWindow(QWidget):
                     qrs_value = self.ecg_calculator.calculate_qrs_duration(self.ecg_calculator.data[lead_idx])
                     st_value = self.ecg_calculator.calculate_st_interval(self.ecg_calculator.data[lead_idx])
                     qt_value = self.ecg_calculator.calculate_qt_interval(self.ecg_calculator.data[lead_idx])
+                    
+                    # Re-implementing fallback if calculator failed but we have stored metrics
+                    if qrs_value <= 0 and hasattr(self.ecg_calculator, 'last_qrs_duration'):
+                        qrs_value = int(getattr(self.ecg_calculator, 'last_qrs_duration', 0) or 0)
+                    if qt_value <= 0 and hasattr(self.ecg_calculator, 'last_qt_interval'):
+                        qt_value = int(getattr(self.ecg_calculator, 'last_qt_interval', 0) or 0)
+                    if qtc_value <= 0 and hasattr(self.ecg_calculator, 'last_qtc_interval'):
+                        qtc_value = int(getattr(self.ecg_calculator, 'last_qtc_interval', 0) or 0)
+                    if pr_value <= 0 and hasattr(self.ecg_calculator, 'last_pr_interval'):
+                        pr_value = int(getattr(self.ecg_calculator, 'last_pr_interval', 0) or 0)
 
                     all_hr_values = []
                     window_size = 200

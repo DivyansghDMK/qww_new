@@ -2037,27 +2037,17 @@ class HolterWaveGridPanel(QFrame):
             layout.addWidget(fb)
             return
 
-        # Use a QVBoxLayout for a single vertical column (12:1 format)
-        self.grid_layout = QVBoxLayout()
-        self.grid_layout.setSpacing(2) # Minimal spacing between leads
-
-        # Create a container widget and a scroll area
-        container = QWidget()
-        container.setLayout(self.grid_layout)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setWidget(container)
-        scroll.setStyleSheet("QScrollArea { border: none; background: black; }")
-
-        if HAS_PG:
-            pg.setConfigOptions(antialias=True, useOpenGL=False, background=COL_BLACK, foreground=COL_GREEN)
+        # Use a QGridLayout for 3x4 format (like professional medical workstations)
+        self.grid_layout = QGridLayout()
+        self.grid_layout.setSpacing(6)
+        self.grid_layout.setContentsMargins(0, 0, 0, 0)
 
         for idx, lead in enumerate(self.LEADS):
             card = QFrame()
-            # Use a darker green for borders to make the wave pop
-            card.setStyleSheet(f"QFrame{{background:{COL_GRAY};border:1px solid {COL_GREEN_DRK};border-radius:6px;}}")
+            # Remove border, only show background and wave
+            card.setStyleSheet(f"QFrame{{background:{COL_BLACK};border:none;}}")
             cl = QVBoxLayout(card)
-            cl.setContentsMargins(4, 2, 4, 2)
+            cl.setContentsMargins(2, 2, 2, 2)
             cl.setSpacing(0)
             lbl = QLabel(lead)
             lbl.setStyleSheet(f"color:{COL_GREEN};font-size:11px;font-weight:bold;border:none;padding-left:4px;")
@@ -2067,23 +2057,30 @@ class HolterWaveGridPanel(QFrame):
             plot.setMouseEnabled(x=False, y=False)
             plot.hideButtons()
             plot.setBackground(COL_BLACK)
-            # Use a more subtle grid
-            plot.showGrid(x=True, y=True, alpha=0.25)
+            # Subtle grid
+            plot.showGrid(x=True, y=True, alpha=0.15)
             plot.getAxis("left").setStyle(showValues=False)
             plot.getAxis("bottom").setStyle(showValues=False)
-            plot.getAxis("left").setPen(pg.mkPen(color='#004400'))
-            plot.getAxis("bottom").setPen(pg.mkPen(color='#004400'))
+            plot.getAxis("left").setPen(pg.mkPen(color='#002200'))
+            plot.getAxis("bottom").setPen(pg.mkPen(color='#002200'))
             if lead == "aVR":
                 plot.setYRange(0, -4096, padding=0)
             else:
                 plot.setYRange(0, 4096, padding=0)
-            plot.setMinimumHeight(100) # Taller strips for better visibility of III/aVR
-            # Set wave thickness to 0.7mm (approx 0.7 pixels for standard displays)
-            curve = plot.plot(pen=pg.mkPen(COL_WAVE_ORANGE, width=0.8))
+            plot.setMinimumHeight(120) # Taller for bigger screen visibility
+            curve = plot.plot(pen=pg.mkPen(COL_GREEN, width=1.0))
             cl.addWidget(plot, 1)
             self._lead_widgets.append((curve, plot))
-            self.grid_layout.addWidget(card)
+            # 3 rows, 4 columns
+            row, col = divmod(idx, 4)
+            self.grid_layout.addWidget(card, row, col)
 
+        container = QWidget()
+        container.setLayout(self.grid_layout)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(container)
+        scroll.setStyleSheet("QScrollArea { border: none; background: black; }")
         layout.addWidget(scroll, 1)
 
     def set_replay_engine(self, e): self.replay_engine = e
@@ -3265,80 +3262,87 @@ class HolterMainWindow(QDialog):
                 background:#1A2C49;
                 color:{UI_TEXT};
             }}
+            QGroupBox {{
+                border: none;
+                border-top: 1px solid {UI_BORDER};
+                margin-top: 20px;
+                font-weight: bold;
+                font-size: 14px;
+                color: {UI_TEXT};
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding: 0 5px;
+            }}
         """)
 
-        self._expert_panel = HolterExpertReviewPanel()
-        self._expert_panel.update_from_metrics(self._metrics_list, self._summary)
-        self._expert_panel.seek_requested.connect(self._on_seek_requested)
-        self._tabs.addTab(self._expert_panel, "Expert Review")
-
-        # Overview
-        self._overview_panel = HolterOverviewPanel()
-        self._overview_panel.update_summary(self._summary)
-        self._tabs.addTab(self._overview_panel, "Overview")
-
-        # Record Management
-        record_dir = _resolve_recordings_dir(self.session_dir)
-        self._record_mgmt_panel = HolterRecordManagementPanel(output_dir=record_dir)
-        self._record_mgmt_panel.session_selected.connect(self.load_completed_session)
-        self._tabs.addTab(self._record_mgmt_panel, "Manage Records")
-
-        # HRV Analysis
-        self._hrv_panel = HolterHRVPanel()
-        self._hrv_panel.update_hrv(self._metrics_list, self._summary)
-        self._tabs.addTab(self._hrv_panel, "HRV Analysis")
-
-        # Replay (Lorenz + scrub)
+        # Replay
         duration = self._summary.get('duration_sec', self._duration_hours * 3600)
         self._replay_panel = HolterReplayPanel(duration_sec=duration)
         if self._replay_engine:
             self._replay_panel.set_replay_engine(self._replay_engine)
             self._replay_panel.seek_requested.connect(self._on_seek_requested)
         self._replay_panel.update_lorenz(self._metrics_list)
-        self._tabs.addTab(self._replay_panel, "Lorenz / Replay")
+        self._tabs.addTab(self._replay_panel, "REPLAY")
 
-        # Events
-        self._events_panel = HolterEventsPanel()
-        events = self._build_linked_events()
-        self._events_panel.load_events(events, self._summary)
-        self._events_panel.seek_requested.connect(self._on_seek_requested)
-        self._tabs.addTab(self._events_panel, "Events")
-
+        # Beat Templates
         self._template_panel = HolterBeatTemplatePanel()
         self._template_panel.update_from_metrics(self._metrics_list, self._summary)
         self._template_panel.seek_requested.connect(self._on_seek_requested)
-        self._tabs.addTab(self._template_panel, "Beat Templates")
+        self._tabs.addTab(self._template_panel, "TEMPLATE")
 
         # Histogram
         self._hist_panel = HolterHistogramPanel()
         self._hist_panel.update_from_metrics(self._metrics_list)
-        self._tabs.addTab(self._hist_panel, "Histogram")
+        self._tabs.addTab(self._hist_panel, "HISTOGRAM")
+
+        # Lorenz (part of Replay, but user wants separate tab if possible)
+        # For now, we reuse the Lorenz logic or add a dedicated tab
+        self._lorenz_panel = HolterReplayPanel(duration_sec=duration) # Using Replay for Lorenz view
+        self._tabs.addTab(self._lorenz_panel, "LORENZ")
 
         # AF Analysis
         self._af_panel = HolterAFPanel()
         self._af_panel.update_from_metrics(self._metrics_list, duration)
-        self._tabs.addTab(self._af_panel, "AF Analysis")
+        self._tabs.addTab(self._af_panel, "AF ANALYSIS")
 
         # ST Tendency
         self._st_panel = HolterSTPanel()
         self._st_panel.update_from_metrics(self._metrics_list)
-        self._tabs.addTab(self._st_panel, "ST Trend")
+        self._tabs.addTab(self._st_panel, "ST TENDENCY")
 
         # Edit Event
         self._edit_event_panel = HolterEditEventPanel()
+        events = self._build_linked_events()
         self._edit_event_panel.load_events(events, self._summary)
         self._edit_event_panel.seek_requested.connect(self._on_seek_requested)
-        self._tabs.addTab(self._edit_event_panel, "Edit Event")
+        self._tabs.addTab(self._edit_event_panel, "EDIT EVENT")
 
         # Edit Strips
         self._edit_strips_panel = HolterEditStripsPanel()
         self._edit_strips_panel.load_events(events, self._summary)
-        self._tabs.addTab(self._edit_strips_panel, "Edit Strips")
+        self._tabs.addTab(self._edit_strips_panel, "EDIT STRIPS")
+
+        # Report Tendency (using a trend view)
+        self._report_tendency_panel = HolterSTPanel() # Reusing ST panel for tendency trend
+        self._tabs.addTab(self._report_tendency_panel, "REPORT TENDENCTY")
 
         # Report Table
         self._report_table_panel = HolterReportTablePanel()
         self._report_table_panel.update_from_metrics(self._metrics_list)
-        self._tabs.addTab(self._report_table_panel, "Report Table")
+        self._tabs.addTab(self._report_table_panel, "REPORT TABLE")
+
+        # Expert Review (Keep as backup or hide)
+        self._expert_panel = HolterExpertReviewPanel()
+        self._expert_panel.update_from_metrics(self._metrics_list, self._summary)
+        self._expert_panel.seek_requested.connect(self._on_seek_requested)
+        # self._tabs.addTab(self._expert_panel, "Expert Review")
+
+        # HRV Analysis
+        self._hrv_panel = HolterHRVPanel()
+        self._hrv_panel.update_hrv(self._metrics_list, self._summary)
+        self._tabs.addTab(self._hrv_panel, "HRV")
 
         # Report Preview (insight)
         scroll_insight = QScrollArea()

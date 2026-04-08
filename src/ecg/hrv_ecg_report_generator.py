@@ -14,6 +14,7 @@ import json
 import matplotlib.pyplot as plt  
 import matplotlib
 import numpy as np
+from ecg.ecg_calculations import calculate_qtc_bazett, calculate_qtcf_interval
 
 # Set matplotlib to use non-interactive backend
 matplotlib.use('Agg')
@@ -1052,6 +1053,25 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
         data["RR_ms"] = int(60000 / hr_bpm_value)
     else:
         data["RR_ms"] = data.get("RR_ms", 0)
+
+    # Re-calculate QTc and QTcF fallback calculation if they are missing
+    if data.get("QT", 0) > 0 and data.get("RR_ms", 0) > 0:
+        qt_ms = float(data.get("QT", 0))
+        rr_ms = float(data.get("RR_ms", 0))
+        
+        # Calculate QTc Bazett if missing
+        if data.get("QTc", 0) <= 0:
+            try:
+                data["QTc"] = calculate_qtc_bazett(qt_ms, rr_ms)
+            except Exception:
+                pass
+        
+        # Calculate QTcF Fridericia if missing
+        if data.get("QTc_Fridericia", 0) <= 0:
+            try:
+                data["QTc_Fridericia"] = calculate_qtcf_interval(qt_ms, rr_ms)
+            except Exception:
+                pass
 
     # ==================== STEP 2: Get wave_speed from ecg_settings.json (PRIORITY) ====================
     # Priority: ecg_settings.json  wave_speed  (calculation-based beats  )
@@ -2388,9 +2408,9 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     # clinically meaningful in this context, so we intentionally omit those
     # header lines from the HRV report.
 
-    # Dummy value for QTCF label (remove real calculation)
-    qtcf_val = None
-    qtcf_text = "QTCF       : --"
+    # Real value for QTCF label
+    qtcf_val = data.get('QTc_Fridericia', 0)
+    qtcf_text = f"QTCF       : {int(qtcf_val)} ms" if qtcf_val and qtcf_val > 0 else "QTCF       : --"
     qtcf_label = String(254, 682, qtcf_text,  # Moved up from 642 to 652
                         fontSize=10, fontName="Helvetica", fillColor=colors.black)
     master_drawing.add(qtcf_label)
@@ -2928,6 +2948,25 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
         if live_session_metrics.get(key, 0) > 0:
             session_metrics[key] = _safe_int(live_session_metrics[key])
 
+    # Re-implementing QTc and QTcF fallback calculation if it's missing (using standard formulas)
+    if session_metrics["QT"] > 0 and session_metrics["HR"] > 0:
+        rr_ms = 60000.0 / session_metrics["HR"]
+        
+        # Calculate QTc Bazett if missing
+        if session_metrics["QTc"] <= 0:
+            try:
+                session_metrics["QTc"] = calculate_qtc_bazett(session_metrics["QT"], rr_ms)
+                data["QTc"] = session_metrics["QTc"]
+            except Exception:
+                pass
+        
+        # Calculate QTcF Fridericia if missing
+        if data.get("QTc_Fridericia", 0) <= 0:
+            try:
+                data["QTc_Fridericia"] = calculate_qtcf_interval(session_metrics["QT"], rr_ms)
+            except Exception:
+                pass
+
     data["HR"] = session_metrics["HR"]
     data["Heart_Rate"] = session_metrics["HR"]
     data["HR_bpm"] = session_metrics["HR"]
@@ -3259,42 +3298,14 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     qt_val = session_metrics.get("QT", 0)
     qtc_val = session_metrics.get("QTc", 0)
     
-    # ==================== CALCULATE CONCLUSIONS (NEEDED FOR ECG GRAPHS PAGE) ====================
-    # Conclusions are still needed for the conclusion box on the ECG graphs page (now Page 1)
-    # Get conclusions from JSON (SAME LOGIC AS MAIN REPORT)
-    dashboard_conclusions = get_dashboard_conclusions_from_image(None)
-    
-    # Filter conclusions (SAME AS MAIN REPORT)
-    filtered_conclusions = []
-    for conclusion in dashboard_conclusions:
-        if conclusion and conclusion.strip() and conclusion.strip() != "---":
-            filtered_conclusions.append(conclusion.strip())
-            if len(filtered_conclusions) >= 12:
-                break
-    
-    # If no real conclusions, use HRV-specific defaults
-    if not filtered_conclusions:
-        filtered_conclusions = [
-            f"5-minute Lead {selected_lead} HRV analysis completed",
-            "Heart rate variability recorded successfully"
-        ]
-    
-    # ==================== PAGE 1: 5 ONE-MINUTE LEAD II GRAPHS (LANDSCAPE MODE) ====================
-    
-    print("📊 Creating SINGLE master drawing with 5 one-minute selected graphs in LANDSCAPE...")
-    
-    # Landscape A4 frame dimensions (landscape_width - 40, landscape_height - 40)
-    # A4 landscape: 842 x 595, minus reduced margins (20 each side) = 802 x 555
-    # This allows taller drawing to fit patient info at Y=528
-    total_width = 780   # Fits in landscape frame (802 - margin)
-    total_height = 530   # Must be < landscape_height - 20 = 575 - 20 = 555 pts (safe margin)
+    # --- PAGE 1: 5 ONE-MINUTE LEAD II GRAPHS (LANDSCAPE MODE) ---
+    total_width = 780
+    total_height = 530   # Reverted: Must be < landscape_height - 20 = 555 pts
     master_drawing = Drawing(total_width, total_height)
     
-    # Define positions for 5 one-minute segments (LANDSCAPE MODE - POSITIONED FOR 540 HEIGHT)
-    # Patient info/params are at 535-490, graphs should start well below that (< 490)
-    # Graph height is 75. Drawing height = 540
-    # First graph y=400 means top at 400+75=475, safely below settings at 490 (15pt gap)
-    y_positions = [350, 270, 190, 110, 30]  # 5 graphs (80pt spacing) with proper spacing from params - SHIFTED DOWN 50 points total (25+25)
+    # Define positions for 5 one-minute segments (LANDSCAPE MODE)
+    # Reverted to original positions
+    y_positions = [350, 270, 190, 110, 30] 
     
     # Use the same Lead II plotting style as the hyperkalemia report:
     # same calibration notch placement, same baseline centering, and the same
@@ -3345,7 +3356,8 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
         notch_width = 5.0 * mm_unit
         notch_tail = 2.0 * mm_unit
         notch_height = (notch_boxes * 5.0) * mm_unit
-        notch_x = strip_x + (1.0 * mm_unit)
+        # Position notch so left baseline fits
+        notch_x = strip_x + (3.0 * mm_unit)
 
         notch_path = Path(
             fillColor=None,
@@ -3354,11 +3366,13 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
             strokeLineCap=1,
             strokeLineJoin=0,
         )
-        notch_path.moveTo(notch_x, center_y)
+        # Draw full notch in "_| |_ " style (both tails present)
+        notch_path.moveTo(notch_x - notch_tail, center_y) # Left tail
+        notch_path.lineTo(notch_x, center_y)
         notch_path.lineTo(notch_x, center_y + notch_height)
         notch_path.lineTo(notch_x + notch_width, center_y + notch_height)
         notch_path.lineTo(notch_x + notch_width, center_y)
-        notch_path.lineTo(notch_x + notch_width + notch_tail, center_y)
+        notch_path.lineTo(notch_x + notch_width + notch_tail, center_y) # Right tail
 
         if values is None or len(values) < 2:
             baseline_path = Path(
@@ -3405,8 +3419,11 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
         adc_per_box = adc_per_box_multiplier / max(1e-6, wave_gain_mm_mv)
         ecg_normalized = center_y + ((centered_adc / adc_per_box) * box_height_points)
 
+        # Shift the wave to start AFTER the full notch
+        # Notch ends at notch_x + notch_width + notch_tail
+        wave_start_x = notch_x + notch_width + notch_tail + (1.0 * mm_unit)
         seconds = np.arange(centered_adc.size, dtype=float) / max(1e-6, float(sampling_rate))
-        t = strip_x + (seconds * effective_wave_speed_mm_s * mm_unit)
+        t = wave_start_x + (seconds * effective_wave_speed_mm_s * mm_unit)
         visible_mask = t <= (strip_x + strip_width)
         if not np.any(visible_mask):
             baseline_path = Path(
@@ -3535,7 +3552,19 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
             HR  = data.get('HR_avg', 0)
             RR  = int(60000 / HR) if HR and HR > 0 else 0
         rr_avg_for_report = RR
-        print(f"✅ ECG header: HR={HR} bpm, RR={RR} ms, PR={PR} ms, QRS={QRS_H} ms, QT={QT} ms, QTc={QTc} ms")
+        
+        # Recalculate QTc and QTcF using the HR/RR calculated for the HRV session
+        if QT > 0 and RR > 0:
+            try:
+                QTc = calculate_qtc_bazett(QT, float(RR))
+                qtcf = calculate_qtcf_interval(QT, float(RR))
+                # Update data dict as well so other parts of the report use these updated values
+                data['QTc'] = QTc
+                data['QTc_Fridericia'] = qtcf
+            except Exception:
+                pass
+        
+        print(f"✅ ECG header: HR={HR} bpm, RR={RR} ms, PR={PR} ms, QRS={QRS_H} ms, QT={QT} ms, QTc={QTc} ms, QTcF={data.get('QTc_Fridericia', 0)} ms")
 
     # Right-column morphology values
     rv5          = data.get('rv5', 0.0)
@@ -3584,9 +3613,6 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     master_drawing.add(String(293.00, 484.15 + header_shift_y, f"QT   : {QT} ms",    fontSize=_fs, fontName=FONT_TYPE, fillColor=colors.black))
 
     # ── RIGHT metrics block (x=420) ───────────────────────────────────────────
-    # master_drawing.add(String(420, 525, f"P/QRS/T : {p_axis}/{qrs_axis_str}/{t_axis_str}\u00b0", fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
-    # master_drawing.add(String(420, 511, f"RV5/SV1 : {rv5:.3f}/{sv1:.3f} mV", fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
-    # master_drawing.add(String(420, 497, f"RV5+SV1 : {rv5_sv1_sum:.3f} mV", fontSize=_fs, fontName="Helvetica", fillColor=colors.black))
     master_drawing.add(String(441.37, 542.83 + header_shift_y, f"QTc  : {QTc} ms", fontSize=_fs, fontName=FONT_TYPE, fillColor=colors.black))
     master_drawing.add(String(441.37, 528.66 + header_shift_y, f"QTCF : {qtcf_text}", fontSize=_fs, fontName=FONT_TYPE, fillColor=colors.black))
 
@@ -3607,80 +3633,10 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     # Removed the global Lead label because it overlaps with the "Lead II (First minute)" label per strip.
     pass
     
-    # ==================== DOCTOR INFO (LANDSCAPE MODE - POSITIONED INSIDE DRAWING) ====================
+    # ==================== PAGE 1 FOOTER REMOVED (AS PER USER REQUEST) ====================
+    # Moved to last page or removed to avoid overlap.
     
-    doctor = patient.get("doctor", "") if patient else ""
-    label_text = "Doctor Name: "
-
-    # Reference Report Confirmed by (above Doctor Name)
-    confirmed_label = String(10, 65, "Reference Report Confirmed by: ", 
-                              fontSize=8, fontName="Helvetica", fillColor=colors.black)
-    master_drawing.add(confirmed_label)
-    
-    reference_y = 55
-    doctor_name_y = 40
-    doctor_sign_y = 26
-
-    reference_label = String(13, reference_y, "Reference Report Confirmed by:",
-                              fontSize=10, fontName=FONT_TYPE, fillColor=colors.black)
-    master_drawing.add(reference_label)
-
-    doctor_name_label = String(13, doctor_name_y, "Doctor Name: ",  # X=10 (visible, inside drawing)
-                              fontSize=10, fontName=FONT_TYPE, fillColor=colors.black)
-    master_drawing.add(doctor_name_label)
-    
-    if doctor:
-        value_x = 13 + stringWidth(label_text, FONT_TYPE, 10) + 6
-        doctor_name_value = String(value_x, doctor_name_y, doctor,  # Starts after "Doctor Name: " label
-                                fontSize=10, fontName=FONT_TYPE, fillColor=colors.black)
-        master_drawing.add(doctor_name_value)
-    
-    doctor_sign_label = String(13, doctor_sign_y, "Doctor Sign: ",  # X=10 (visible, inside drawing)
-                              fontSize=10, fontName=FONT_TYPE, fillColor=colors.black)
-    master_drawing.add(doctor_sign_label)
-    
-    # ==================== CONCLUSION BOX ON PAGE 1 (LANDSCAPE MODE - ADJUSTED FOR 780 WIDTH) ====================
-    
-    conclusion_y_start = 45.0  # Positioned to avoid overlap with graphs
-    conclusion_x_start = 280  # Shifted right for better positioning
-    
-    # Conclusion box (WIDER for landscape - adjusted for 780 total width)
-    conclusion_box = Rect(conclusion_x_start, conclusion_y_start - 55, 490, 75,  # Bottom at -10, top at 65
-                         fillColor=None, strokeColor=colors.black, strokeWidth=1.5)
-    master_drawing.add(conclusion_box)
-    
-    # Conclusion header (CENTER adjusted for new X position and width)
-    conclusion_header = String(conclusion_x_start + 245, conclusion_y_start + 8, "✦ CONCLUSION ✦",  # Center: 280 + 490/2 = 525
-                              fontSize=9, fontName=FONT_TYPE_BOLD,
-                              fillColor=colors.HexColor("#2c3e50"),
-                              textAnchor="middle")
-    master_drawing.add(conclusion_header)
-    
-    # Draw conclusions in the box (LANDSCAPE - adjusted for 520 width box)
-    conclusion_rows = []
-    for i in range(0, len(filtered_conclusions), 2):
-        row_conclusions = filtered_conclusions[i:i+2]
-        conclusion_rows.append(row_conclusions)
-    
-    row_spacing = 8
-
-    
-    start_y = conclusion_y_start - 10
-    conclusion_num = 1
-    
-    for row_idx, row_conclusions in enumerate(conclusion_rows):
-        row_y = start_y - (row_idx * row_spacing)
-        for col_idx, conclusion in enumerate(row_conclusions):
-            # More space in landscape, so can show longer conclusions
-            display_conclusion = conclusion[:42] + "..." if len(conclusion) > 42 else conclusion
-            conc_text = f"{conclusion_num}. {display_conclusion}"
-            x_pos = conclusion_x_start + 10 + (col_idx * 230)  # Adjusted: start from box x + margin
-            conc = String(x_pos, row_y, conc_text, 
-                         fontSize=9, fontName=FONT_TYPE, fillColor=colors.black)
-            master_drawing.add(conc)
-            conclusion_num += 1
-    
-    print(f"✅ Added Patient Info, Vital Parameters, {len(filtered_conclusions)} Conclusions to HRV report")
+    print(f"✅ Added Patient Info and Vital Parameters to HRV report")
     
     # Add master drawing to story (NO spacer to avoid creating 3rd page)
     story.append(master_drawing)
@@ -3944,6 +3900,7 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     rr_upper = max(200, min(3000, rr_upper))
     ax1.set_ylim(0, rr_upper)
     
+    plt.tight_layout()
     # Add value labels above each bar (like in reference image)
     for i, bar in enumerate(bars1):
         if i < len(rr_source_all):
@@ -3966,7 +3923,7 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     
     # Save chart 1 to reports directory
     temp_rr_chart_path = os.path.join(hrv_charts_dir, f'rr_interval_{timestamp}.png')
-    fig1.savefig(temp_rr_chart_path, dpi=100, facecolor='white')
+    fig1.savefig(temp_rr_chart_path, dpi=100, facecolor='white', bbox_inches='tight')
     plt.close(fig1)
     
     # Chart 2: Avg. Heart Rate per minute (Bar Chart) - Standard professional colors
@@ -3986,6 +3943,7 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     hr_upper = max(20, min(300, hr_upper))
     ax2.set_ylim(0, hr_upper)
     
+    plt.tight_layout()
     # Add value labels above each bar (like in reference image)
     # IMPORTANT: Recalculate HR from rounded RR to ensure consistency
     # If RR displays as 569 ms, HR should be calculated from 569, not from 568.5
@@ -4020,7 +3978,7 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     
     # Save chart 2 to reports directory
     temp_hr_chart_path = os.path.join(hrv_charts_dir, f'heart_rate_{timestamp}.png')
-    fig2.savefig(temp_hr_chart_path, dpi=100, facecolor='white')
+    fig2.savefig(temp_hr_chart_path, dpi=100, facecolor='white', bbox_inches='tight')
     plt.close(fig2)
     
     # Chart 3: HRV Metrics Radar Chart (like Spandan report)
@@ -4192,11 +4150,11 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     sdann_normalized = min((sdann / 2.0) if sdann is not None and sdann > 0 else 0, 100)
     
     values = [
-        sdann_normalized,  # SDANN (where SDNN was) - Normalize (0-200ms → 0-100)
-        min(nn50_count, 100),  # NN50 (where RMSSD was) - count
-        min(rmssd / 2.0, 100),  # RMSSD (where NN50 was) - Normalize (0-200ms → 0-100)
-        min(sdnn / 2.0, 100),  # SDNN (where pNN50 was) - Normalize (0-200ms → 0-100)
-        min(mean_hr_calc, 100)  # BPM (stays same) - cap at 100
+        sdann_normalized,      # SDANN - Normalize (0-200ms → 0-100)
+        min(nn50_count, 100),  # NN50 - count
+        min(rmssd / 2.0, 100), # RMSSD - Normalize (0-200ms → 0-100)
+        min(sdnn / 2.0, 100),  # SDNN - Normalize (0-200ms → 0-100)
+        min(mean_hr_calc, 100) # BPM - cap at 100
     ]
     
     # Number of variables
@@ -4318,8 +4276,8 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     # Charts placed on top/in center of shadow containers - FURTHER INCREASED SIZE
     # Increased column widths for bigger charts to fill container properly
     time_domain_table = Table([
-        [Image(temp_rr_chart_path, width=245, height=200),
-         Image(temp_hr_chart_path, width=245, height=200),
+        [Image(temp_rr_chart_path, width=240, height=200),
+         Image(temp_hr_chart_path, width=240, height=200),
          Image(temp_radar_chart_path, width=220, height=180)]
     ], colWidths=[260, 260, 260])
     
@@ -4582,7 +4540,116 @@ def generate_hrv_ecg_report(filename="hrv_ecg_report.pdf", captured_data=None, d
     story.append(freq_domain_heading)
     story.append(Spacer(1, 6))
     story.append(freq_domain_container)
-    story.append(Spacer(1, 8))
+    story.append(Spacer(1, 15)) # Space to separate from footer
+    
+    # ==================== CALCULATE CONCLUSIONS (HRV-SPECIFIC) ====================
+    # For HRV reports, we ignore the main dashboard conclusions (which might be from a different session)
+    # and instead generate conclusions specifically based on the current 5-minute HRV data.
+    
+    filtered_conclusions = []
+    
+    # Ensure variables exist
+    _c_hr = HR if 'HR' in locals() else 0
+    _c_pr = PR if 'PR' in locals() else 0
+    _c_qrs = QRS_H if 'QRS_H' in locals() else 0
+    _c_qtc = QTc if 'QTc' in locals() else 0
+    _c_sdnn = sdnn if 'sdnn' in locals() else 0
+    _c_lf_hf = lf_hf_ratio if 'lf_hf_ratio' in locals() else 0
+
+    # 1. Rhythm Conclusion
+    if _c_hr > 100:
+        filtered_conclusions.append(f"1. Rhythm: Sinus Tachycardia (Avg HR: {_c_hr:.0f} bpm)")
+    elif _c_hr < 60 and _c_hr > 0:
+        filtered_conclusions.append(f"2. Rhythm: Sinus Bradycardia (Avg HR: {_c_hr:.0f} bpm)")
+    elif _c_hr > 0:
+        filtered_conclusions.append(f"3. Rhythm: Normal Sinus Rhythm (Avg HR: {_c_hr:.0f} bpm)")
+    else:
+        filtered_conclusions.append("4. Rhythm: No ECG data detected")
+        
+    # 2. HRV Time Domain Conclusion (SDNN)
+    if _c_sdnn > 0:
+        if _c_sdnn < 50:
+            filtered_conclusions.append(f"5. HRV: Reduced SDNN ({float(_c_sdnn):.1f}ms) - Low variability")
+        else:
+            filtered_conclusions.append(f"6. HRV: Normal SDNN ({float(_c_sdnn):.1f}ms) - Good variability")
+        
+    # 3. Autonomic Balance (LF/HF)
+    if _c_lf_hf > 0:
+        if _c_lf_hf > 2.0:
+            filtered_conclusions.append(f"7. Balance: Sympathetic dominance (LF/HF: {float(_c_lf_hf):.2f})")
+        elif _c_lf_hf < 1.0:
+            filtered_conclusions.append(f"8. Balance: Parasympathetic dominance (LF/HF: {float(_c_lf_hf):.2f})")
+        else:
+            filtered_conclusions.append(f"9. Balance: Balanced Autonomic System (LF/HF: {float(_c_lf_hf):.2f})")
+            
+    # 4. ECG Intervals
+    if _c_pr > 200:
+        filtered_conclusions.append(f"10. Intervals: Prolonged PR ({_c_pr}ms)")
+    if _c_qrs > 120:
+        filtered_conclusions.append(f"11. Intervals: Wide QRS ({_c_qrs}ms)")
+    if _c_qtc > 450:
+        filtered_conclusions.append(f"12. Intervals: Prolonged QTc ({_c_qtc}ms)")
+        
+    if not filtered_conclusions:
+        filtered_conclusions = [
+            "5-minute Lead II HRV analysis completed",
+            "Heart rate variability recorded successfully"
+        ]
+
+    # ==================== LAST PAGE FOOTER: DOCTOR INFO & CONCLUSION (COMBINED) ====================
+    # Combined with Frequency Domain Analysis on Page 2 as per user request
+    final_page_drawing = Drawing(780, 100)
+    
+    # --- Doctor Info Section (Left) ---
+    doctor = patient.get("doctor", "") if patient else ""
+    footer_y_base = 30 # Increased from 20 to give gap from brand footer
+    
+    final_page_drawing.add(String(10, footer_y_base + 45, "Reference Report Confirmed by:",
+                                fontSize=10, fontName=FONT_TYPE, fillColor=colors.black))
+    
+    final_page_drawing.add(String(10, footer_y_base + 25, "Doctor Name:",
+                                fontSize=10, fontName=FONT_TYPE, fillColor=colors.black))
+    
+    if doctor:
+        final_page_drawing.add(String(85, footer_y_base + 25, doctor,
+                                    fontSize=10, fontName=FONT_TYPE, fillColor=colors.black))
+        
+    final_page_drawing.add(String(10, footer_y_base + 5, "Doctor Sign:",
+                                fontSize=10, fontName=FONT_TYPE, fillColor=colors.black))
+    
+    # --- Conclusion Section (Right) ---
+    conc_x = 300
+    conc_y = footer_y_base - 5
+    
+    # Conclusion Box
+    final_page_drawing.add(Rect(conc_x, conc_y, 470, 75,
+                               fillColor=None, strokeColor=colors.black, strokeWidth=1.2))
+    
+    # Conclusion Header
+    final_page_drawing.add(String(conc_x + 235, conc_y + 60, "✦ CONCLUSION ✦",
+                                fontSize=11, fontName=FONT_TYPE_BOLD,
+                                fillColor=colors.HexColor("#2c3e50"),
+                                textAnchor="middle"))
+    
+    # Conclusion Content
+    # Use a single column layout to prevent overlap and allow longer text
+    row_h = 14
+    start_conc_y = conc_y + 52
+    
+    for i, text in enumerate(filtered_conclusions[:4]): # Show top 4 conclusions
+        # Clean up existing numbering if present to avoid double numbering (e.g. "1. 3. Rhythm")
+        clean_text = text
+        import re
+        clean_text = re.sub(r'^\d+\.\s*', '', clean_text) # Remove leading "1. ", "2. " etc.
+        
+        # Format with new single numbering
+        disp_text = clean_text[:85] + "..." if len(clean_text) > 85 else clean_text
+        row_y = start_conc_y - (i * row_h)
+        
+        final_page_drawing.add(String(conc_x + 10, row_y, f"{i+1}. {disp_text}",
+                                    fontSize=9, fontName=FONT_TYPE, fillColor=colors.black))
+            
+    story.append(final_page_drawing)
     
     # Note: Chart files saved in reports/hrv_charts/ directory for reference
     # They can be cleaned up later if needed, but kept for now for debugging
