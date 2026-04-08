@@ -6442,24 +6442,47 @@ class ECGTestPage(QWidget):
 
         # Freeze metrics (all reads from self — safe on main thread)
         _sm = self.settings_manager if hasattr(self, 'settings_manager') and self.settings_manager else None
-        frozen = {
-            'HR':       int(getattr(self, 'last_heart_rate',    0) or 0),
-            'RR':       int(getattr(self, 'last_rr_interval',   0) or 0),
-            'PR':       int(getattr(self, 'pr_interval',        0) or 0),
-            'QRS':      int(getattr(self, 'last_qrs_duration',  0) or 0),
-            'QT':       int(getattr(self, 'last_qt_interval',   0) or 0),
-            'QTc':      int(getattr(self, 'last_qtc_interval',  0) or 0),
-            'QTcF':     int(getattr(self, 'last_qtcf_interval', 0) or 0),
-            'rv5':      float(getattr(self, '_last_rv5', 0.0) or 0.0),
-            'sv1':      float(getattr(self, '_last_sv1', 0.0) or 0.0),
-            'p_axis':   getattr(self, 'last_p_axis',   '--'),
-            'QRS_axis': getattr(self, 'last_qrs_axis', '--'),
-            't_axis':   getattr(self, 'last_t_axis',   '--'),
-            'lead_seq': (_sm.get_setting('lead_sequence', 'Standard') if _sm else 'Standard'),
-            'logo_path': os.path.join(
-                os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')),
-                'assets', 'DeckmountLogo.png'),
-        }
+        # Check if demo mode is active and use hardcoded demo values
+        if hasattr(self, 'demo_toggle') and self.demo_toggle.isChecked():
+            
+            frozen = {
+                'HR':       60,      # Demo BPM
+                'RR':       1000,    # Calculated from 60 BPM (60000/60)
+                'PR':       167,     # Demo PR interval
+                'QRS':      86,      # Demo QRS duration  
+                'QT':       357,     # Demo QT interval
+                'QTc':      357,     # Demo QTc interval
+                'QTcF':     357,     # Demo QTcF interval
+                'rv5':      float(getattr(self, '_last_rv5', 0.0) or 0.0),
+                'sv1':      float(getattr(self, '_last_sv1', 0.0) or 0.0),
+                'p_axis':   getattr(self, 'last_p_axis',   '--'),
+                'QRS_axis': getattr(self, 'last_qrs_axis', '--'),
+                't_axis':   getattr(self, 'last_t_axis',   '--'),
+                'lead_seq': (_sm.get_setting('lead_sequence', 'Standard') if _sm else 'Standard'),
+                'logo_path': os.path.join(
+                    os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')),
+                    'assets', 'DeckmountLogo.png'),
+            }
+        else:
+            
+            frozen = {
+                'HR':       int(getattr(self, 'last_heart_rate',    0) or 0),
+                'RR':       int(getattr(self, 'last_rr_interval',   0) or 0),
+                'PR':       int(getattr(self, 'pr_interval',        0) or 0),
+                'QRS':      int(getattr(self, 'last_qrs_duration',  0) or 0),
+                'QT':       int(getattr(self, 'last_qt_interval',   0) or 0),
+                'QTc':      int(getattr(self, 'last_qtc_interval',  0) or 0),
+                'QTcF':     int(getattr(self, 'last_qtcf_interval', 0) or 0),
+                'rv5':      float(getattr(self, '_last_rv5', 0.0) or 0.0),
+                'sv1':      float(getattr(self, '_last_sv1', 0.0) or 0.0),
+                'p_axis':   getattr(self, 'last_p_axis',   '--'),
+                'QRS_axis': getattr(self, 'last_qrs_axis', '--'),
+                't_axis':   getattr(self, 'last_t_axis',   '--'),
+                'lead_seq': (_sm.get_setting('lead_sequence', 'Standard') if _sm else 'Standard'),
+                'logo_path': os.path.join(
+                    os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')),
+                    'assets', 'DeckmountLogo.png'),
+            }
 
         username = ''
         try:
@@ -6473,6 +6496,12 @@ class ECGTestPage(QWidget):
             username=username,
             user_details=getattr(getattr(self, 'dashboard_instance', None), 'user_details', {}) or {},
         )
+
+        # Check if demo mode is active and set name to "Demo Mode"
+        if hasattr(self, 'demo_toggle') and self.demo_toggle.isChecked():
+            patient['first_name'] = 'Demo Mode'
+            patient['name'] = 'Demo Mode'
+            patient['last_name'] = ''
 
         # Conclusions (max 5)
         conc_list = []

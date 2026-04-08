@@ -35,7 +35,7 @@ class DemoManager:
         
         # Wave speed control variables (like divyansh.py)
         self.current_wave_speed = 25.0  # mm/s (default)
-        self.samples_per_second = 150  # Base sampling rate for CSV demo
+        self.samples_per_second = 300  # Base sampling rate for CSV demo
         self.time_window = 10.0  # Default time window (25mm/s)
         
         # Data pointer for plotting (like divyansh.py)
@@ -545,10 +545,10 @@ class DemoManager:
             # Initialize data with enough rows to fill entire buffer for instant display
             # Prefill ENTIRE buffer to show complete graph immediately (not just 4 seconds)
             csv_base_fs = 80  # demo CSV base aligned to new default
-            # Prefill full buffer_size OR 20 seconds worth, whichever is smaller
+            # Prefill full buffer_size OR 40 seconds worth, whichever is smaller
             # This ensures graph appears immediately with proper data
             buffer_size = self.ecg_test_page.buffer_size
-            seconds_to_prefill = 20.0  # Prefill 20 seconds for instant display
+            seconds_to_prefill = 40.0  # Prefill 40 seconds for instant display
             samples_needed = int(csv_base_fs * seconds_to_prefill)
             prefill_needed = min(buffer_size, samples_needed, len(df))
             
@@ -772,8 +772,8 @@ class DemoManager:
             self.demo_thread = threading.Thread(target=read_csv_data, name="ECGDemoCSVThread", daemon=True)
             self.demo_thread.start()
             
-            # Update effective sampling rate for CSV demo (base 150 Hz)
-            self.samples_per_second = 150
+            # Update effective sampling rate for CSV demo (base 300 Hz)
+            self.samples_per_second = 300
             self._set_demo_sampling_rate(self.samples_per_second)
 
             # Start timer to update plots with real CSV data

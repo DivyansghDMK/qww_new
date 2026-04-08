@@ -18,6 +18,7 @@ Changes vs previous:
 import os
 import numpy as np
 from scipy.signal import butter, filtfilt
+import matplotlib as mpl
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.patches import Rectangle
@@ -28,7 +29,7 @@ A4_P_H = 297.0
 A4_L_W = 297.0
 A4_L_H = 210.0
 
-MT = MB = ML = MR = 5.0
+MT = MB = ML = MR = 7.5
 
 GRID_BOX   = 5.0
 GRID_MINOR = 1.0
@@ -158,33 +159,38 @@ def generate_report(snap_raw, frozen, patient, filename, fmt,
         lead_mv[lead] = arr
 
     # ── Figure — exact A4, white background ───────────────────────────────
-    fig = Figure(figsize=(PW/25.4, PH/25.4), dpi=150, facecolor='white')
-    ax  = fig.add_axes([0, 0, 1, 1], facecolor=COL_BG)
-    ax.set_xlim(0, PW)
-    ax.set_ylim(PH, 0)
-    ax.set_aspect('equal')
-    ax.axis('off')
+    #
+    # Use Helvetica in the generated PDF. With `pdf.use14corefonts=True`,
+    # Helvetica is available as a standard PDF core font (no OS font install
+    # required) and keeps the report text consistent across machines.
+    with mpl.rc_context({"font.family": "Helvetica", "pdf.use14corefonts": True}):
+        fig = Figure(figsize=(PW/25.4, PH/25.4), dpi=150, facecolor='white')
+        ax  = fig.add_axes([0, 0, 1, 1], facecolor=COL_BG)
+        ax.set_xlim(0, PW)
+        ax.set_ylim(PH, 0)
+        ax.set_aspect('equal')
+        ax.axis('off')
 
-    _draw_grid(ax, 0, 0, PW, PH)
-    _draw_header(ax, frozen, patient, PW, fmt)
+        _draw_grid(ax, 0, 0, PW, PH)
+        _draw_header(ax, frozen, patient, PW, fmt)
 
-    if fmt == '12_1':
-        _draw_1x12(ax, lead_mv, PW, PH, target_samples=3500)
-    elif fmt == '6_2':
-        _draw_2x6(ax, lead_mv, PW, PH, target_samples=2500)
-    else:
-        _draw_3x4(ax, lead_mv, PW, PH, target_samples=1600)
+        if fmt == '12_1':
+            _draw_1x12(ax, lead_mv, PW, PH, target_samples=3500)
+        elif fmt == '6_2':
+            _draw_2x6(ax, lead_mv, PW, PH, target_samples=2500)
+        else:
+            _draw_3x4(ax, lead_mv, PW, PH, target_samples=1600)
 
-    _draw_footer(ax, frozen, patient, conc_list, PW, PH, is_portrait)
+        _draw_footer(ax, frozen, patient, conc_list, PW, PH, is_portrait)
 
-    # ── Save — exact A4, no extra white margins ────────────────────────────
-    os.makedirs(os.path.dirname(os.path.abspath(filename)), exist_ok=True)
-    with PdfPages(filename) as pdf:
-        pdf.savefig(fig, bbox_inches=None)
-        if extra_figs:
-            for extra_fig in extra_figs:
-                pdf.savefig(extra_fig, bbox_inches='tight')
-    import gc; gc.collect()
+        # ── Save — exact A4, no extra white margins ────────────────────────
+        os.makedirs(os.path.dirname(os.path.abspath(filename)), exist_ok=True)
+        with PdfPages(filename) as pdf:
+            pdf.savefig(fig, bbox_inches=None)
+            if extra_figs:
+                for extra_fig in extra_figs:
+                    pdf.savefig(extra_fig, bbox_inches='tight')
+        import gc; gc.collect()
 
 
 # ─── Grid ─────────────────────────────────────────────────────────────────────
@@ -222,7 +228,7 @@ def _find_logo():
 
 def _draw_header(ax, frozen, patient, PW, fmt):
     is_portrait = (fmt == '12_1')
-    yb = MT          # 5mm from top
+    yb = MT - GRID_BOX          # from top
     lh = 5.0         # line height mm
     x  = 10.0 if is_portrait else (ML + 15.0)
 
@@ -240,8 +246,38 @@ def _draw_header(ax, frozen, patient, PW, fmt):
         dt = patient.get('date_time', '') or ''
         date_part = dt[:10] if len(dt) >= 10 else ''
         time_part = dt[11:19] if len(dt) >= 19 else ''
-        org   = (patient.get('org', '') or patient.get('Org.', '') or '').strip()
-        phone = (patient.get('phone', '') or patient.get('doctor_mobile', '') or '').strip()
+        org   = (patient.get('org', '') or patient.get('Org.', '') or patient.get('Org. Name', '') or '').strip()
+        addr  = (
+            patient.get('org_address', '')
+            or patient.get('Org. Address', '')
+            or patient.get('Org Address', '')
+            or patient.get('address', '')
+            or ''
+        ).strip()
+        show_org_block = bool(org or addr)
+
+        # Prefer the Save-ECG-entered phone number over login/profile phone.
+        phone = (
+            patient.get('doctor_mobile', '')
+            or patient.get('phone', '')
+            or patient.get('Phone No.', '')
+            or ''
+        ).strip()
+        if show_org_block and phone:
+            # Display as Indian E.164-style: "+91 XXXXXXXXXX"
+            # (keep existing +<cc> if already provided)
+            digits_only = "".join(c for c in phone if c.isdigit())
+            # If it's not a plausible phone number, don't show it at all.
+            if len(digits_only) < 10:
+                phone = ""
+            if phone.lstrip().startswith("+"):
+                phone = phone.strip()
+            elif digits_only.startswith("91") and len(digits_only) == 12:
+                phone = f"+91 {digits_only[2:]}"
+            elif len(digits_only) == 10:
+                phone = f"+91 {digits_only}"
+            else:
+                phone = f"+91 {phone.strip()}"
         filter_band = frozen.get('filter_band', '0.5-150Hz')
         ac_freq     = frozen.get('ac_frequency', '50Hz')
         speed_text  = frozen.get('speed_text', f"{FIXED_SPEED:.1f} mm/s")
@@ -276,9 +312,9 @@ def _draw_header(ax, frozen, patient, PW, fmt):
         #                This is the "hospital info" block visible top-right in reference
         #
         left_x  = 5.0
-        col2_x  = 72.0
-        col3_x  = 115.0
-        col4_x  = 160.0
+        col2_x  = 60.0
+        col3_x  = 90.0
+        col4_x  = 140.0
         row_gap = 4.8   # 5 metric rows × 4.8mm = 24mm; 6 left rows = 28.8mm
 
         # COL1: patient details (6 rows)
@@ -311,24 +347,49 @@ def _draw_header(ax, frozen, patient, PW, fmt):
         ]
 
         # COL4: hospital / org info — displayed bold, right side (rows 0-2)
+        # Only show this block when Org name/address is provided.
         col4_lines = []
-        if org:
-            col4_lines.append(org)
-        if phone:
-            col4_lines.append(phone)
+        if show_org_block:
+            if org:
+                col4_lines.append(org)
+            if addr:
+                col4_lines.append(addr)
+            if phone:
+                col4_lines.append(phone)
 
         # Draw COL1 — 9pt
         for i, text in enumerate(left_lines):
             fs = 9.0
-            _t(ax, text, left_x, yb + i * row_gap, fs)
+            dy = 0.0
+            if i == 1:         # Age
+                dy = 0.3
+            elif i in (2, 3):  # Gender, ECG Type
+                dy = 0.5
+            elif i in (4, 5):  # Date & Time, "25.0 mm/s ..." line
+                dy = 1.0
+            _t(ax, text, left_x, yb + i * row_gap + dy, fs, bold=False)
 
         # Draw COL2 — 9pt
         for i, text in enumerate(col2_lines):
-            _t(ax, text, col2_x, yb + i * row_gap, 9.0, bold=False)
+            dy = 0.0
+            if i == 1:         # RR
+                dy = 0.1
+            elif i == 2:       # PR
+                dy = 0.2
+            elif i == 3:       # QRS
+                dy = 0.5
+            elif i == 4:       # QT
+                dy = 1.0
+            _t(ax, text, col2_x, yb + i * row_gap + dy, 9.0, bold=False)
 
         # Draw COL3 — 9pt
         for i, text in enumerate(col3_lines):
-            _t(ax, text, col3_x, yb + i * row_gap, 9.0, bold=False)
+            dy = 0.0
+            if i == 2:         # RV5/SV1
+                dy = 0.3
+            elif i == 3:       # RV5+SV1
+                dy = 1.0
+            _t(ax, text, col3_x, yb + i * row_gap + dy, 9.0, bold=False)
 
         # Draw COL4 — bold, 9pt (hospital info top-right)
         for i, text in enumerate(col4_lines[:3]):
@@ -350,8 +411,36 @@ def _draw_header(ax, frozen, patient, PW, fmt):
     dt         = patient.get('date_time', '') or ''
     date_part  = dt[:10] if len(dt) >= 10 else ''
     time_part  = dt[11:19] if len(dt) >= 19 else ''
-    org        = (patient.get('org', '') or patient.get('Org.', '') or '').strip()
-    phone      = (patient.get('phone', '') or patient.get('doctor_mobile', '') or '').strip()
+    org        = (patient.get('org', '') or patient.get('Org.', '') or patient.get('Org. Name', '') or '').strip()
+    addr       = (
+        patient.get('org_address', '')
+        or patient.get('Org. Address', '')
+        or patient.get('Org Address', '')
+        or patient.get('address', '')
+        or ''
+    ).strip()
+    show_org_block = bool(org or addr)
+    # Prefer the Save-ECG-entered phone number over login/profile phone.
+    phone      = (
+        patient.get('doctor_mobile', '')
+        or patient.get('phone', '')
+        or patient.get('Phone No.', '')
+        or ''
+    ).strip()
+    if show_org_block and phone:
+        # Display as Indian E.164-style: "+91 XXXXXXXXXX"
+        # (keep existing +<cc> if already provided)
+        digits_only = "".join(c for c in phone if c.isdigit())
+        if len(digits_only) < 10:
+            phone = ""
+        if phone.lstrip().startswith("+"):
+            phone = phone.strip()
+        elif digits_only.startswith("91") and len(digits_only) == 12:
+            phone = f"+91 {digits_only[2:]}"
+        elif len(digits_only) == 10:
+            phone = f"+91 {digits_only}"
+        else:
+            phone = f"+91 {phone.strip()}"
     filter_band = frozen.get('filter_band', '0.5-150Hz')
     ac_freq     = frozen.get('ac_frequency', '50Hz')
     speed_text  = frozen.get('speed_text', f'{FIXED_SPEED:.1f} mm/s')
@@ -377,9 +466,9 @@ def _draw_header(ax, frozen, patient, PW, fmt):
     #   COL3 starts ≈ 155mm (58% of 270mm usable)
     #   COL4 starts ≈ 213mm (79% of 270mm usable)
     L_left  = 10.0
-    L_col2  = 88.0
-    L_col3  = 155.0
-    L_col4  = 213.0
+    L_col2  = 95.0
+    L_col3  = 125.0
+    L_col4  = 220.0
     L_gap   = 4.5    # 6 rows × 4.5mm = 27mm → fits in HEADER_H=30mm
 
     ls_left = [
@@ -404,17 +493,52 @@ def _draw_header(ax, frozen, patient, PW, fmt):
         f'RV5+SV1: {idx_val:.3f} mV',
         f'P/QRS/T: {p_ax}/{q_ax}/{t_ax}\u00b0',
     ]
-    ls_col4 = [t for t in [org, phone] if t]
+    # Only show org block when org name/address is present.
+    ls_col4 = [t for t in [org, addr, phone] if t] if show_org_block else []
 
     for i, txt in enumerate(ls_left):
         fs = 9.0
-        _t(ax, txt, L_left, yb + i * L_gap, fs)
+        dy = 0.0
+        if i == 1:         # Age
+            dy = 0.3
+        elif i == 2:  # Gender
+            dy = 0.8
+        elif i == 3:  # ECG Type
+            dy = 1.3
+        elif i == 4:  # Date & Time
+            dy = 2.0
+        elif i == 5:  # "25.0 mm/s ..." line
+            dy = 3.0
+        _t(ax, txt, L_left, yb + i * L_gap + dy, fs, bold=False)
     for i, txt in enumerate(ls_col2):
-        _t(ax, txt, L_col2, yb + i * L_gap, 9.0, bold=False)
+        dy = 0.0
+        if i == 1:         # RR
+            dy = 0.4
+        elif i == 2:       # PR
+            dy = 0.8
+        elif i == 3:       # QRS
+            dy = 1.1
+        elif i == 4:       # QT
+            dy = 1.7
+        _t(ax, txt, L_col2, yb + i * L_gap + dy, 9.0, bold=False)
     for i, txt in enumerate(ls_col3):
-        _t(ax, txt, L_col3, yb + i * L_gap, 9.0, bold=False)
+        dy = 0.0
+        if i == 1:         # QTcF
+            dy = 0.3
+        elif i == 2:         # RV5/SV1
+            dy = 0.7
+        elif i == 3:       # RV5+SV1
+            dy = 1.4
+        elif i == 4:       # P/QRS/T
+            dy = 1.5
+        _t(ax, txt, L_col3, yb + i * L_gap + dy, 9.0, bold=False)
     for i, txt in enumerate(ls_col4[:3]):
-        _t(ax, txt, L_col4, yb + i * L_gap, 9.0, bold=True)
+        dy = 0.0
+        if i == 2:         # Org address
+            dy = 0.3
+        elif i == 3:       # phone number
+            dy = 1.0
+        _t(ax, txt, L_col4, yb + i * L_gap + dy, 9.0, bold=True)
 
 
 # ─── 12:1 Portrait — waves fill header→footer, no white gap ──────────────────
@@ -567,11 +691,11 @@ def _draw_footer_portrait(ax, frozen, patient, conc_list, PW, PH):
     # Doctor sign section (left)
     doc_name = patient.get('doctor_name','') or ''
     _t(ax, "Reference Report Confirmed by:",
-       ML, footer_y+8, 8)
+       ML-2.4, footer_y+13.5, 8)
     _t(ax, f"Doctor Name: {doc_name}",
-       ML, footer_y+14, 8)
+       ML-2.4, footer_y+18.2, 8)
     _t(ax, "Doctor Sign:",
-       ML, footer_y+20, 8)
+       ML-2.4, footer_y+23.2, 8)
 
     # Conclusion box — TRANSPARENT (grid shows through)
     box_x = 95.0
@@ -588,8 +712,8 @@ def _draw_footer_portrait(ax, frozen, patient, conc_list, PW, PH):
     # Draw conclusions in a single column to avoid overlapping
     items = conc_list[:5]
     row_h = 4.0
-    sx    = box_x + 2.0
-    sy    = box_y + 6.0
+    sx    = box_x + 4.0
+    sy    = box_y + 8.0
     for i, line in enumerate(items):
         ty  = sy + i*row_h
         # User request: If getting cropped (exceeds box height), don't put in this.
@@ -598,7 +722,7 @@ def _draw_footer_portrait(ax, frozen, patient, conc_list, PW, PH):
 
     # Brand line
     brand = "Deckmount Electronics Pvt Ltd  |  Rhythm Ultra ECG  |  IEC 60601  |  Made in India"
-    _t(ax, brand, PW/2, PH-MB+1.5, 5.5, ha='center', zorder=9)
+    _t(ax, brand, PW/2, PH-MB+1.5, 7, ha='center', zorder=9)
 
 
 def _draw_footer_landscape(ax, frozen, patient, conc_list, PW, PH):
@@ -607,14 +731,14 @@ def _draw_footer_landscape(ax, frozen, patient, conc_list, PW, PH):
     # Doctor sign section (left)
     doc_name = patient.get('doctor_name','') or ''
     _t(ax, "Reference Report Confirmed by:",
-       ML+5, footer_top_y, 8)
+       ML+2.2, footer_top_y+0.5, 8)
     _t(ax, f"Doctor Name: {doc_name}",
-       ML+5, footer_top_y+5, 8)
+       ML+2.2, footer_top_y+5.5, 8)
     _t(ax, "Doctor Sign:",
-       ML+5, footer_top_y+10, 8)
+       ML+2.2, footer_top_y+10.5, 8)
 
     # Conclusion box — TRANSPARENT
-    box_w = 155.0; box_h = 22.0
+    box_w = 155.0; box_h = 18.0
     box_x = PW - box_w - MR - 7.0
     box_y = footer_top_y - 5.0
     ax.add_patch(Rectangle((box_x, box_y), box_w, box_h,
@@ -635,7 +759,7 @@ def _draw_footer_landscape(ax, frozen, patient, conc_list, PW, PH):
 
     # Brand line
     brand = "Deckmount Electronics Pvt Ltd  |  Rhythm Ultra ECG  |  IEC 60601  |  Made in India"
-    _t(ax, brand, PW/2, PH-MB+1.5, 9, ha='center', zorder=9)
+    _t(ax, brand, PW/2, PH-MB+1.5, 8, ha='center', zorder=9)
 
 
 # ─── Calibration pulse ────────────────────────────────────────────────────────

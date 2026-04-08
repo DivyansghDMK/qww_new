@@ -822,7 +822,7 @@ def load_latest_metrics_entry(reports_dir):
 
     return None
 
-def _add_label_column(drawing, x_pos, y_text_pairs, font_size=10, font_name="Helvetica", text_color=colors.black):
+def add_label_column(drawing, x_pos, y_text_pairs, font_size=10, font_name="Helvetica", text_color=colors.black):
     """
     Add multiple text labels to a drawing at a fixed X position.
     """
