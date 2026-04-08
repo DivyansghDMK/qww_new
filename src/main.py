@@ -23,7 +23,7 @@ else:
 
 from PyQt5.QtWidgets import (
     QApplication, QDialog, QLabel, QLineEdit, QPushButton, QVBoxLayout, QHBoxLayout, 
-    QMessageBox, QStackedWidget, QWidget, QInputDialog, QSizePolicy, QFrame
+    QMessageBox, QStackedWidget, QWidget, QInputDialog, QSizePolicy, QFrame, QScrollArea
 )
 from PyQt5.QtCore import Qt
 from utils.crash_logger import get_crash_logger
@@ -283,21 +283,6 @@ class LoginRegisterDialog(QDialog):
         signup_row.addWidget(signup_btn)
         signup_row.addStretch(1)
         stacked_col.addLayout(signup_row)
-        # Add login prompt to register widget
-        login_row = QHBoxLayout()
-        
-        login_row.addStretch(1)
-        login_lbl = QLabel("Already have an account?")
-        login_lbl.setStyleSheet("color: rgba(255,255,255,0.82); font-size: 14px;")
-        login_btn = QPushButton("Login")
-        login_btn.setStyleSheet("color: #ff8d2b; background: transparent; border: none; font-size: 14px; font-weight: bold; text-decoration: underline;")
-        login_btn.clicked.connect(lambda: self.stacked.setCurrentIndex(0))
-        login_row.addWidget(login_lbl)
-        login_row.addWidget(login_btn)
-        login_row.addStretch(1)
-        # Insert login_row at the bottom of the register widget
-        self.register_widget.layout().addSpacing(12)
-        self.register_widget.layout().addLayout(login_row)
         glass_layout.addLayout(stacked_col, 1)
         row.addWidget(glass, 0, Qt.AlignHCenter)
         row.addStretch(1)
@@ -601,8 +586,16 @@ class LoginRegisterDialog(QDialog):
         return widget
 
     def create_register_widget(self):
+        # Scroll area prevents layout compression on smaller screens, which was cropping the org buttons.
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("background: transparent;")
+
         widget = QWidget()
-        layout = QVBoxLayout()
+        widget.setStyleSheet("background: transparent;")
+        layout = QVBoxLayout(widget)
         layout.setContentsMargins(10, 8, 10, 8)
         layout.setSpacing(12)
 
@@ -696,6 +689,13 @@ class LoginRegisterDialog(QDialog):
         self.confirm_eye_btn.clicked.connect(lambda: self.toggle_password_visibility(self.reg_confirm, self.confirm_eye_btn))
         confirm_row.addWidget(self.confirm_eye_btn)
         
+        # Organization buttons (imported from organization module)
+        import importlib
+        organization_module = importlib.import_module('organization')
+        create_organization_buttons_layout = getattr(organization_module, 'create_organization_buttons_layout')
+        self.org_buttons_layout, self.new_org_handler, self.existing_org_handler = create_organization_buttons_layout(self)
+        
+        layout.addLayout(self.org_buttons_layout)
         layout.addWidget(self.reg_serial)
         layout.addWidget(self.reg_name)
         layout.addWidget(self.reg_age)
@@ -706,12 +706,36 @@ class LoginRegisterDialog(QDialog):
         layout.addLayout(confirm_row)
         layout.addWidget(register_btn)
         layout.addStretch(1)
-        widget.setLayout(layout)
-        return widget
+
+        # Login prompt inside the register page (so it scrolls with the form content).
+        login_row = QHBoxLayout()
+        login_row.addStretch(1)
+        login_lbl = QLabel("Already have an account?")
+        login_lbl.setStyleSheet("color: rgba(255,255,255,0.82); font-size: 14px;")
+        login_btn = QPushButton("Login")
+        login_btn.setStyleSheet(
+            "color: #ff8d2b; background: transparent; border: none; font-size: 14px; "
+            "font-weight: bold; text-decoration: underline; padding: 2px 6px;"
+        )
+        login_btn.clicked.connect(lambda: self.stacked.setCurrentIndex(0))
+        login_row.addWidget(login_lbl)
+        login_row.addWidget(login_btn)
+        login_row.addStretch(1)
+        layout.addSpacing(12)
+        layout.addLayout(login_row)
+
+        scroll.setWidget(widget)
+        return scroll
 
     def handle_login(self):
         identifier = self.login_email.text()  # Can be full name, username, or phone
         password_or_serial = self.login_password.text()
+        # Users can be created while the app is running (e.g., by Doctor/HCP head flows).
+        # Refresh from disk before validating so new accounts can log in immediately.
+        try:
+            self.sign_in_logic.users = self.sign_in_logic.load_users()
+        except Exception:
+            pass
         # BUG-31 FIX: Admin credentials loaded from environment variable, not hardcoded
         try:
             admin_user = os.environ.get('CARDIOX_ADMIN_USER', 'admin')
