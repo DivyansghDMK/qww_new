@@ -35,6 +35,134 @@ def build_demo_patient() -> Dict[str, str]:
     }
 
 
+def _load_dummycsv_dataframe() -> Optional[pd.DataFrame]:
+    ecg_dir = os.path.dirname(__file__)
+    src_dir = os.path.abspath(os.path.join(ecg_dir, ".."))
+    project_root = os.path.abspath(os.path.join(src_dir, ".."))
+
+    if getattr(sys, "frozen", False):
+        bundle_dir = getattr(sys, "_MEIPASS", None)
+        candidates = []
+        if bundle_dir:
+            candidates.append(os.path.join(bundle_dir, "dummycsv.csv"))
+            candidates.append(os.path.join(bundle_dir, "_internal", "dummycsv.csv"))
+            candidates.append(os.path.join(os.path.dirname(sys.executable), "dummycsv.csv"))
+        candidates.extend(
+            [
+                os.path.join(ecg_dir, "dummycsv.csv"),
+                os.path.join(project_root, "dummycsv.csv"),
+                os.path.abspath("dummycsv.csv"),
+            ]
+        )
+    else:
+        candidates = [
+            os.path.join(ecg_dir, "dummycsv.csv"),
+            os.path.join(project_root, "dummycsv.csv"),
+            os.path.abspath("dummycsv.csv"),
+        ]
+
+    csv_path = None
+    for p in candidates:
+        if os.path.exists(p):
+            csv_path = p
+            break
+    if not csv_path:
+        print("Demo report: dummycsv.csv not found")
+        return None
+
+    df = pd.read_csv(csv_path)
+    if len(df.columns) == 1:
+        df = pd.read_csv(csv_path, sep="\t")
+    if len(df) <= 0:
+        print("Demo report: dummycsv.csv is empty")
+        return None
+    return df
+
+
+def _load_demo_snap_raw_from_dummycsv(target_fs: float, target_seconds: float) -> list[np.ndarray]:
+    """
+    Return snap_raw list[12] in standard lead order for ecg_report_android.generate_report().
+    Data is taken from dummycsv.csv and tiled/trimmed to target_seconds at target_fs.
+    """
+    df = _load_dummycsv_dataframe()
+    if df is None:
+        return [np.array([]) for _ in range(12)]
+
+    target_samples = max(1, int(round(float(target_fs) * float(target_seconds))))
+    lead_order = ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"]
+    out: list[np.ndarray] = []
+
+    for lead in lead_order:
+        col_name = "aVR" if lead == "aVR" else lead
+        if col_name not in df.columns:
+            out.append(np.array([]))
+            continue
+
+        src_full = df[col_name].to_numpy(dtype=float)
+        if src_full.size == 0:
+            out.append(np.array([]))
+            continue
+
+        if src_full.size >= target_samples:
+            resampled = src_full[-target_samples:]
+        else:
+            reps = int(np.ceil(target_samples / float(src_full.size)))
+            tiled = np.tile(src_full, reps)
+            resampled = tiled[:target_samples]
+
+        out.append(np.asarray(resampled, dtype=float))
+
+    return out
+
+
+def generate_demo_android_ecg_report(
+    filename: str,
+    patient: Dict[str, str],
+    frozen: Dict[str, object],
+    fmt: str = "12_1",
+    conc_list: Optional[list[str]] = None,
+) -> None:
+    """
+    Demo-only PDF generator for the 12-lead "android" report renderer.
+
+    This keeps real serial PDF code paths untouched by:
+      - reading waveform samples from dummycsv.csv
+      - calling ecg_report_android.generate_report() with demo-only parameters
+    """
+    try:
+        demo_seconds = float(os.getenv("ECG_DEMO_PDF_SECONDS", "15").strip() or "15")
+    except Exception:
+        demo_seconds = 15.0
+    if demo_seconds <= 0:
+        demo_seconds = 15.0
+
+    try:
+        demo_speed = float(os.getenv("ECG_DEMO_PDF_SPEED_MM_S", "25").strip() or "25")
+    except Exception:
+        demo_speed = 25.0
+    if demo_speed <= 0:
+        demo_speed = 25.0
+
+    # Keep a bit more data than we expect to show so filtering/edge stabilization has headroom.
+    target_fs = 500.0
+    snap_raw = _load_demo_snap_raw_from_dummycsv(target_fs=target_fs, target_seconds=max(12.0, demo_seconds * 1.25))
+
+    from ecg.ecg_report_android import generate_report as _gen
+
+    _gen(
+        snap_raw=snap_raw,
+        frozen=frozen,
+        patient=patient,
+        filename=filename,
+        fmt=(fmt or "12_1").strip(),
+        conc_list=conc_list or [],
+        fs=target_fs,
+        speed_mm_s=demo_speed,
+        auto_target_samples=True,
+        demo_mode=True,
+    )
+
+
 def _populate_demo_signals_from_dummycsv(ecg_test_page: Optional[object]) -> None:
     if ecg_test_page is None:
         return

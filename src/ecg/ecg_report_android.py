@@ -41,6 +41,7 @@ MM_PER_SAMPLE = FIXED_SPEED / ECG_FS   # 0.05 mm/sample
 REPORT_AC_SETTING = "50"
 REPORT_EMG_SETTING = "150"
 REPORT_DFT_SETTING = "0.5"
+REPORT_DEMO_MODE = False
 # ADC_PER_MM: ADC counts per 1mm at standard 10mm/mV gain.
 # Formula: (ADC_full_scale / mV_full_scale) / (mm_per_mV)
 # = 6400 ADC / 50mV / 10mm*mV = 12800 / 1000 = 12.8? No -
@@ -71,8 +72,19 @@ LOGO_FALLBACKS = [
 
 # ─── Public entry point ───────────────────────────────────────────────────────
 
-def generate_report(snap_raw, frozen, patient, filename, fmt,
-                    conc_list=None, fs=500.0, extra_figs=None):
+def generate_report(
+    snap_raw,
+    frozen,
+    patient,
+    filename,
+    fmt,
+    conc_list=None,
+    fs=500.0,
+    extra_figs=None,
+    speed_mm_s: float | None = None,
+    auto_target_samples: bool = False,
+    demo_mode: bool = False,
+):
     """
     snap_raw  : list[12] of numpy arrays — raw ADC per lead
     frozen    : dict with HR, PR, QRS, QT, QTc, QTcF, rv5, sv1,
@@ -84,10 +96,15 @@ def generate_report(snap_raw, frozen, patient, filename, fmt,
     conc_list : conclusion strings (max 5 shown)
     fs        : sampling rate Hz
     """
-    global ECG_FS, MM_PER_SAMPLE, ADC_PER_MM
+    global ECG_FS, MM_PER_SAMPLE, ADC_PER_MM, REPORT_DEMO_MODE
     global REPORT_AC_SETTING, REPORT_EMG_SETTING, REPORT_DFT_SETTING
-    ECG_FS        = float(fs)
-    MM_PER_SAMPLE = FIXED_SPEED / ECG_FS
+    ECG_FS = float(fs)
+    effective_speed = float(speed_mm_s) if speed_mm_s is not None else FIXED_SPEED
+    if effective_speed <= 0:
+        effective_speed = FIXED_SPEED
+    MM_PER_SAMPLE = effective_speed / ECG_FS
+
+    REPORT_DEMO_MODE = bool(demo_mode)
 
     conc_list   = (conc_list or [])[:5]   # ← max 5 conclusions
     is_portrait = (fmt == '12_1')
@@ -138,7 +155,7 @@ def generate_report(snap_raw, frozen, patient, filename, fmt,
     frozen = dict(frozen or {})
     frozen["filter_band"] = filter_band
     frozen["ac_frequency"] = ac_freq
-    frozen["speed_text"] = f"{FIXED_SPEED:.1f} mm/s"
+    frozen["speed_text"] = f"{effective_speed:.1f} mm/s"
     frozen["gain_text"] = f"{FIXED_GAIN:.1f} mm/mV"
     wave_gain_val = 10.0
     try:
@@ -174,12 +191,17 @@ def generate_report(snap_raw, frozen, patient, filename, fmt,
         _draw_grid(ax, 0, 0, PW, PH)
         _draw_header(ax, frozen, patient, PW, fmt)
 
-        if fmt == '12_1':
-            _draw_1x12(ax, lead_mv, PW, PH, target_samples=3500)
-        elif fmt == '6_2':
-            _draw_2x6(ax, lead_mv, PW, PH, target_samples=2500)
+        if auto_target_samples:
+            _ts = None
         else:
-            _draw_3x4(ax, lead_mv, PW, PH, target_samples=1600)
+            _ts = 3500 if fmt == "12_1" else (2500 if fmt == "6_2" else 1600)
+
+        if fmt == '12_1':
+            _draw_1x12(ax, lead_mv, PW, PH, target_samples=_ts)
+        elif fmt == '6_2':
+            _draw_2x6(ax, lead_mv, PW, PH, target_samples=_ts)
+        else:
+            _draw_3x4(ax, lead_mv, PW, PH, target_samples=_ts)
 
         _draw_footer(ax, frozen, patient, conc_list, PW, PH, is_portrait)
 
@@ -814,14 +836,17 @@ def _prepare_report_waveform(samples, width_mm, target_samples=None):
         start_idx = max(0, arr.size - core_n)
     else:
         core_n = min(arr.size, int(width_mm / MM_PER_SAMPLE) + 1)
-        start_idx = 0
+        # Auto-fit mode should still use the newest segment (not the oldest).
+        start_idx = max(0, arr.size - core_n)
 
     if core_n < 2:
         return np.asarray([], dtype=float)
 
-    pad_n = min(max(8, int(0.5 * ECG_FS)), start_idx) if target_samples is not None else 0
+    # Always pad the left edge when we are extracting a suffix window. This reduces
+    # filter edge transients that can show up as baseline drift at the start of the strip.
+    pad_n = min(max(8, int(0.5 * ECG_FS)), start_idx)
     work_start = max(0, start_idx - pad_n)
-    work = np.asarray(arr[work_start:], dtype=float) if target_samples is not None else np.asarray(arr[:core_n], dtype=float)
+    work = np.asarray(arr[work_start:], dtype=float)
     if work.size < 2:
         return work
 
@@ -842,7 +867,7 @@ def _prepare_report_waveform(samples, width_mm, target_samples=None):
         pass
 
     if work.size > core_n:
-        work = work[-core_n:] if target_samples is not None else work[:core_n]
+        work = work[-core_n:]
 
     try:
         from ecg.signal.signal_processing import extract_low_frequency_baseline
@@ -870,6 +895,20 @@ def _prepare_report_waveform(samples, width_mm, target_samples=None):
         work = stabilize_report_edges(work, float(ECG_FS), edge_ms=120.0)
     except Exception:
         pass
+
+    # Demo-only: remove residual baseline slope so the strip starts at the baseline.
+    # This keeps demo PDFs from showing an initial drifting baseline even when the
+    # dummycsv segment begins mid-cycle.
+    if REPORT_DEMO_MODE:
+        try:
+            edge_n = int(0.4 * float(ECG_FS))
+            edge_n = max(8, min(edge_n, max(8, work.size // 4)))
+            b0 = float(np.nanmedian(work[:edge_n])) if work.size else 0.0
+            b1 = float(np.nanmedian(work[-edge_n:])) if work.size else 0.0
+            trend = np.linspace(b0, b1, work.size, dtype=float)
+            work = work - trend
+        except Exception:
+            pass
 
     return np.asarray(work, dtype=float)
 
