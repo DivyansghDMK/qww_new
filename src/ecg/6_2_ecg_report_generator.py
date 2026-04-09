@@ -4048,6 +4048,25 @@ def generate_6_2_ecg_report(filename="ecg_report.pdf", data=None, lead_images=No
     try:
         import sys
         sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+        # --- NEW UNIFIED PAYLOAD DISPATCH ---
+        from utils.ecg_payload_builder import dispatch_12lead_report
+        
+        dispatch_12lead_report(
+            data=data,
+            patient=patient or {},
+            pdf_path=filename,
+            settings_manager=settings_manager if 'settings_manager' in locals() else None,
+            signup_details={},
+            ecg_test_page=ecg_test_page if 'ecg_test_page' in locals() else None,
+            ecg_data_file=saved_data_file_path if 'saved_data_file_path' in locals() else (ecg_data_file if 'ecg_data_file' in locals() else None),
+            report_format="6_2",
+            conclusions=filtered_conclusions if 'filtered_conclusions' in locals() else None,
+            arrhythmia=None,
+        )
+        print("  Dispatched 6-2 unified payload")
+        # -------------------------------------
+
         from utils.cloud_uploader import get_cloud_uploader
         
         cloud_uploader = get_cloud_uploader()

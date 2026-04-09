@@ -1052,7 +1052,8 @@ class LoginRegisterDialog(QDialog):
                 'machine_serial_id': serial_id,  # Include machine serial ID
                 'registered_at': datetime.now().isoformat()
             }
-            
+            upload_result = uploader.upload_user_signup(user_data)
+            print(f" Signup upload status: {upload_result.get('status', 'unknown')}")
 
         except Exception as e:
             print(f" Error uploading user signup: {e}")

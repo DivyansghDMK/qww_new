@@ -1401,8 +1401,18 @@ def _collect_12_lead_payload(ecg_test_page, sampling_rate, ecg_data_file=None, w
         return {}, fs
 
 
-def _sync_report_package_to_backend(filename, patient, data, metrics_payload, username, ecg_test_page, sampling_rate, ecg_data_file=None):
-    """Sync generated report package (metrics + 12-lead + signup + ecg details) to backend."""
+def _sync_report_package_to_backend(
+    filename,
+    patient,
+    data,
+    metrics_payload,
+    username,
+    ecg_test_page,
+    sampling_rate,
+    ecg_data_file=None,
+    report_type="12_lead_ecg",
+):
+    """Sync generated report package (metrics + waveform + signup + ECG details) to backend."""
     try:
         from utils.backend_api import get_backend_api
 
@@ -1418,7 +1428,7 @@ def _sync_report_package_to_backend(filename, patient, data, metrics_payload, us
         device_info = {
             'machine_serial': data.get('machine_serial', ''),
             'app': 'ecg_monitor',
-            'report_type': '12_lead_ecg',
+            'report_type': report_type,
             'report_file': os.path.abspath(filename),
         }
 
@@ -3730,6 +3740,28 @@ def generate_ecg_report(
     try:
         import sys
         sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        
+        # --- NEW UNIFIED PAYLOAD DISPATCH ---
+        from utils.ecg_payload_builder import dispatch_12lead_report
+        
+        _uname = data.get('username') or (username if 'username' in locals() else None)
+        _signup = _load_signup_details_for_username(_uname) if '_load_signup_details_for_username' in globals() and _uname else {}
+        
+        dispatch_12lead_report(
+            data=data,
+            patient=patient or {},
+            pdf_path=filename,
+            settings_manager=settings_manager if 'settings_manager' in locals() else None,
+            signup_details=_signup,
+            ecg_test_page=ecg_test_page if 'ecg_test_page' in locals() else None,
+            ecg_data_file=saved_data_file_path if 'saved_data_file_path' in locals() else (ecg_data_file if 'ecg_data_file' in locals() else None),
+            report_format="12_1",
+            conclusions=filtered_conclusions if 'filtered_conclusions' in locals() else None,
+            arrhythmia=None,
+        )
+        print("  Dispatched 12-lead unified payload")
+        # -------------------------------------
+        
         from utils.cloud_uploader import get_cloud_uploader
         
         cloud_uploader = get_cloud_uploader()

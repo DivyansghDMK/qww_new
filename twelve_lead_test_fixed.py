@@ -1402,6 +1402,64 @@ class ECGTestPage(QWidget):
         except Exception:
             return False
 
+    def _should_prompt_save_ecg_before_report(self) -> bool:
+        """Prompt OTP-login users to save patient details before report generation."""
+        try:
+            dashboard = getattr(self, "dashboard_instance", None)
+            user_details = getattr(dashboard, "user_details", {}) or {}
+            auth_provider = str(user_details.get("auth_provider", "")).strip().lower()
+            if auth_provider != "ecg_otp_backend":
+                return False
+
+            patient_details = None
+            if dashboard and isinstance(getattr(dashboard, "patient_details", None), dict):
+                patient_details = dashboard.patient_details
+            elif hasattr(self, "ecg_menu") and isinstance(getattr(self.ecg_menu, "patient_details", None), dict):
+                patient_details = self.ecg_menu.patient_details
+
+            patient_name = ""
+            if isinstance(patient_details, dict):
+                patient_name = str(
+                    patient_details.get("patient_name")
+                    or patient_details.get("full_name")
+                    or ""
+                ).strip()
+                if not patient_name:
+                    first_name = str(patient_details.get("first_name", "")).strip()
+                    last_name = str(patient_details.get("last_name", "")).strip()
+                    patient_name = f"{first_name} {last_name}".strip()
+
+            return not patient_name
+        except Exception:
+            return False
+
+    def _confirm_report_name_flow_for_otp_user(self) -> bool:
+        """Offer OTP-login users a shortcut to Save ECG so the report includes a name."""
+        if not self._should_prompt_save_ecg_before_report():
+            return True
+
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Information)
+        msg.setWindowTitle("Save ECG Details")
+        msg.setText(
+            "If you want your name in the report, please fill Save ECG first.\n\n"
+            "Click Save ECG to enter details, or click OK to continue without it."
+        )
+        save_btn = msg.addButton("Save ECG", QMessageBox.ActionRole)
+        ok_btn = msg.addButton(QMessageBox.Ok)
+        msg.setDefaultButton(ok_btn)
+        msg.exec_()
+
+        if msg.clickedButton() == save_btn:
+            try:
+                if hasattr(self, "ecg_menu") and self.ecg_menu:
+                    self.ecg_menu.show_save_ecg()
+            except Exception as e:
+                QMessageBox.warning(self, "Save ECG", f"Could not open Save ECG form: {e}")
+            return False
+
+        return True
+
     def _start_generate_report_cooldown(self, seconds: int = 10, reason: str = ""):
         """Disable Generate Report button for a countdown window, then re-enable."""
         if not hasattr(self, "generate_report_btn"):
@@ -6305,6 +6363,9 @@ class ECGTestPage(QWidget):
         from PyQt5.QtCore import QThread, pyqtSignal, QObject
         from PyQt5.QtCore import QStandardPaths
         import datetime, os, json, shutil, copy
+
+        if not self._confirm_report_name_flow_for_otp_user():
+            return
 
         # Enforce per-report cooldown: every click restarts a 10-second wait.
         self._start_generate_report_cooldown(seconds=10, reason="Report Click")

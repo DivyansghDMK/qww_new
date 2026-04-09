@@ -2820,11 +2820,69 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     # Build PDF
     doc.build(story, onFirstPage=_draw_logo_and_footer, onLaterPages=_draw_logo_and_footer)
     print(f" ECG Report generated: {filename}")
+
+    # Sync hyperkalemia report package to backend (session + metrics + waveform + PDF)
+    try:
+        from ecg.ecg_report_generator import _sync_report_package_to_backend
+
+        backend_metrics_payload = {
+            "HR_bpm": data.get("HR") or data.get("Heart_Rate") or data.get("beat") or 0,
+            "PR_ms": data.get("PR", 0),
+            "QRS_ms": data.get("QRS", 0),
+            "QT_ms": data.get("QT", 0),
+            "QTc_ms": data.get("QTc", 0),
+            "ST_ms": data.get("ST", 0),
+            "RR_ms": data.get("RR_ms", 0),
+            "risk_level": data.get("risk_level", ""),
+            "indicators": data.get("indicators", []),
+        }
+        backend_username = ""
+        if dashboard_instance:
+            backend_username = getattr(dashboard_instance, "username", "") or ""
+        if not backend_username and ecg_test_page and getattr(ecg_test_page, "dashboard_instance", None):
+            backend_username = getattr(ecg_test_page.dashboard_instance, "username", "") or ""
+
+        _sync_report_package_to_backend(
+            filename=filename,
+            patient=patient if isinstance(patient, dict) else {},
+            data=data if isinstance(data, dict) else {},
+            metrics_payload=backend_metrics_payload,
+            username=backend_username,
+            ecg_test_page=ecg_test_page,
+            sampling_rate=computed_sampling_rate,
+            ecg_data_file=saved_data_file_path if 'saved_data_file_path' in locals() else ecg_data_file,
+            report_type="hyperkalemia_ecg",
+        )
+    except Exception as _be:
+        print(f"  Backend package sync failed: {_be}")
     
     # Upload to cloud if configured
     try:
         import sys
         sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+        # --- NEW UNIFIED PAYLOAD DISPATCH ---
+        from utils.ecg_payload_builder import dispatch_hyperkalemia_report
+        
+        _hk_findings = data.get("indicators", []) if "indicators" in data else []
+        if not _hk_findings and analysis_results and isinstance(analysis_results, dict):
+             _hk_findings = analysis_results.get("indicators", [])
+
+        dispatch_hyperkalemia_report(
+            data=data,
+            patient=patient or {},
+            pdf_path=filename,
+            settings_manager=settings_manager if 'settings_manager' in locals() else None,
+            signup_details={},
+            ecg_test_page=ecg_test_page if 'ecg_test_page' in locals() else None,
+            ecg_data_file=saved_data_file_path if 'saved_data_file_path' in locals() else (ecg_data_file if 'ecg_data_file' in locals() else None),
+            conclusions=filtered_conclusions if 'filtered_conclusions' in locals() else None,
+            arrhythmia=None,
+            hyperkalemia_findings=_hk_findings,
+        )
+        print("  Dispatched Hyperkalemia unified payload")
+        # -------------------------------------
+
         from utils.cloud_uploader import get_cloud_uploader
         
         cloud_uploader = get_cloud_uploader()
