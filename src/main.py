@@ -768,7 +768,13 @@ class LoginRegisterDialog(QDialog):
     def _upsert_phone_login_user(self, phone: str, token: str):
         from datetime import datetime
 
-        users = load_users()
+        # Use the same user store as normal password login (auth/sign_in.py),
+        # otherwise OTP-created passwords can be saved to a different users.json
+        # and then fail validation at next login.
+        try:
+            users = self.sign_in_logic.load_users()
+        except Exception:
+            users = load_users()
         user_key = phone
         user_record = None
 
@@ -791,11 +797,20 @@ class LoginRegisterDialog(QDialog):
         user_record['last_phone_login_at'] = datetime.now().isoformat()
 
         users[user_key] = user_record
-        save_users(users)
+        try:
+            self.sign_in_logic.users = users
+            self.sign_in_logic.save_users()
+        except Exception:
+            save_users(users)
         return user_key, user_record
 
     def _save_phone_user_password(self, username: str, password: str):
-        users = load_users()
+        from datetime import datetime
+
+        try:
+            users = self.sign_in_logic.load_users()
+        except Exception:
+            users = load_users()
         record = users.get(username, {})
         if not isinstance(record, dict):
             record = {}
@@ -803,7 +818,11 @@ class LoginRegisterDialog(QDialog):
         record['password_set_via'] = 'phone_otp'
         record['password_set_at'] = datetime.now().isoformat()
         users[username] = record
-        save_users(users)
+        try:
+            self.sign_in_logic.users = users
+            self.sign_in_logic.save_users()
+        except Exception:
+            save_users(users)
         return record
 
     def _prompt_phone_password_setup(self, phone: str) -> str:

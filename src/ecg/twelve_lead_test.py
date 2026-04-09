@@ -6443,7 +6443,8 @@ class ECGTestPage(QWidget):
         # Freeze metrics (all reads from self — safe on main thread)
         _sm = self.settings_manager if hasattr(self, 'settings_manager') and self.settings_manager else None
         # Check if demo mode is active and use hardcoded demo values
-        if hasattr(self, 'demo_toggle') and self.demo_toggle.isChecked():
+        is_demo_mode = bool(hasattr(self, 'demo_toggle') and self.demo_toggle and self.demo_toggle.isChecked())
+        if is_demo_mode:
             
             frozen = {
                 'HR':       60,      # Demo BPM
@@ -6498,7 +6499,7 @@ class ECGTestPage(QWidget):
         )
 
         # Check if demo mode is active and set name to "Demo Mode"
-        if hasattr(self, 'demo_toggle') and self.demo_toggle.isChecked():
+        if is_demo_mode:
             patient['first_name'] = 'Demo Mode'
             patient['name'] = 'Demo Mode'
             patient['last_name'] = ''
@@ -6549,10 +6550,28 @@ class ECGTestPage(QWidget):
                         if _p not in _sys.path:
                             _sys.path.insert(0, _p)
 
-                    from ecg.ecg_report_android import generate_report as _gen
-                    _gen(snap_raw=snap_raw, frozen=frozen, patient=patient,
-                         filename=filename, fmt=fmt,
-                         conc_list=conc_list, fs=fs)
+                    if is_demo_mode:
+                        from ecg.demo_ecg_report_generator import generate_demo_android_ecg_report as _gen_demo
+
+                        _gen_demo(
+                            filename=filename,
+                            patient=patient,
+                            frozen=frozen,
+                            fmt=fmt,
+                            conc_list=conc_list,
+                        )
+                    else:
+                        from ecg.ecg_report_android import generate_report as _gen
+
+                        _gen(
+                            snap_raw=snap_raw,
+                            frozen=frozen,
+                            patient=patient,
+                            filename=filename,
+                            fmt=fmt,
+                            conc_list=conc_list,
+                            fs=fs,
+                        )
 
                     # Copy to Downloads
                     try:
@@ -6606,8 +6625,18 @@ class ECGTestPage(QWidget):
         def _on_finish(msg):
             print(msg)
             from PyQt5.QtWidgets import QMessageBox
-            try: QMessageBox.information(self, "Report Saved", msg)
-            except Exception: pass
+            try:
+                QMessageBox.information(self, "Report Saved", msg)
+            except Exception:
+                pass
+
+            # Refresh Dashboard -> Recent Reports immediately (no restart needed)
+            try:
+                dash = getattr(self, "dashboard_instance", None)
+                if dash is not None and hasattr(dash, "refresh_recent_reports_ui"):
+                    dash.refresh_recent_reports_ui()
+            except Exception:
+                pass
             try: thread.quit(); thread.wait(3000)
             except Exception: pass
 
