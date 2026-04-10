@@ -2270,6 +2270,13 @@ class ECGAnalysisWindow(QDialog):
                 d = self.lead_data.get(l, np.array([]))
                 snap_raw.append(d[st:] if len(d) > st else np.array([]))
 
+            lead_seq = 'Standard'
+            try:
+                from utils.settings_manager import SettingsManager
+                lead_seq = str(SettingsManager().get_setting('lead_sequence', 'Standard') or 'Standard').strip()
+            except Exception:
+                pass
+
             frozen = {
                 'HR': int(float(hr) if hr else 0),
                 'RR': int(float(rr) if rr else 0),
@@ -2280,7 +2287,7 @@ class ECGAnalysisWindow(QDialog):
                 'QTcF': int(float(qtcf) if qtcf else 0),
                 'rv5': 0.0, 'sv1': 0.0,
                 'p_axis': '--', 'QRS_axis': '--', 't_axis': '--',
-                'lead_seq': 'Standard',
+                'lead_seq': lead_seq,
                 'logo_path': str(self.analysis_pdf_logo_path),
             }
             try:

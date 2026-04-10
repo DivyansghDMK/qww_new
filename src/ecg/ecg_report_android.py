@@ -57,6 +57,7 @@ COL_MAJOR = '#e69696'
 COL_BG    = 'white'      # ← pure white
 
 ALL_LEADS  = ["I","II","III","aVR","aVL","aVF","V1","V2","V3","V4","V5","V6"]
+CABRERA_LEADS = ["aVL", "I", "-aVR", "II", "aVF", "III", "V1", "V2", "V3", "V4", "V5", "V6"]
 
 # Logo — user's file at assets/DeckmountLogo.png
 LOGO_FNAME = "DeckmountLogo.png"
@@ -170,10 +171,17 @@ def generate_report(
     # ── Freeze raw snapshots for all 12 leads; strip preparation happens
     #    later per rendered segment so edge stabilisation matches the exact
     #    report window and does not depend on where the snapshot was cut. ──
+    lead_seq = str(frozen.get("lead_seq", "Standard") or "Standard").strip()
+
     lead_mv = {}
     for i, lead in enumerate(ALL_LEADS):
         arr = np.asarray(snap_raw[i], dtype=float) if i < len(snap_raw) else np.array([])
         lead_mv[lead] = arr
+    if "aVR" in lead_mv:
+        try:
+            lead_mv["-aVR"] = -np.asarray(lead_mv.get("aVR", np.array([])), dtype=float)
+        except Exception:
+            lead_mv["-aVR"] = np.array([])
 
     # ── Figure — exact A4, white background ───────────────────────────────
     #
@@ -197,11 +205,11 @@ def generate_report(
             _ts = 3500 if fmt == "12_1" else (2500 if fmt == "6_2" else 1600)
 
         if fmt == '12_1':
-            _draw_1x12(ax, lead_mv, PW, PH, target_samples=_ts)
+            _draw_1x12(ax, lead_mv, PW, PH, target_samples=_ts, lead_seq=lead_seq)
         elif fmt == '6_2':
-            _draw_2x6(ax, lead_mv, PW, PH, target_samples=_ts)
+            _draw_2x6(ax, lead_mv, PW, PH, target_samples=_ts, lead_seq=lead_seq)
         else:
-            _draw_3x4(ax, lead_mv, PW, PH, target_samples=_ts)
+            _draw_3x4(ax, lead_mv, PW, PH, target_samples=_ts, lead_seq=lead_seq)
 
         _draw_footer(ax, frozen, patient, conc_list, PW, PH, is_portrait)
 
@@ -565,7 +573,7 @@ def _draw_header(ax, frozen, patient, PW, fmt):
 
 # ─── 12:1 Portrait — waves fill header→footer, no white gap ──────────────────
 
-def _draw_1x12(ax, lead_mv, PW, PH, target_samples=None):
+def _draw_1x12(ax, lead_mv, PW, PH, target_samples=None, lead_seq="Standard"):
     HEADER_H  = 35.0   # increased from 28 → fits 6 header rows at 4.8mm each
     FOOTER_H  = 25.0
     top_offset = MT + HEADER_H                   # 33mm
@@ -580,7 +588,8 @@ def _draw_1x12(ax, lead_mv, PW, PH, target_samples=None):
     # the full cell height (both sides) to allow true amplitude display.
     half_clip = cell_h * 0.90   # ~17.5mm at 10mm/mV → allows ~1.75mV peaks
 
-    for i, lead in enumerate(ALL_LEADS):
+    ordered_leads = CABRERA_LEADS if str(lead_seq).strip().lower() == "cabrera" else ALL_LEADS
+    for i, lead in enumerate(ordered_leads):
         mid_y   = top_offset + i * cell_h + cell_h / 2.0
         label_y = mid_y - 8.0
         _draw_calibration(ax, ML, mid_y, FIXED_GAIN)
@@ -591,7 +600,7 @@ def _draw_1x12(ax, lead_mv, PW, PH, target_samples=None):
 
 # ─── 6:2 Landscape ────────────────────────────────────────────────────────────
 
-def _draw_2x6(ax, lead_mv, PW, PH, target_samples=None):
+def _draw_2x6(ax, lead_mv, PW, PH, target_samples=None, lead_seq="Standard"):
     HEADER_H  = 30.0   # increased: 6 header rows × 4.5mm = 27mm fits here
     FOOTER_H  = 20.0
     start_y   = MT + HEADER_H
@@ -603,8 +612,12 @@ def _draw_2x6(ax, lead_mv, PW, PH, target_samples=None):
     lead_w      = 123.0
     div_pad     = 5.0
 
-    pair_map = [("I","V1"),("II","V2"),("III","V3"),
-                ("aVR","V4"),("aVF","V5"),("aVL","V6")]
+    if str(lead_seq).strip().lower() == "cabrera":
+        pair_map = [("aVL","V1"),("I","V2"),("-aVR","V3"),
+                    ("II","V4"),("aVF","V5"),("III","V6")]
+    else:
+        pair_map = [("I","V1"),("II","V2"),("III","V3"),
+                    ("aVR","V4"),("aVF","V5"),("aVL","V6")]
 
     # Dashed vertical column divider — stops at TOP of rhythm strip (not through it)
     # Image 2 reference: dividers end cleanly where the full-width II row begins
@@ -640,7 +653,7 @@ def _draw_2x6(ax, lead_mv, PW, PH, target_samples=None):
 
 # ─── 4:3 Landscape ────────────────────────────────────────────────────────────
 
-def _draw_3x4(ax, lead_mv, PW, PH, target_samples=None):
+def _draw_3x4(ax, lead_mv, PW, PH, target_samples=None, lead_seq="Standard"):
     HEADER_H  = 30.0   # increased: 6 header rows × 4.5mm = 27mm fits here
     FOOTER_H  = 20.0
     start_y   = MT + HEADER_H
@@ -653,12 +666,20 @@ def _draw_3x4(ax, lead_mv, PW, PH, target_samples=None):
     lead_w      = 80.0
     div_pad     = 5.0
 
-    lead_groups = [
-        ["I","II","III"],
-        ["aVR","aVL","aVF"],
-        ["V1","V2","V3"],
-        ["V4","V5","V6"],
-    ]
+    if str(lead_seq).strip().lower() == "cabrera":
+        lead_groups = [
+            ["aVL","I","-aVR"],
+            ["II","aVF","III"],
+            ["V1","V2","V3"],
+            ["V4","V5","V6"],
+        ]
+    else:
+        lead_groups = [
+            ["I","II","III"],
+            ["aVR","aVL","aVF"],
+            ["V1","V2","V3"],
+            ["V4","V5","V6"],
+        ]
 
     # Draw full-height dashed column divider lines (matches reference image)
     col_dividers = []
