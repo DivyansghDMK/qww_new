@@ -118,6 +118,18 @@ class DeviceScanWorker(QThread):
             ports = list(serial.tools.list_ports.comports())
             if sys.platform == "darwin":
                 ports = [p for p in ports if ("usbserial" in p.device) or ("usbmodem" in p.device)]
+            else:
+                # Avoid probing non-USB / legacy ports that frequently hang or always fail.
+                filtered = []
+                for p in ports:
+                    desc = str(getattr(p, "description", "") or "")
+                    dev = str(getattr(p, "device", "") or "")
+                    if dev.upper() == "COM1" and "Communications Port" in desc:
+                        continue
+                    if "Bluetooth" in desc:
+                        continue
+                    filtered.append(p)
+                ports = filtered
             
             if not ports:
                 self.scan_finished.emit(False, "", "")
@@ -131,16 +143,30 @@ class DeviceScanWorker(QThread):
 
             for port in ports:
                 try:
-                    # Quick check
-                    ser = serial.Serial(port.device, 115200, timeout=0.1)
-                    handler = HardwareCommandHandler(ser)
-                    success, version, _ = handler.send_version_command(timeout=0.2)
-                    ser.close()
+                    desc = str(getattr(port, "description", "") or "")
+                    print(f"🔎 Device scan: probing {port.device} ({desc})")
+
+                    # Quick check (keep it short; this runs in a background thread).
+                    ser = serial.Serial(
+                        port.device,
+                        115200,
+                        timeout=0.2,
+                        write_timeout=0.2,
+                    )
+                    try:
+                        handler = HardwareCommandHandler(ser)
+                        success, version, _ = handler.send_version_command(timeout=0.4)
+                    finally:
+                        try:
+                            ser.close()
+                        except Exception:
+                            pass
                     
                     if success and version:
                         self.scan_finished.emit(True, port.device, version)
                         return
-                except Exception:
+                except Exception as e:
+                    print(f"⚠️ Device scan: {port.device} probe failed: {e}")
                     continue
 
             self.scan_finished.emit(False, "", "")
@@ -4260,6 +4286,9 @@ class Dashboard(QWidget):
                         self.scan_worker = DeviceScanWorker(self.settings_manager)
                         self.scan_worker.scan_finished.connect(self.on_scan_finished)
                         self.scan_worker.start()
+                    else:
+                        # Ports changed while scanning; request an immediate rescan when current scan finishes.
+                        self._device_rescan_requested = True
             
         except Exception as e:
             print(f"Error in check_device_connection: {e}")
@@ -4277,6 +4306,15 @@ class Dashboard(QWidget):
         """Callback for background device scan"""
         self._device_scan_in_progress = False
         self._initial_scan_completed = True
+
+        # If ports changed during the previous scan, run one more scan immediately.
+        if not success and getattr(self, "_device_rescan_requested", False):
+            self._device_rescan_requested = False
+            self._device_scan_in_progress = True
+            self.scan_worker = DeviceScanWorker(self.settings_manager)
+            self.scan_worker.scan_finished.connect(self.on_scan_finished)
+            self.scan_worker.start()
+            return
 
         if success:
             # Inform user if not the initial scan
