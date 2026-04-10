@@ -1517,7 +1517,13 @@ class HyperkalemiaTestWindow(QWidget):
                 h_pat = patient.copy() if patient else {}
                 if 'patient_name' not in h_pat:
                     h_pat['patient_name'] = f"{h_pat.get('first_name','')} {h_pat.get('last_name','')}".strip()
-                append_history_entry(h_pat, filepath, report_type="Hyperkalemia", username=self.username)
+                append_history_entry(
+                    h_pat,
+                    filepath,
+                    report_type="Hyperkalemia",
+                    username=self.username,
+                    owner_full_name=(getattr(self.dashboard_instance, "user_details", {}) or {}).get("full_name") or self.username,
+                )
             except Exception as hist_err:
                 print(f" Failed to append Hyperkalemia history: {hist_err}")
             # ── Success popup ────────────────────────────────────────────────────

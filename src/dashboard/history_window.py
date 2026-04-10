@@ -51,6 +51,13 @@ PUBLIC_REVIEWED_REPORTS_API_KEY = (
 ).strip()
 
 
+def _normalize_owner(value: str) -> str:
+    try:
+        return str(value or "").strip().casefold()
+    except Exception:
+        return ""
+
+
 def _reviewed_reports_headers() -> dict:
     headers = {}
     if PUBLIC_REVIEWED_REPORTS_API_KEY:
@@ -613,10 +620,11 @@ class HistoryWindow(QDialog):
         QListWidget::item:hover:!selected{background:#fff7ed;}
     """
 
-    def __init__(self, parent=None, username=None):
+    def __init__(self, parent=None, username=None, owner_full_name=None):
         super().__init__(parent)
         self.setWindowTitle("ECG Report History")
         self.username = username
+        self.owner_full_name = owner_full_name or username
         self.all_history_entries = []
         self.all_json_reports = []
         self._cloud_preview_map = {}
@@ -1481,6 +1489,7 @@ class HistoryWindow(QDialog):
                             "weight": entry.get("weight", ""),
                             "report_file": os.path.join(REPORTS_DIR, entry.get("filename", "")),
                             "username": entry.get("username", ""),
+                            "owner_full_name": entry.get("owner_full_name", entry.get("full_name", entry.get("username", ""))),
                         })
             except Exception:
                 pass
@@ -1540,11 +1549,22 @@ class HistoryWindow(QDialog):
         # Ensure reports folder PDFs are also visible in history list
         self._add_report_file_entries(history_entries)
 
-        # Filter by username and normalize report type
+        # Filter by owner and normalize report type
+        active_owner_norm = _normalize_owner(self.owner_full_name)
         self.all_history_entries = []
         for entry in history_entries:
-            if self.username and entry.get("username") and entry.get("username") != self.username:
-                continue
+            if active_owner_norm:
+                entry_owner = (
+                    entry.get("owner_full_name")
+                    or entry.get("full_name")
+                    or entry.get("username")
+                    or ""
+                )
+                if not _normalize_owner(entry_owner):
+                    # Do not show legacy/unowned items when user scoping is enabled.
+                    continue
+                if _normalize_owner(entry_owner) != active_owner_norm:
+                    continue
             rf = entry.get("report_file", "") or ""
             rt = entry.get("report_type", "")
             if not rt:
@@ -1759,10 +1779,26 @@ class HistoryWindow(QDialog):
         si.setForeground(QColor(fg))
         pi = self.table.item(row, 4)
         di = self.table.item(row, 0)
+        ti = self.table.item(row, 1)
+        rfp = self._get_report_file(row) or ""
         pname = pi.text() if pi else ""
         dstr = di.text() if di else ""
+        tstr = ti.text() if ti else ""
+        owner_norm = _normalize_owner(self.owner_full_name)
         for entry in self.all_history_entries:
-            if entry.get("patient_name") == pname and entry.get("date") == dstr:
+            same_owner = _normalize_owner(
+                entry.get("owner_full_name") or entry.get("full_name") or entry.get("username") or ""
+            ) == owner_norm
+            same_report = False
+            try:
+                if rfp and entry.get("report_file"):
+                    same_report = os.path.abspath(entry.get("report_file")).lower() == os.path.abspath(rfp).lower()
+            except Exception:
+                same_report = False
+
+            if same_owner and (same_report or (
+                entry.get("patient_name") == pname and entry.get("date") == dstr and entry.get("time") == tstr
+            )):
                 entry["review_status"] = new_status
                 entry["review_updated_at"] = datetime.datetime.now().isoformat()
                 entry["review_updated_by"] = self.username or "unknown"
@@ -1962,20 +1998,25 @@ class HistoryWindow(QDialog):
         if not export_dir:
             return
         try:
-            if not os.path.exists(REPORTS_DIR):
-                QMessageBox.warning(self, "Export", "Reports directory not found.")
-                return
-            pdfs = [f for f in os.listdir(REPORTS_DIR) if f.lower().endswith(".pdf")]
-            if not pdfs:
+            pdf_paths = []
+            for entry in self.all_history_entries:
+                rp = self._resolve_report_path(entry.get("report_file", ""))
+                if rp and os.path.exists(rp) and rp.lower().endswith(".pdf"):
+                    pdf_paths.append(rp)
+
+            # De-duplicate
+            pdf_paths = list(dict.fromkeys([os.path.abspath(p) for p in pdf_paths]))
+
+            if not pdf_paths:
                 QMessageBox.information(self, "Export", "No PDF reports found.")
                 return
             ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             dest = os.path.join(export_dir, f"ECG_Reports_Export_{ts}")
             os.makedirs(dest, exist_ok=True)
             ok, fail = 0, 0
-            for pdf in pdfs:
+            for pdf_path in pdf_paths:
                 try:
-                    shutil.copy2(os.path.join(REPORTS_DIR, pdf), os.path.join(dest, pdf))
+                    shutil.copy2(pdf_path, os.path.join(dest, os.path.basename(pdf_path)))
                     ok += 1
                 except Exception:
                     fail += 1
@@ -2098,12 +2139,29 @@ class HistoryWindow(QDialog):
                     all_e = json.load(f)
             if not isinstance(all_e, list):
                 all_e = []
+
+            owner_norm = _normalize_owner(self.owner_full_name)
             for entry in self.all_history_entries:
                 pn = entry.get("patient_name", "")
                 ds = entry.get("date", "")
+                ts = entry.get("time", "")
+                rf = entry.get("report_file", "") or ""
                 found = False
                 for se in all_e:
-                    if se.get("patient_name") == pn and se.get("date") == ds:
+                    se_owner_norm = _normalize_owner(
+                        se.get("owner_full_name") or se.get("full_name") or se.get("username") or ""
+                    )
+                    if owner_norm and se_owner_norm != owner_norm:
+                        continue
+
+                    same_report = False
+                    try:
+                        if rf and se.get("report_file"):
+                            same_report = os.path.abspath(se.get("report_file")).lower() == os.path.abspath(rf).lower()
+                    except Exception:
+                        same_report = False
+
+                    if same_report or (se.get("patient_name") == pn and se.get("date") == ds and se.get("time") == ts):
                         se["review_status"] = entry.get("review_status", "Pending")
                         se["review_updated_at"] = entry.get("review_updated_at", "")
                         se["review_updated_by"] = entry.get("review_updated_by", "")
@@ -2215,12 +2273,12 @@ class ReviewedReportsDialog(QDialog):
 # ══════════════════════════════════════════════════════════════════════════════
 #  Module-level helper (called by report generators)
 # ══════════════════════════════════════════════════════════════════════════════
-def append_history_entry(patient_details, report_file_path, report_type="ECG", username=None):
+def append_history_entry(patient_details, report_file_path, report_type="ECG", username=None, owner_full_name=None):
     """Append a new history entry when a report is generated."""
     try:
         entries = []
         if os.path.exists(HISTORY_FILE):
-            with open(HISTORY_FILE, "r") as f:
+            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
                 entries = json.load(f)
         if not isinstance(entries, list):
             entries = []
@@ -2233,6 +2291,7 @@ def append_history_entry(patient_details, report_file_path, report_type="ECG", u
         "time": now.strftime("%H:%M:%S"),
         "report_type": report_type,
         "username": username,
+        "owner_full_name": owner_full_name or username or "",
         "report_file": os.path.abspath(report_file_path) if report_file_path else "",
         "review_status": "Pending",
         "review_updated_at": "",
@@ -2247,7 +2306,7 @@ def append_history_entry(patient_details, report_file_path, report_type="ECG", u
         hdir = os.path.dirname(HISTORY_FILE)
         if hdir and not os.path.exists(hdir):
             os.makedirs(hdir, exist_ok=True)
-        with open(HISTORY_FILE, "w") as f:
+        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
             json.dump(entries, f, indent=2)
         print(f"💾 History entry saved: {base.get('patient_name','')} — {report_type}")
     except Exception as e:

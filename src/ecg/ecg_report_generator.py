@@ -3706,7 +3706,19 @@ def generate_ecg_report(
             # Get username from dashboard_instance if not provided
             if not username and dashboard_instance:
                 username = getattr(dashboard_instance, 'username', None)
-            append_history_entry(entry_patient, os.path.abspath(filename), report_type="ECG", username=username)
+            owner_full_name = ""
+            try:
+                if dashboard_instance:
+                    owner_full_name = (getattr(dashboard_instance, "user_details", {}) or {}).get("full_name") or ""
+            except Exception:
+                owner_full_name = ""
+            append_history_entry(
+                entry_patient,
+                os.path.abspath(filename),
+                report_type="ECG",
+                username=username,
+                owner_full_name=owner_full_name or username,
+            )
         except Exception as hist_err:
             print(f" Failed to append ECG history entry: {hist_err}")
     
