@@ -345,12 +345,14 @@ class HRVTestWindow(QWidget):
         # self.plot_widget.setLabel('bottom', 'Time (s)', color='white', fontsize=12)
         self.plot_widget.showGrid(x=False, y=False, alpha=0.3)
         # Show Y-axis labels to indicate 0-4096 range
-        self.plot_widget.getAxis('left').setPen(pg.mkPen(color='white', width=0.7))
-        self.plot_widget.getAxis('bottom').setPen(pg.mkPen(color='white', width=0.7))
-        self.plot_widget.getAxis('left').setTextPen(pg.mkPen(color='white'))
-        self.plot_widget.getAxis('bottom').setTextPen(pg.mkPen(color='white'))
-        self.plot_widget.showAxis('left', True)
-        self.plot_widget.showAxis('bottom', True)
+        # self.plot_widget.getAxis('left').setPen(pg.mkPen(color='white', width=0.7))
+        # self.plot_widget.getAxis('bottom').setPen(pg.mkPen(color='white', width=0.7))
+        # self.plot_widget.getAxis('left').setTextPen(pg.mkPen(color='white'))
+        # self.plot_widget.getAxis('bottom').setTextPen(pg.mkPen(color='white'))
+        # self.plot_widget.showAxis('left', True)
+        # self.plot_widget.showAxis('bottom', True)
+        self.plot_widget.hideAxis('left')
+        self.plot_widget.hideAxis('bottom')
         
         # Plot curve
         self.plot_curve = self.plot_widget.plot([], [], pen=pg.mkPen(color='#00FF00', width=1.2))
@@ -534,8 +536,7 @@ class HRVTestWindow(QWidget):
             # Update UI
             self.start_btn.setEnabled(False)
             self.stop_btn.setEnabled(True)
-            # Testing mode: allow report generation immediately after acquisition starts.
-            self.report_btn.setEnabled(True)
+            self.report_btn.setEnabled(False)
             self.lead_combo.setEnabled(False)
 
             # Reset the visible metric labels immediately at capture start so the

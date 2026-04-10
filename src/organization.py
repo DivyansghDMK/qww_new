@@ -3687,9 +3687,17 @@ class UserCreationDialog(QDialog):
         try:
             # Import user management functions - move import inside function to avoid circular import
             import importlib
-            main_module = importlib.import_module('main')
-            load_users = getattr(main_module, 'load_users')
-            save_users = getattr(main_module, 'save_users')
+            import __main__ as main_module
+
+            # In the frozen executable, importing `main` can fail (entrypoint is `__main__`).
+            if not hasattr(main_module, "load_users") or not hasattr(main_module, "save_users"):
+                try:
+                    main_module = importlib.import_module("main")
+                except Exception:
+                    pass
+
+            load_users = getattr(main_module, "load_users", None)
+            save_users = getattr(main_module, "save_users", None)
             
             # Use separate file for clinical users
             import os
