@@ -1,4 +1,5 @@
 """Serial communication classes for ECG hardware"""
+import os
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -84,9 +85,27 @@ class GlobalHardwareManager:
 
 class SerialStreamReader:
     """Packet-based serial reader for ECG data - NEW IMPLEMENTATION"""
-    READ_LOOP_BUDGET_SECONDS = 0.012  # Keep UI tick responsive (<~12 ms parse budget)
-    MAX_BUFFER_BYTES = 100000
-    SILENCE_WARNING_SECONDS = 3.0
+    @staticmethod
+    def _env_float(name: str, default: float) -> float:
+        try:
+            return float(os.getenv(name, str(default)))
+        except Exception:
+            return float(default)
+
+    @staticmethod
+    def _env_int(name: str, default: int) -> int:
+        try:
+            return int(float(os.getenv(name, str(default))))
+        except Exception:
+            return int(default)
+
+    # Tunable via environment for cross-laptop stability:
+    # ECG_READ_BUDGET_SECONDS: parse budget per UI tick
+    # ECG_MAX_BUFFER_BYTES: max parser buffer before trimming
+    # ECG_SILENCE_WARNING_SECONDS: warning threshold when no valid packets are seen
+    READ_LOOP_BUDGET_SECONDS = _env_float.__func__("ECG_READ_BUDGET_SECONDS", 0.02)
+    MAX_BUFFER_BYTES = _env_int.__func__("ECG_MAX_BUFFER_BYTES", 150000)
+    SILENCE_WARNING_SECONDS = _env_float.__func__("ECG_SILENCE_WARNING_SECONDS", 3.0)
     
     @staticmethod
     def scan_and_detect_port(baudrate: int = 115200, timeout: float = 0.05) -> Optional[tuple]:
@@ -209,6 +228,17 @@ class SerialStreamReader:
                         pass
         # ─────────────────────────────────────────────────────────────────────
 
+        # Fallback pass for slower/quirky USB stacks:
+        # if ultra-fast probe missed the device, try once more with relaxed timeout.
+        if detected_port is None:
+            slow_timeout = max(0.35, float(timeout))
+            print(f"   🔁 No fast match; retrying sequential probe with timeout={slow_timeout:.2f}s")
+            for p in port_list:
+                result = _probe_port(p)
+                if result:
+                    detected_port, detected_serial = result
+                    break
+
         if detected_port and detected_serial:
             print(f"\n✅ PORT DETECTED: {detected_port}")
         else:
@@ -225,6 +255,12 @@ class SerialStreamReader:
             raise RuntimeError("pyserial is required for serial capture. pip install pyserial")
         safe_timeout = max(0.01, min(float(timeout or 0.1), 0.1))
         self.ser = serial.Serial(port=port, baudrate=baudrate, timeout=safe_timeout, write_timeout=safe_timeout)
+        try:
+            # Windows driver hint: larger RX buffer reduces burst loss on slower laptops.
+            if hasattr(self.ser, "set_buffer_size"):
+                self.ser.set_buffer_size(rx_size=262144, tx_size=16384)
+        except Exception:
+            pass
         self.buf = bytearray()
         self.running = False
         self.data_count = 0
@@ -525,7 +561,12 @@ class SerialStreamReader:
             iteration = 0
             packets_processed = 0
             dropped_for_ui = 0
-            parse_deadline = time.perf_counter() + self.READ_LOOP_BUDGET_SECONDS
+            dynamic_budget = float(self.READ_LOOP_BUDGET_SECONDS)
+            if bytes_to_read > 8192 or len(self.buf) > 30000:
+                dynamic_budget = max(dynamic_budget, 0.035)
+            if len(self.buf) > 80000:
+                dynamic_budget = max(dynamic_budget, 0.05)
+            parse_deadline = time.perf_counter() + dynamic_budget
 
             while iteration < max_iterations and len(self.buf) >= PACKET_SIZE:
                 if time.perf_counter() >= parse_deadline:

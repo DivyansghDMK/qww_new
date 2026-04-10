@@ -45,10 +45,12 @@ def _add_data_args(project_root: Path) -> list[str]:
 
     # Runtime config/demo files often expected in working directory
     for filename in [
+        ".env",
         "dummycsv.csv",
         "users.json",
         "ecg_settings.json",
         "last_conclusions.json",
+        "ecg_auth_session.json",
     ]:
         pairs.append((project_root / filename, "."))
 
@@ -56,6 +58,7 @@ def _add_data_args(project_root: Path) -> list[str]:
     for filename in [
         "src/ecg_settings.json",
         "src/users.json",
+        "src/ecg_auth_session.json",
     ]:
         pairs.append((project_root / filename, "src"))
 

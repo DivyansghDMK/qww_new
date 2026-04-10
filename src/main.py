@@ -1,5 +1,6 @@
 import sys
 import os
+import shutil
 
 # ── BUG-05 FIX: Force software OpenGL rendering ──────────────────────────────
 # MUST be set BEFORE any Qt/PyQtGraph import.
@@ -13,13 +14,81 @@ os.environ['QT_AUTO_SCREEN_SCALE_FACTOR'] = '0'
 import json
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
-# When running as an executable, .env is bundled in the same directory
-if hasattr(sys, '_MEIPASS'):
-    env_path = os.path.join(sys._MEIPASS, '.env')
-    load_dotenv(env_path)
+def _prepare_runtime_workspace() -> str:
+    """
+    Ensure a writable runtime directory for packaged installs.
+    This avoids permission issues on systems where app is installed in Program Files.
+    """
+    use_runtime = bool(getattr(sys, "frozen", False)) or (
+        str(os.getenv("ECG_FORCE_RUNTIME_DIR", "0")).strip().lower() in {"1", "true", "yes", "on"}
+    )
+    if not use_runtime:
+        return os.getcwd()
+
+    base_dir = os.getenv("ECG_RUNTIME_DIR", "").strip()
+    if not base_dir:
+        local_appdata = os.getenv("LOCALAPPDATA") or os.path.expanduser("~")
+        base_dir = os.path.join(local_appdata, "Deckmount", "ECGMonitor")
+    base_dir = os.path.abspath(base_dir)
+    os.makedirs(base_dir, exist_ok=True)
+
+    # Ensure required runtime folders exist.
+    for rel in ("reports", "logs", "offline_queue", "temp", "src"):
+        os.makedirs(os.path.join(base_dir, rel), exist_ok=True)
+
+    # Seed essential config files from bundle/app folder if missing in runtime dir.
+    source_roots = []
+    if getattr(sys, "frozen", False):
+        source_roots.append(os.path.dirname(sys.executable))
+        if hasattr(sys, "_MEIPASS"):
+            source_roots.append(sys._MEIPASS)
+    else:
+        source_roots.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+    seed_files = [
+        ".env",
+        "users.json",
+        "ecg_settings.json",
+        "last_conclusions.json",
+        os.path.join("src", "users.json"),
+        os.path.join("src", "ecg_settings.json"),
+    ]
+    for rel in seed_files:
+        dst = os.path.join(base_dir, rel)
+        if os.path.exists(dst):
+            continue
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        for root in source_roots:
+            src = os.path.join(root, rel)
+            if os.path.exists(src):
+                try:
+                    shutil.copy2(src, dst)
+                except Exception:
+                    pass
+                break
+
+    os.environ["ECG_RUNTIME_DIR"] = base_dir
+    os.chdir(base_dir)
+    return base_dir
+
+
+_RUNTIME_DIR = _prepare_runtime_workspace()
+
+# Load environment variables from .env file.
+# Priority: runtime dir (.env) -> executable dir -> _MEIPASS
+runtime_env = os.path.join(os.getcwd(), ".env")
+if os.path.exists(runtime_env):
+    load_dotenv(runtime_env, override=False)
 else:
-    load_dotenv()
+    load_dotenv(override=False)
+if getattr(sys, "frozen", False):
+    app_env = os.path.join(os.path.dirname(sys.executable), ".env")
+    if os.path.exists(app_env):
+        load_dotenv(app_env, override=False)
+if hasattr(sys, '_MEIPASS'):
+    meipass_env = os.path.join(sys._MEIPASS, '.env')
+    if os.path.exists(meipass_env):
+        load_dotenv(meipass_env, override=False)
 
 from PyQt5.QtWidgets import (
     QApplication, QDialog, QLabel, QLineEdit, QPushButton, QVBoxLayout, QHBoxLayout, 

@@ -9,6 +9,7 @@ import json
 import requests
 from pathlib import Path
 from datetime import datetime
+from typing import Optional
 from dotenv import load_dotenv
 import sys
 
@@ -223,6 +224,44 @@ class CloudUploader:
             return bool(self.dropbox_token)
         
         return False
+
+    @staticmethod
+    def _safe_int_env(name: str, default: int) -> int:
+        try:
+            return int(float(os.getenv(name, str(default))))
+        except Exception:
+            return int(default)
+
+    @staticmethod
+    def _safe_float_env(name: str, default: float) -> float:
+        try:
+            return float(os.getenv(name, str(default)))
+        except Exception:
+            return float(default)
+
+    def _extract_mobile_for_s3_key(self, metadata: Optional[dict]) -> str:
+        if not isinstance(metadata, dict):
+            return ""
+        candidates = [
+            metadata.get("mobile_no"),
+            metadata.get("mobile_number"),
+            metadata.get("phone"),
+            metadata.get("patient_phone"),
+            metadata.get("user_id"),
+        ]
+        for val in candidates:
+            digits = "".join(ch for ch in str(val or "") if ch.isdigit())
+            if len(digits) >= 10:
+                return digits[-10:]
+        return ""
+
+    def _build_s3_key(self, filename: str, metadata: Optional[dict]) -> str:
+        prefix = (os.getenv("S3_REPORTS_PREFIX", "reports") or "reports").strip().strip("/")
+        mobile = self._extract_mobile_for_s3_key(metadata or {})
+        if mobile:
+            return f"{prefix}/{mobile}/{filename}"
+        timestamp = datetime.now().strftime("%Y/%m/%d")
+        return f"{prefix}/{timestamp}/{filename}"
     
     def _is_file_already_uploaded(self, file_path):
         """
@@ -630,25 +669,46 @@ class CloudUploader:
         try:
             import boto3
             from botocore.exceptions import ClientError
+            from botocore.config import Config
+            from boto3.s3.transfer import TransferConfig
+
+            retry_max = max(3, self._safe_int_env("S3_UPLOAD_MAX_RETRIES", 8))
+            connect_timeout = max(1.0, self._safe_float_env("S3_CONNECT_TIMEOUT", 5.0))
+            read_timeout = max(5.0, self._safe_float_env("S3_READ_TIMEOUT", 60.0))
+            multipart_threshold_mb = max(5, self._safe_int_env("S3_MULTIPART_THRESHOLD_MB", 8))
+            multipart_chunksize_mb = max(5, self._safe_int_env("S3_MULTIPART_CHUNKSIZE_MB", 8))
+            max_concurrency = max(2, self._safe_int_env("S3_MAX_CONCURRENCY", 6))
             
             s3_client = boto3.client(
                 's3',
                 aws_access_key_id=self.aws_access_key,
                 aws_secret_access_key=self.aws_secret_key,
-                region_name=self.s3_region
+                region_name=self.s3_region,
+                config=Config(
+                    retries={"max_attempts": retry_max, "mode": "adaptive"},
+                    connect_timeout=connect_timeout,
+                    read_timeout=read_timeout,
+                    s3={"addressing_style": "virtual"},
+                ),
             )
             
             # Generate S3 key
             filename = os.path.basename(file_path)
-            timestamp = datetime.now().strftime("%Y/%m/%d")
-            s3_key = f"ecg-reports/{timestamp}/{filename}"
+            s3_key = self._build_s3_key(filename, metadata)
+            transfer_cfg = TransferConfig(
+                multipart_threshold=multipart_threshold_mb * 1024 * 1024,
+                multipart_chunksize=multipart_chunksize_mb * 1024 * 1024,
+                max_concurrency=max_concurrency,
+                use_threads=True,
+            )
             
             # Upload file
             s3_client.upload_file(
                 file_path,
                 self.s3_bucket,
                 s3_key,
-                ExtraArgs={'Metadata': {k: str(v) for k, v in metadata.items()}}
+                ExtraArgs={'Metadata': {k: str(v) for k, v in metadata.items()}},
+                Config=transfer_cfg,
             )
             
             # Generate presigned URL (optional)
@@ -865,7 +925,7 @@ class CloudUploader:
             import traceback
             return {"status": "error", "message": f"Upload failed: {str(e)}", "traceback": traceback.format_exc()}
 
-    def list_reports(self, prefix: str = "ecg-reports/"):
+    def list_reports(self, prefix: str = "reports/"):
         """List report objects in S3 (PDF and JSON under prefix)."""
         if not (self.upload_enabled and self.cloud_service == 's3' and self.s3_bucket):
             return {"status": "error", "message": "S3 not configured"}

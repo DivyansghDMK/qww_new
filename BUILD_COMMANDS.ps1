@@ -27,6 +27,11 @@ Test-Path "dist\ECGMonitor\_internal\assets\Deckmountimg.png"
 # STEP 6: Run
 .\dist\ECGMonitor\ECGMonitor.exe
 
+# STEP 7: Build setup.exe installer (requires Inno Setup 6)
+python build_setup.py --name ECGMonitor --version 1.0.0
+# OR one-shot release:
+# .\build_release.ps1 -Name ECGMonitor -Version 1.0.0
+
 # ───────────────────────────────────────────────────────────────────────────────
 # DEBUG BUILD (if app closes immediately)
 # python build_exe.py --name ECGMonitor --console

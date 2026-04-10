@@ -397,6 +397,19 @@ python build_exe.py --name ECGMonitor
 - Share the **entire `dist\ECGMonitor\` folder**, not just the `.exe`.
 - For startup debugging, build with console: `python build_exe.py --name ECGMonitor --console`.
 
+## Windows Setup Installer (`setup.exe`)
+
+1. Build onedir executable:
+   - `python build_exe.py --name ECGMonitor`
+2. Build installer (Inno Setup 6 required):
+   - `python build_setup.py --name ECGMonitor --version 1.0.0`
+3. Output:
+   - `dist/installers/ECGMonitor_Setup_<version>.exe`
+
+Notes:
+- If `ISCC.exe` is not found, install **Inno Setup 6** and rerun `build_setup.py`.
+- Installed app writes runtime data to `%LOCALAPPDATA%\Deckmount\ECGMonitor` (reports/logs/offline queue), avoiding Program Files write-permission issues.
+
 ## Cloud Integration (AWS S3)
 
 ### Features

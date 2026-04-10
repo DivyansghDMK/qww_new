@@ -44,6 +44,8 @@ class OfflineQueue:
         self._sync_running = False
         self._last_connectivity_check = 0
         self._is_online = False
+        self._connectivity_timeout = self._safe_float_env("ECG_CONNECTIVITY_TIMEOUT", 0.8)
+        self._connectivity_targets = self._load_connectivity_targets()
         
         # Stats
         self.stats = {
@@ -58,6 +60,54 @@ class OfflineQueue:
         
         # Start background sync thread
         self.start_sync_thread()
+
+    @staticmethod
+    def _safe_float_env(name: str, default: float) -> float:
+        try:
+            return float(os.getenv(name, str(default)))
+        except Exception:
+            return float(default)
+
+    def _load_connectivity_targets(self) -> List[tuple]:
+        """
+        Build endpoint list used for connectivity checks.
+        Format for ECG_CONNECTIVITY_TARGETS:
+          "8.8.8.8:53,1.1.1.1:53,aws.amazon.com:443"
+        """
+        raw = os.getenv("ECG_CONNECTIVITY_TARGETS", "").strip()
+        targets: List[tuple] = []
+        if raw:
+            for token in raw.split(","):
+                token = token.strip()
+                if not token or ":" not in token:
+                    continue
+                host, port_str = token.rsplit(":", 1)
+                host = host.strip()
+                try:
+                    port = int(port_str.strip())
+                except Exception:
+                    continue
+                if host and port > 0:
+                    targets.append((host, port))
+
+        if not targets:
+            targets = [
+                ("1.1.1.1", 53),
+                ("8.8.8.8", 53),
+                ("aws.amazon.com", 443),
+                ("www.google.com", 443),
+            ]
+        return targets
+
+    def _can_connect_any_target(self) -> bool:
+        timeout = max(0.2, float(self._connectivity_timeout))
+        for host, port in self._connectivity_targets:
+            try:
+                socket.create_connection((host, int(port)), timeout=timeout)
+                return True
+            except OSError:
+                continue
+        return False
     
     def is_online(self, force_check: bool = False) -> bool:
         """
@@ -66,17 +116,12 @@ class OfflineQueue:
         """
         current_time = time.time()
         
-        # Use cached result if recent (within 30 seconds)
-        if not force_check and (current_time - self._last_connectivity_check) < 30:
+        # Use cached result if recent (within 15 seconds)
+        if not force_check and (current_time - self._last_connectivity_check) < 15:
             return self._is_online
         
         # Perform connectivity check
-        try:
-            # Try to connect to Google DNS (8.8.8.8) on port 53
-            socket.create_connection(("8.8.8.8", 53), timeout=0.5)  # FIX: 0.5s max (was 3s freeze)
-            self._is_online = True
-        except OSError:
-            self._is_online = False
+        self._is_online = self._can_connect_any_target()
         
         self._last_connectivity_check = current_time
         return self._is_online
