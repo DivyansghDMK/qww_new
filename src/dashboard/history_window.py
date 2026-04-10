@@ -31,6 +31,9 @@ except ImportError:
 
 from PyQt5.QtCore import Qt, QDate, QThread, pyqtSignal, QSize, QEvent
 from PyQt5.QtGui import QFont, QPixmap, QColor, QImage
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
+import numpy as np
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 HISTORY_FILE = os.path.join(BASE_DIR, "ecg_history.json")
@@ -386,6 +389,127 @@ class UploadWorker(QThread):
 # ══════════════════════════════════════════════════════════════════════════════
 #  Main History Window
 # ══════════════════════════════════════════════════════════════════════════════
+class WaveformPlotPanel(QWidget):
+    """Embedded ECG waveform viewer for JSON reports."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._lead_map = {}
+        self._sampling_rate = 500.0
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(8)
+
+        top = QHBoxLayout()
+        top.addWidget(QLabel("Lead:"))
+        self.lead_combo = QComboBox()
+        self.lead_combo.setMinimumWidth(120)
+        self.lead_combo.currentTextChanged.connect(self._plot_selected_lead)
+        top.addWidget(self.lead_combo)
+        self.meta_label = QLabel("Select a JSON report to plot waves")
+        self.meta_label.setStyleSheet("color:#7c2d12;font-size:11px;font-weight:600;")
+        self.meta_label.setWordWrap(True)
+        top.addWidget(self.meta_label, 1)
+        root.addLayout(top)
+
+        fig = Figure(figsize=(6, 3), dpi=100)
+        self.canvas = FigureCanvas(fig)
+        self.axes = fig.add_subplot(111)
+        fig.patch.set_facecolor("#ffffff")
+        root.addWidget(self.canvas, 1)
+        self.clear_plot()
+
+    def clear_plot(self, message: str = "Select a JSON report to plot waves"):
+        self._lead_map = {}
+        self.lead_combo.blockSignals(True)
+        self.lead_combo.clear()
+        self.lead_combo.blockSignals(False)
+        self.meta_label.setText(message)
+        self.axes.clear()
+        self.axes.set_title("ECG Waveform", fontsize=11, fontweight="bold")
+        self.axes.text(
+            0.5,
+            0.5,
+            message,
+            ha="center",
+            va="center",
+            transform=self.axes.transAxes,
+            color="#9a3412",
+            fontsize=11,
+        )
+        self.axes.set_xticks([])
+        self.axes.set_yticks([])
+        self.canvas.draw_idle()
+
+    def load_waveforms(self, json_path: str, payload: dict):
+        lead_map = {}
+        sampling_rate = 500.0
+        if isinstance(payload, dict):
+            sampling_rate = float(payload.get("sampling_rate") or payload.get("fs") or 500.0)
+            leads = payload.get("leads")
+            if isinstance(leads, dict):
+                for lead_name, values in leads.items():
+                    arr = self._to_numeric_array(values)
+                    if arr is not None and arr.size:
+                        lead_map[str(lead_name)] = arr
+            else:
+                for key, values in payload.items():
+                    arr = self._to_numeric_array(values)
+                    if arr is not None and arr.size:
+                        lead_map[str(key)] = arr
+
+        if not lead_map:
+            self.clear_plot("This JSON file does not contain plottable ECG wave data.")
+            return
+
+        self._lead_map = dict(sorted(lead_map.items()))
+        self._sampling_rate = sampling_rate if sampling_rate > 0 else 500.0
+
+        self.lead_combo.blockSignals(True)
+        self.lead_combo.clear()
+        self.lead_combo.addItems(list(self._lead_map.keys()))
+        default_lead = "II" if "II" in self._lead_map else next(iter(self._lead_map))
+        self.lead_combo.setCurrentText(default_lead)
+        self.lead_combo.blockSignals(False)
+
+        self.meta_label.setText(
+            f"{os.path.basename(json_path)}  |  {len(self._lead_map)} lead(s)  |  {self._sampling_rate:.1f} Hz"
+        )
+        self._plot_selected_lead(default_lead)
+
+    def _to_numeric_array(self, values):
+        if not isinstance(values, list) or not values:
+            return None
+        try:
+            arr = np.asarray(values, dtype=float).reshape(-1)
+        except Exception:
+            return None
+        return arr if arr.size else None
+
+    def _plot_selected_lead(self, lead_name: str):
+        signal = self._lead_map.get(lead_name)
+        if signal is None or signal.size == 0:
+            return
+
+        plot_signal = signal
+        if plot_signal.size > 5000:
+            step = max(1, plot_signal.size // 5000)
+            plot_signal = plot_signal[::step]
+        time_axis = np.arange(plot_signal.size, dtype=float) / max(self._sampling_rate, 1.0)
+
+        self.axes.clear()
+        self.axes.set_facecolor("#fffaf5")
+        self.axes.plot(time_axis, plot_signal, color="#f97316", linewidth=1.0)
+        self.axes.set_title(f"Lead {lead_name}", fontsize=11, fontweight="bold")
+        self.axes.set_xlabel("Time (s)")
+        self.axes.set_ylabel("Amplitude")
+        self.axes.grid(True, color="#fed7aa", linewidth=0.6, alpha=0.9)
+        for spine in self.axes.spines.values():
+            spine.set_color("#fdba74")
+        self.canvas.draw_idle()
+
+
 class HistoryWindow(QDialog):
     """ECG Report History — split pane: report list (left) + PDF preview (right)."""
 
@@ -494,6 +618,7 @@ class HistoryWindow(QDialog):
         self.setWindowTitle("ECG Report History")
         self.username = username
         self.all_history_entries = []
+        self.all_json_reports = []
         self._cloud_preview_map = {}
         self._preview_temp_pdf = ""
         self.setStyleSheet(self.STYLE)
@@ -581,6 +706,8 @@ class HistoryWindow(QDialog):
         # Tab 2 — Reviewed reports from API
         reviewed_tab = self._build_reviewed_tab()
         self.tabs.addTab(reviewed_tab, "Reviewed")
+        json_tab = self._build_json_tab()
+        self.tabs.addTab(json_tab, "JSON Waves")
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
         # Right: PDF preview
@@ -759,6 +886,178 @@ class HistoryWindow(QDialog):
         hint_row.addWidget(hint_lbl)
         layout.addLayout(hint_row)
         return w
+
+    def _build_json_tab(self) -> QWidget:
+        w = QWidget()
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(0, 6, 0, 0)
+        layout.setSpacing(8)
+
+        top = QHBoxLayout()
+        top.addWidget(QLabel("Search JSON:"))
+        self.json_search_input = QLineEdit()
+        self.json_search_input.setPlaceholderText("Patient / file / date...")
+        self.json_search_input.textChanged.connect(self._filter_json_table)
+        top.addWidget(self.json_search_input, 1)
+
+        refresh_btn = QPushButton("Refresh JSON")
+        refresh_btn.setObjectName("btn_secondary")
+        refresh_btn.clicked.connect(self._refresh_json_reports)
+        top.addWidget(refresh_btn)
+        layout.addLayout(top)
+
+        self.json_table = QTableWidget(0, 4)
+        self.json_table.setHorizontalHeaderLabels(["Date", "Patient", "Type", "JSON File"])
+        self.json_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.json_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.json_table.setAlternatingRowColors(True)
+        self.json_table.verticalHeader().setVisible(False)
+        self.json_table.setWordWrap(False)
+        jhdr = self.json_table.horizontalHeader()
+        jhdr.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        jhdr.setSectionResizeMode(1, QHeaderView.Stretch)
+        jhdr.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        jhdr.setSectionResizeMode(3, QHeaderView.Stretch)
+        self.json_table.cellClicked.connect(self._on_json_clicked)
+        self.json_table.cellDoubleClicked.connect(lambda _r, _c: self._open_json_in_waveform_analysis())
+        layout.addWidget(self.json_table, 1)
+
+        action_row = QHBoxLayout()
+        plot_btn = QPushButton("Plot Selected JSON")
+        plot_btn.clicked.connect(self._plot_selected_json)
+        action_row.addWidget(plot_btn)
+
+        open_btn = QPushButton("Open in Waveform Analysis")
+        open_btn.setObjectName("btn_secondary")
+        open_btn.clicked.connect(self._open_json_in_waveform_analysis)
+        action_row.addWidget(open_btn)
+        action_row.addStretch()
+        layout.addLayout(action_row)
+
+        wave_group = QGroupBox("  JSON Waveform Preview")
+        wave_layout = QVBoxLayout(wave_group)
+        wave_layout.setContentsMargins(10, 10, 10, 10)
+        self.waveform_panel = WaveformPlotPanel()
+        wave_layout.addWidget(self.waveform_panel)
+        layout.addWidget(wave_group, 1)
+        return w
+
+    def _collect_json_reports(self):
+        reports = []
+        seen = set()
+        for root_dir in (REPORTS_DIR, os.path.join(BASE_DIR, "recordings")):
+            if not os.path.exists(root_dir):
+                continue
+            for root, _dirs, files in os.walk(root_dir):
+                for fn in files:
+                    if not fn.lower().endswith(".json"):
+                        continue
+                    if fn.lower() in {"index.json", "upload_log.json"}:
+                        continue
+                    full_path = os.path.abspath(os.path.join(root, fn))
+                    if full_path.lower() in seen:
+                        continue
+                    seen.add(full_path.lower())
+                    try:
+                        mtime = datetime.datetime.fromtimestamp(os.path.getmtime(full_path))
+                    except Exception:
+                        mtime = datetime.datetime.now()
+                    report_type = self._infer_report_type(full_path, "")
+                    patient_name = os.path.splitext(fn)[0].replace("_", " ")
+                    reports.append({
+                        "date": mtime.strftime("%Y-%m-%d %H:%M:%S"),
+                        "patient_name": patient_name,
+                        "report_type": report_type,
+                        "json_file": full_path,
+                    })
+        reports.sort(key=lambda e: e.get("date", ""), reverse=True)
+        return reports
+
+    def _refresh_json_reports(self):
+        self.all_json_reports = self._collect_json_reports()
+        self._filter_json_table(self.json_search_input.text() if hasattr(self, "json_search_input") else "")
+
+    def _filter_json_table(self, text):
+        if not hasattr(self, "json_table"):
+            return
+        query = (text or "").strip().lower()
+        self.json_table.setRowCount(0)
+        for entry in self.all_json_reports:
+            file_path = entry.get("json_file", "")
+            row_text = " ".join([
+                str(entry.get("date", "")),
+                str(entry.get("patient_name", "")),
+                str(entry.get("report_type", "")),
+                os.path.basename(file_path),
+            ]).lower()
+            if query and query not in row_text:
+                continue
+            row = self.json_table.rowCount()
+            self.json_table.insertRow(row)
+            vals = [
+                entry.get("date", ""),
+                entry.get("patient_name", ""),
+                entry.get("report_type", ""),
+                os.path.basename(file_path),
+            ]
+            for col, val in enumerate(vals):
+                item = QTableWidgetItem(str(val))
+                item.setTextAlignment(Qt.AlignCenter if col != 3 else Qt.AlignLeft | Qt.AlignVCenter)
+                self.json_table.setItem(row, col, item)
+            if self.json_table.item(row, 3):
+                self.json_table.item(row, 3).setData(Qt.UserRole, file_path)
+            self.json_table.setRowHeight(row, 26)
+
+    def _selected_json_path(self):
+        if not hasattr(self, "json_table"):
+            return ""
+        row = self.json_table.currentRow()
+        if row < 0:
+            return ""
+        item = self.json_table.item(row, 3)
+        if not item:
+            return ""
+        return str(item.data(Qt.UserRole) or "")
+
+    def _on_json_clicked(self, _row, _col):
+        self._plot_selected_json()
+
+    def _plot_selected_json(self):
+        json_path = self._selected_json_path()
+        if not json_path:
+            if hasattr(self, "waveform_panel"):
+                self.waveform_panel.clear_plot("Select a JSON report to plot waves")
+            return
+        try:
+            with open(json_path, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+            self.waveform_panel.load_waveforms(json_path, payload)
+        except Exception as exc:
+            self.waveform_panel.clear_plot(f"Failed to read JSON: {exc}")
+
+    def _open_json_in_waveform_analysis(self):
+        json_path = self._selected_json_path()
+        if not json_path:
+            QMessageBox.information(self, "Waveform Analysis", "Select a JSON row first.")
+            return
+        if not os.path.exists(json_path):
+            QMessageBox.warning(self, "Waveform Analysis", "Selected JSON file was not found.")
+            return
+
+        try:
+            from dashboard.analysis_window import ECGAnalysisWindow
+        except Exception as exc:
+            QMessageBox.critical(self, "Waveform Analysis", f"Failed to open analysis window:\n{exc}")
+            return
+
+        if not hasattr(self, "_analysis_window") or self._analysis_window is None:
+            self._analysis_window = ECGAnalysisWindow(self)
+        self._analysis_window.show()
+        self._analysis_window.raise_()
+        self._analysis_window.activateWindow()
+        ok = self._analysis_window.load_external_report(json_path)
+        if not ok:
+            QMessageBox.warning(self, "Waveform Analysis", "JSON loaded, but waveform data could not be plotted.")
 
     def _load_reviewed_reports(self):
         """Fetch reviewed reports for the selected doctor from the cloud API."""
@@ -1271,6 +1570,7 @@ class HistoryWindow(QDialog):
         self.all_history_entries.sort(key=_key, reverse=True)
         for entry in self.all_history_entries:
             self._add_row(entry)
+        self._refresh_json_reports()
 
         self.preview_panel.clear()
 

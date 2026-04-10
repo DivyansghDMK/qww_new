@@ -439,5 +439,65 @@
     "exception_type": "LayoutError",
     "exception_message": "Flowable <Drawing at 0x14e45730910 frame=portrait_frame>...(535 x 780) too large on page 2 in frame 'portrait_frame'(523.2755905511812 x 769.8897637795277*) of template 'portrait'",
     "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\hyperkalemia_test.py\", line 1510, in generate_report\n    generate_hyperkalemia_report(filepath, self.analysis_results, self.lead_ii_data,\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\hyperkalemia_ecg_report_generator.py\", line 2936, in generate_hyperkalemia_report\n    return generate_hyperkalemia_ecg_report(\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\hyperkalemia_ecg_report_generator.py\", line 4086, in generate_hyperkalemia_ecg_report\n    doc.build(story)\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\reportlab\\platypus\\doctemplate.py\", line 1082, in build\n    self.handle_flowable(flowables)\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\reportlab\\platypus\\doctemplate.py\", line 961, in handle_flowable\n    raise LayoutError(ident)\nreportlab.platypus.doctemplate.LayoutError: Flowable <Drawing at 0x14e45730910 frame=portrait_frame>...(535 x 780) too large on page 2 in frame 'portrait_frame'(523.2755905511812 x 769.8897637795277*) of template 'portrait'\n"
+  },
+  {
+    "timestamp": "2026-04-08T15:49:33.295727",
+    "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
+    "category": "SERIAL_ERROR",
+    "error_count": 1,
+    "session_duration": "0:08:23.623938",
+    "exception_type": "SerialException",
+    "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
+    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 491, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
+  },
+  {
+    "timestamp": "2026-04-08T15:53:03.832624",
+    "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
+    "category": "SERIAL_ERROR",
+    "error_count": 2,
+    "session_duration": "0:11:54.160835",
+    "exception_type": "SerialException",
+    "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
+    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 491, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
+  },
+  {
+    "timestamp": "2026-04-08T16:52:19.259570",
+    "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
+    "category": "SERIAL_ERROR",
+    "error_count": 1,
+    "session_duration": "0:19:34.079195",
+    "exception_type": "SerialException",
+    "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
+    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 491, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
+  },
+  {
+    "timestamp": "2026-04-09T11:34:55.297204",
+    "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
+    "category": "SERIAL_ERROR",
+    "error_count": 1,
+    "session_duration": "0:06:32.378909",
+    "exception_type": "SerialException",
+    "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
+    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 491, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
+  },
+  {
+    "timestamp": "2026-04-09T11:49:14.641755",
+    "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
+    "category": "SERIAL_ERROR",
+    "error_count": 1,
+    "session_duration": "0:01:56.337318",
+    "exception_type": "SerialException",
+    "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
+    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 491, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
+  },
+  {
+    "timestamp": "2026-04-09T11:55:41.589527",
+    "message": "Packet parsing error: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
+    "category": "SERIAL_ERROR",
+    "error_count": 2,
+    "session_duration": "0:08:23.285090",
+    "exception_type": "SerialException",
+    "exception_message": "ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))",
+    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\DELL\\Documents\\QW\\qww\\src\\ecg\\serial\\serial_reader.py\", line 491, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n  File \"C:\\Users\\DELL\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\serial\\serialwin32.py\", line 259, in in_waiting\n    raise SerialException(\"ClearCommError failed ({!r})\".format(ctypes.WinError()))\nserial.serialutil.SerialException: ClearCommError failed (PermissionError(13, 'Access is denied.', None, 5))\n"
   }
 ]

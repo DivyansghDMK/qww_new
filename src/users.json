@@ -34,8 +34,8 @@
     "phone": "9560350477",
     "contact": "9560350477",
     "auth_provider": "ecg_otp_backend",
-    "jwt_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJtb2JpbGVfbm8iOiI5NTYwMzUwNDc3IiwiaWF0IjoxNzc1MTI1ODA0LCJleHAiOjE3NzU3MzA2MDR9.wMYmzsxNTWJg42k_YiSdNh3BakGD28ovseGJekITuus",
-    "last_phone_login_at": "2026-04-02T16:00:05.203795"
+    "jwt_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJtb2JpbGVfbm8iOiI5NTYwMzUwNDc3IiwiaWF0IjoxNzc1NzE4OTg1LCJleHAiOjE3NzYzMjM3ODV9.ahqidqj7sKy5ohrKR_AobRrI2hwCFszK4vAfkBX5As0",
+    "last_phone_login_at": "2026-04-09T12:46:27.116320"
   },
   "8851137196": {
     "signup_date": "2026-04-04",
