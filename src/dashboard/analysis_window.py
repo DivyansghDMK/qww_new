@@ -102,6 +102,8 @@ class InteractiveLeadCanvas(FigureCanvas):
         self._mag_pos    = None          # cursor pos for magnifier (widget coords)
         # Overlay items (matplotlib artists we redraw)
         self._ruler_patch    = None
+        self._ruler_text     = None
+        self._ruler_history  = []
         self._caliper_lines  = [None, None]
         self._crosshair_v    = None
         self._crosshair_h    = None
@@ -292,7 +294,7 @@ class InteractiveLeadCanvas(FigureCanvas):
             bbox=dict(boxstyle='round,pad=0.15', fc='#000000', alpha=0.55, ec='none'))
 
     def _draw_ruler(self, x0, y0, x1, y1):
-        self._clear_overlay('_ruler_patch')
+        self._clear_overlay('_ruler_patch', '_ruler_text')
         dx = abs(x1 - x0)
         dy = abs(y1 - y0)
         dt_ms = dx * 1000.0
@@ -313,10 +315,12 @@ class InteractiveLeadCanvas(FigureCanvas):
         my = ry
         ylim = self.ax.get_ylim()
         label = ruler_label(dt_ms, dv_mv)
-        self.ax.text(mx, min(my + (ylim[1] - ylim[0]) * 0.05, ylim[1] * 0.95),
-                     label, fontsize=7.5, color='#ffdd00', ha='center',
-                     va='bottom', fontweight='bold', zorder=12,
-                     bbox=dict(boxstyle='round,pad=0.2', fc='#111111', alpha=0.7, ec='none'))
+        self._ruler_text = self.ax.text(
+            mx, min(my + (ylim[1] - ylim[0]) * 0.05, ylim[1] * 0.95),
+            label, fontsize=7.5, color='#ffdd00', ha='center',
+            va='bottom', fontweight='bold', zorder=12,
+            bbox=dict(boxstyle='round,pad=0.2', fc='#111111', alpha=0.7, ec='none')
+        )
         self.ruler_measured.emit(label)
 
     def _finalise_ruler(self):
@@ -329,6 +333,39 @@ class InteractiveLeadCanvas(FigureCanvas):
             dv_mv = dy * ADC_TO_MV
             label = ruler_label(dt_ms, dv_mv)
             self.ruler_measured.emit(label)
+            if self._ruler_patch is not None or self._ruler_text is not None:
+                self._ruler_history.append((self._ruler_patch, self._ruler_text))
+                self._ruler_patch = None
+                self._ruler_text = None
+                if hasattr(self.parent_window, "_register_ruler_measurement"):
+                    self.parent_window._register_ruler_measurement(self)
+        self.draw_idle()
+
+    def undo_last_ruler(self):
+        if not self._ruler_history:
+            return False
+        patch, text = self._ruler_history.pop()
+        for item in (patch, text):
+            if item is not None:
+                try:
+                    item.remove()
+                except Exception:
+                    pass
+        self.draw_idle()
+        return True
+
+    def clear_measurements(self):
+        self._clear_overlay('_ruler_patch', '_ruler_text', '_crosshair_v', '_crosshair_h',
+                            '_readout_text', '_caliper_lines')
+        for patch, text in self._ruler_history:
+            for item in (patch, text):
+                if item is not None:
+                    try:
+                        item.remove()
+                    except Exception:
+                        pass
+        self._ruler_history.clear()
+        self._caliper_x = [None, None]
         self.draw_idle()
 
     def _draw_caliper_preview(self, x0, x1):
@@ -396,10 +433,7 @@ class InteractiveLeadCanvas(FigureCanvas):
             if idx >= 0:
                 pw.arrhythmia_type_combo.setCurrentIndex(idx)
         elif chosen == clear_act:
-            self._clear_overlay('_ruler_patch', '_crosshair_v', '_crosshair_h',
-                                '_readout_text')
-            self._caliper_x = [None, None]
-            self.draw_idle()
+            self.clear_measurements()
 
     # ── Magnifier paintEvent overlay ─────────────────────────────────────────
     def paintEvent(self, event):
@@ -770,6 +804,7 @@ class ECGAnalysisWindow(QDialog):
         # ── Tool state ──────────────────────────────────────────────────
         self.current_tool  = TOOL_SELECT
         self.magnifier_zoom = 4
+        self._ruler_stack = []
         # ── Data state ──────────────────────────────────────────────────
         self.reports             = []
         self.current_report      = None
@@ -1154,6 +1189,12 @@ class ECGAnalysisWindow(QDialog):
         clr_btn.setToolTip("Clear all measurements & overlays")
         clr_btn.setFont(QFont("Arial", 11, QFont.Bold))
         clr_btn.clicked.connect(self._clear_all_overlays)
+        undo_btn = QToolButton()
+        undo_btn.setText("↶")
+        undo_btn.setToolTip("Undo last ruler measurement (Ctrl+Z)")
+        undo_btn.setFont(QFont("Arial", 11, QFont.Bold))
+        undo_btn.clicked.connect(self._undo_last_ruler)
+        lay.addWidget(undo_btn)
         lay.addWidget(clr_btn)
 
         return frame
@@ -1170,12 +1211,27 @@ class ECGAnalysisWindow(QDialog):
 
     def _clear_all_overlays(self):
         for canvas in self._lead_canvases.values():
-            canvas._caliper_x     = [None, None]
-            canvas._drag_start    = None
-            canvas._clear_overlay('_ruler_patch', '_crosshair_v', '_crosshair_h',
-                                   '_readout_text', '_caliper_lines')
-            canvas.draw_idle()
+            canvas._drag_start = None
+            if hasattr(canvas, "clear_measurements"):
+                canvas.clear_measurements()
+            else:
+                canvas._caliper_x = [None, None]
+                canvas._clear_overlay('_ruler_patch', '_crosshair_v', '_crosshair_h',
+                                      '_readout_text', '_caliper_lines')
+                canvas.draw_idle()
+        self._ruler_stack.clear()
         self.measure_lbl.setText("")
+
+    def _register_ruler_measurement(self, canvas):
+        self._ruler_stack.append(canvas)
+
+    def _undo_last_ruler(self):
+        while self._ruler_stack:
+            canvas = self._ruler_stack.pop()
+            if canvas is not None and hasattr(canvas, "undo_last_ruler") and canvas.undo_last_ruler():
+                self.measure_lbl.setText("↶ Undid last ruler measurement")
+                return
+        self.measure_lbl.setText("No ruler measurement to undo")
 
     # ── PLOT PANEL ───────────────────────────────────────────────────────────
     def _build_plot_panel(self):
@@ -1541,7 +1597,11 @@ class ECGAnalysisWindow(QDialog):
     # ─────────────────────────────────────────────────────────────────────────
     def keyPressEvent(self, event):
         key = event.key()
-        if key == Qt.Key_S:
+        if (event.modifiers() & Qt.ControlModifier) and key == Qt.Key_Z:
+            self._undo_last_ruler()
+        elif key == Qt.Key_Backspace:
+            self._undo_last_ruler()
+        elif key == Qt.Key_S:
             self.set_tool(TOOL_SELECT)
             self._tool_btns[TOOL_SELECT].setChecked(True)
         elif key == Qt.Key_R:
