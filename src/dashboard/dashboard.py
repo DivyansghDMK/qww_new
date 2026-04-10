@@ -575,6 +575,9 @@ class Dashboard(QWidget):
         self.chatbot_btn.setStyleSheet("background: #2453ff; color: white; border-radius: 16px; padding: 8px 24px;")
         self.chatbot_btn.clicked.connect(self.open_chatbot_dialog)
         self.chatbot_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        # Disabled per request
+        self.chatbot_btn.setEnabled(False)
+        self.chatbot_btn.setVisible(False)
         greet_row.addWidget(self.chatbot_btn)
         
         # --- Add Waveform Analysis Button ---
@@ -589,6 +592,9 @@ class Dashboard(QWidget):
         self.holter_btn.setStyleSheet("background: #ff7a26; color: white; border-radius: 16px; padding: 8px 24px; font-weight: bold;")
         self.holter_btn.clicked.connect(self.open_holter_from_dashboard)
         self.holter_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        # Disabled per request
+        self.holter_btn.setEnabled(False)
+        self.holter_btn.setVisible(False)
         greet_row.addWidget(self.holter_btn)
 
         dashboard_layout.addLayout(greet_row)

@@ -966,6 +966,9 @@ class ECGTestPage(QWidget):
         
         created_buttons[2].clicked.disconnect()
         created_buttons[2].clicked.connect(self.show_holter_menu)
+        # Disable Holter entry from 12-lead ECG menu per request.
+        created_buttons[2].setEnabled(False)
+        created_buttons[2].setVisible(False)
         
         created_buttons[3].clicked.disconnect()
         created_buttons[3].clicked.connect(self.ecg_menu.show_working_mode)
