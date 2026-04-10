@@ -3454,6 +3454,7 @@ class Dashboard(QWidget):
                     fname,
                     report_type="12 Lead",
                     username=getattr(self, "username", "") or "",
+                    owner_full_name=(getattr(self, "user_details", {}) or {}).get("full_name") or getattr(self, "username", "") or "",
                 )
             except Exception as hist_err:
                 print(f" Failed to append ECG history: {hist_err}")
@@ -3884,7 +3885,22 @@ class Dashboard(QWidget):
                 or hrv_issue
             )
 
-            if rhythm_clean in ignore_values or not rhythm_clean:
+            # If acquisition/metrics are already available but the ECG page hasn't produced a rhythm label yet,
+            # don't block the whole dashboard interpretation on `rhythm_text` being set (it can remain
+            # "Analyzing Rhythm..." until the expanded lead view is opened).
+            has_metric_data = bool((hr > 0) or (pr > 0) or (qrs > 0) or (qt > 0) or (qtc > 0))
+            if (rhythm_clean in ignore_values or not rhythm_clean) and has_metric_data:
+                if hr > 100:
+                    rhythm_issue = rhythm_issue or "Tachycardia"
+                    rhythm_clean = rhythm_issue
+                elif 0 < hr < 60:
+                    rhythm_issue = rhythm_issue or "Bradycardia"
+                    rhythm_clean = rhythm_issue
+                else:
+                    is_normal_rhythm = True
+                    rhythm_clean = "Normal Sinus Rhythm"
+
+            if (rhythm_clean in ignore_values or not rhythm_clean) and not has_metric_data:
                 # Still waiting for ECG data
                 conclusion_html = """
                     <p style='color: #888; font-style: italic;'>
@@ -4160,7 +4176,11 @@ class Dashboard(QWidget):
         """Open the ECG report history window."""
         try:
             from dashboard.history_window import HistoryWindow
-            dlg = HistoryWindow(parent=self, username=self.username)
+            dlg = HistoryWindow(
+                parent=self,
+                username=self.username,
+                owner_full_name=(self.user_details or {}).get("full_name") or self.username,
+            )
             dlg.exec_()
         except Exception as e:
             QMessageBox.critical(self, "History", f"Failed to open history window: {e}")

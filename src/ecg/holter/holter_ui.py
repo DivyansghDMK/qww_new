@@ -3562,7 +3562,16 @@ class HolterMainWindow(QDialog):
                 h_pat = self.patient_info.copy() if self.patient_info else {}
                 if 'patient_name' not in h_pat and 'name' in h_pat:
                     h_pat['patient_name'] = h_pat['name']
-                append_history_entry(h_pat, path, report_type="Comphrensive ECG Analysis")
+                _p = self.parent()
+                _uname = getattr(_p, "username", "") if _p is not None else ""
+                _full = (getattr(_p, "user_details", {}) or {}).get("full_name") or _uname
+                append_history_entry(
+                    h_pat,
+                    path,
+                    report_type="Comphrensive ECG Analysis",
+                    username=_uname,
+                    owner_full_name=_full,
+                )
             except Exception as h_err:
                 print(f"Failed to append Holter history: {h_err}")
                 

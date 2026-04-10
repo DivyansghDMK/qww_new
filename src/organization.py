@@ -533,209 +533,247 @@ class SignUpDialog(QDialog, BaseDialogMixin):
     
     def init_ui(self):
         """Initialize the sign-up dialog UI"""
+        from PyQt5.QtWidgets import QScrollArea
+
         self.setWindowTitle("Sign Up")
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
-        self.setMinimumSize(520, 800)
+        self.setFixedSize(620, 760)
         self.setModal(True)
         
-        # Set background gradient
+        # Match the "User Login" visual style
         self.setStyleSheet("""
             QDialog {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, 
-                    stop:0 #f8f9fa, stop:1 #e9ecef);
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #161a31, stop:0.55 #1d2444, stop:1 #101427);
             }
             QLabel {
-                color: #333;
-                font-size: 14px;
-                font-weight: bold;
+                color: #f5f1ea;
+                font-size: 15px;
+                font-weight: 600;
+                background: transparent;
+                border: none;
             }
             QLineEdit {
-                background: white;
-                border: 2px solid #dee2e6;
-                border-radius: 8px;
-                padding: 10px 12px;
+                padding: 14px 16px;
+                border: 1px solid rgba(255,255,255,0.14);
+                border-radius: 14px;
                 font-size: 14px;
-                color: #333;
-                min-height: 35px;
+                background: rgba(255,255,255,0.08);
+                color: #fffaf5;
+                min-height: 22px;
             }
             QLineEdit:focus {
-                border-color: #007bff;
+                border: 1px solid #ff8d33;
+                background: rgba(255,255,255,0.12);
+            }
+            QLineEdit::placeholder {
+                color: rgba(255,255,255,0.45);
             }
             QPushButton {
-                background: #007bff;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #ff6a00, stop:1 #ff9533);
+                color: white;
+                border: 1px solid rgba(255,255,255,0.12);
+                border-radius: 14px;
+                padding: 12px;
+                font-size: 15px;
+                font-weight: bold;
+                min-height: 18px;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #ff7b14, stop:1 #ffa347);
+            }
+            QLabel#titleLabel {
+                font-size: 30px;
+                font-weight: bold;
+                color: #fff8f2;
+            }
+            QLabel#subtitleLabel {
+                font-size: 15px;
+                font-weight: 600;
+                color: rgba(255,255,255,0.72);
+            }
+            QLabel#fieldLabel {
+                font-size: 15px;
+                font-weight: 700;
+                color: #fff0e6;
+            }
+            QFrame#signupCard {
+                background: rgba(12,16,30,0.62);
+                border: 1px solid rgba(255,255,255,0.10);
+                border-radius: 24px;
+            }
+            QPushButton#toggleBtn {
+                background: #6c757d;
                 color: white;
                 border: none;
                 border-radius: 8px;
-                padding: 12px;
-                font-size: 16px;
+                font-size: 15px;
                 font-weight: bold;
+                padding: 0px;
             }
-            QPushButton:hover {
-                background: #0056b3;
-            }
-            QPushButton#eye_btn {
-                background: #6c757d;
-                border: none;
-                border-radius: 4px;
-                padding: 4px;
-                font-size: 12px;
-                min-width: 30px;
-                min-height: 30px;
-            }
-            QPushButton#eye_btn:hover {
+            QPushButton#toggleBtn:hover {
                 background: #5a6268;
+            }
+            QScrollArea {
+                background: transparent;
+                border: none;
+            }
+            QScrollBar:vertical {
+                border: none;
+                background: transparent;
+                width: 10px;
+                margin: 8px 4px 8px 4px;
+            }
+            QScrollBar::handle:vertical {
+                background: rgba(255,255,255,0.20);
+                min-height: 40px;
+                border-radius: 5px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: rgba(255,255,255,0.28);
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+                background: transparent;
             }
         """)
         
-        layout = QVBoxLayout(self)
-        layout.setSpacing(20)
-        layout.setContentsMargins(40, 50, 40, 40)
-        
-        # Title
+        outer = QVBoxLayout(self)
+        outer.setSpacing(0)
+        outer.setContentsMargins(24, 24, 24, 24)
+
+        card = QFrame()
+        card.setObjectName("signupCard")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(32, 30, 32, 28)
+        card_layout.setSpacing(12)
+        outer.addWidget(card)
+
         title = QLabel("Create Account")
+        title.setObjectName("titleLabel")
         title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet("font-size: 24px; color: #007bff; margin-bottom: 20px;")
-        layout.addWidget(title)
-        
-        # Subtitle with role and organization
+        card_layout.addWidget(title)
+
         subtitle = QLabel(f"{self.role} - {self.organization}")
+        subtitle.setObjectName("subtitleLabel")
         subtitle.setAlignment(Qt.AlignCenter)
-        subtitle.setStyleSheet("font-size: 14px; color: #6c757d; margin-bottom: 20px;")
-        layout.addWidget(subtitle)
-        
-        # Form fields
-        # Full Name
-        full_name_layout = QHBoxLayout()
-        full_name_label = QLabel("Full Name:")
-        full_name_label.setFixedWidth(100)
-        full_name_label.setStyleSheet("font-weight: bold; color: #333;")
-        self.full_name_edit = QLineEdit()
-        self.full_name_edit.setPlaceholderText("Enter your full name")
-        self.full_name_edit.setMaximumWidth(300)
-        full_name_layout.addWidget(full_name_label)
-        full_name_layout.addWidget(self.full_name_edit)
-        full_name_layout.addStretch()
-        layout.addLayout(full_name_layout)
-        layout.addSpacing(8)
-        
-        # Age
-        age_layout = QHBoxLayout()
-        age_label = QLabel("Age:")
-        age_label.setFixedWidth(100)
-        age_label.setStyleSheet("font-weight: bold; color: #333;")
-        self.age_edit = QLineEdit()
-        self.age_edit.setPlaceholderText("Enter your age")
-        self.age_edit.setMaximumWidth(150)
+        card_layout.addWidget(subtitle)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        try:
+            scroll.setFrameShape(QFrame.NoFrame)
+            scroll.viewport().setStyleSheet("background: transparent;")
+        except Exception:
+            pass
+
+        body = QWidget()
+        body.setStyleSheet("background: transparent;")
+        form = QVBoxLayout(body)
+        form.setContentsMargins(0, 10, 0, 0)
+        form.setSpacing(10)
+        scroll.setWidget(body)
+        card_layout.addWidget(scroll, 1)
+
+        def _field_label(text):
+            lbl = QLabel(text)
+            lbl.setObjectName("fieldLabel")
+            return lbl
+
+        def _text_field(placeholder, max_width=560):
+            edit = QLineEdit()
+            edit.setPlaceholderText(placeholder)
+            edit.setMinimumSize(400, 40)
+            edit.setMaximumWidth(max_width)
+            edit.setClearButtonEnabled(True)
+            return edit
+
+        form.addWidget(_field_label("Full Name:"))
+        self.full_name_edit = _text_field("Enter your full name")
+        form.addWidget(self.full_name_edit)
+
+        form.addWidget(_field_label("Age:"))
+        self.age_edit = _text_field("Enter your age", max_width=320)
         self.age_edit.setValidator(QIntValidator(0, 150, self))
         self.age_edit.setMaxLength(3)
-        age_layout.addWidget(age_label)
-        age_layout.addWidget(self.age_edit)
-        age_layout.addStretch()
-        layout.addLayout(age_layout)
-        layout.addSpacing(8)
-        
-        # Gender
-        gender_layout = QHBoxLayout()
-        gender_label = QLabel("Gender:")
-        gender_label.setFixedWidth(100)
-        gender_label.setStyleSheet("font-weight: bold; color: #333;")
-        self.gender_edit = QLineEdit()
-        self.gender_edit.setPlaceholderText("Enter your gender")
-        self.gender_edit.setMaximumWidth(200)
-        gender_layout.addWidget(gender_label)
-        gender_layout.addWidget(self.gender_edit)
-        gender_layout.addStretch()
-        layout.addLayout(gender_layout)
-        layout.addSpacing(8)
-        
-        # Address
-        address_layout = QHBoxLayout()
-        address_label = QLabel("Address:")
-        address_label.setFixedWidth(100)
-        address_label.setStyleSheet("font-weight: bold; color: #333;")
-        self.address_edit = QLineEdit()
-        self.address_edit.setPlaceholderText("Enter your address")
-        self.address_edit.setMaximumWidth(300)
-        address_layout.addWidget(address_label)
-        address_layout.addWidget(self.address_edit)
-        address_layout.addStretch()
-        layout.addLayout(address_layout)
-        layout.addSpacing(8)
-        
-        # Phone Number
-        phone_layout = QHBoxLayout()
-        phone_label = QLabel("Phone Number:")
-        phone_label.setFixedWidth(100)
-        phone_label.setStyleSheet("font-weight: bold; color: #333;")
-        self.phone_edit = QLineEdit()
-        self.phone_edit.setPlaceholderText("Enter your phone number")
-        self.phone_edit.setMaximumWidth(200)
+        form.addWidget(self.age_edit)
+
+        form.addWidget(_field_label("Gender:"))
+        self.gender_edit = _text_field("Enter your gender", max_width=420)
+        form.addWidget(self.gender_edit)
+
+        form.addWidget(_field_label("Address:"))
+        self.address_edit = _text_field("Enter your address")
+        form.addWidget(self.address_edit)
+
+        form.addWidget(_field_label("Phone Number:"))
+        self.phone_edit = _text_field("Enter your phone number", max_width=420)
         self.phone_edit.setValidator(QIntValidator(0, 2147483647, self))
         self.phone_edit.setMaxLength(10)
-        phone_layout.addWidget(phone_label)
-        phone_layout.addWidget(self.phone_edit)
-        phone_layout.addStretch()
-        layout.addLayout(phone_layout)
-        layout.addSpacing(8)
-        
-        # Password field with eye toggle
-        password_layout = QHBoxLayout()
-        password_label = QLabel("Password:")
-        password_label.setFixedWidth(100)
-        password_label.setStyleSheet("font-weight: bold; color: #333;")
+        form.addWidget(self.phone_edit)
+
+        def _toggle_visibility(pwd_field, btn):
+            try:
+                if pwd_field.echoMode() == QLineEdit.Password:
+                    pwd_field.setEchoMode(QLineEdit.Normal)
+                    btn.setText("\U0001F512")  # 🔒
+                else:
+                    pwd_field.setEchoMode(QLineEdit.Password)
+                    btn.setText("\U0001F441")  # 👁
+            except Exception:
+                pass
+
+        form.addWidget(_field_label("Password:"))
         self.password_edit = QLineEdit()
         self.password_edit.setPlaceholderText("Enter password")
         self.password_edit.setEchoMode(QLineEdit.Password)
-        self.password_edit.setMaximumWidth(250)
-        password_layout.addWidget(password_label)
-        password_layout.addWidget(self.password_edit)
-        
-        self.password_eye_btn = QPushButton("👁")
-        self.password_eye_btn.setObjectName("eye_btn")
-        self.password_eye_btn.clicked.connect(lambda: self.toggle_password_visibility(self.password_edit, self.password_eye_btn))
-        password_layout.addWidget(self.password_eye_btn)
-        password_layout.addStretch()
-        layout.addLayout(password_layout)
-        layout.addSpacing(8)
-        
-        # Confirm password field with eye toggle
-        confirm_layout = QHBoxLayout()
-        confirm_label = QLabel("Confirm Password:")
-        confirm_label.setFixedWidth(100)
-        confirm_label.setStyleSheet("font-weight: bold; color: #333;")
+        self.password_edit.setMinimumSize(400, 40)
+        self.password_edit.setMaximumWidth(520)
+        pwd_row = QHBoxLayout()
+        pwd_row.setSpacing(12)
+        pwd_row.addWidget(self.password_edit, 1)
+        self.password_eye_btn = QPushButton("\U0001F441")  # 👁
+        self.password_eye_btn.setObjectName("toggleBtn")
+        self.password_eye_btn.setFixedSize(40, 40)
+        self.password_eye_btn.clicked.connect(lambda checked=False: _toggle_visibility(self.password_edit, self.password_eye_btn))
+        pwd_row.addWidget(self.password_eye_btn)
+        form.addLayout(pwd_row)
+
+        form.addWidget(_field_label("Confirm Password:"))
         self.confirm_password_edit = QLineEdit()
         self.confirm_password_edit.setPlaceholderText("Confirm password")
         self.confirm_password_edit.setEchoMode(QLineEdit.Password)
-        self.confirm_password_edit.setMaximumWidth(250)
+        self.confirm_password_edit.setMinimumSize(400, 40)
+        self.confirm_password_edit.setMaximumWidth(520)
         self.confirm_password_edit.returnPressed.connect(self.handle_signup)
-        confirm_layout.addWidget(confirm_label)
-        confirm_layout.addWidget(self.confirm_password_edit)
-        
-        self.confirm_eye_btn = QPushButton("👁")
-        self.confirm_eye_btn.setObjectName("eye_btn")
-        self.confirm_eye_btn.clicked.connect(lambda: self.toggle_password_visibility(self.confirm_password_edit, self.confirm_eye_btn))
-        confirm_layout.addWidget(self.confirm_eye_btn)
-        confirm_layout.addStretch()
-        layout.addLayout(confirm_layout)
-        layout.addSpacing(20)
-        
-        # Sign Up button
+        confirm_row = QHBoxLayout()
+        confirm_row.setSpacing(12)
+        confirm_row.addWidget(self.confirm_password_edit, 1)
+        self.confirm_eye_btn = QPushButton("\U0001F441")  # 👁
+        self.confirm_eye_btn.setObjectName("toggleBtn")
+        self.confirm_eye_btn.setFixedSize(40, 40)
+        self.confirm_eye_btn.clicked.connect(lambda checked=False: _toggle_visibility(self.confirm_password_edit, self.confirm_eye_btn))
+        confirm_row.addWidget(self.confirm_eye_btn)
+        form.addLayout(confirm_row)
+
+        card_layout.addSpacing(6)
         self.signup_btn = QPushButton("Sign Up")
         self.signup_btn.clicked.connect(self.handle_signup)
-        self.signup_btn.setMaximumWidth(400)
-        self.signup_btn.setMinimumHeight(45)
-        layout.addWidget(self.signup_btn)
-        
-        layout.addStretch()
+        self.signup_btn.setMinimumHeight(52)
+        card_layout.addWidget(self.signup_btn)
     
     def toggle_password_visibility(self, password_field, eye_button):
         """Toggle password visibility between hidden and visible"""
         if password_field.echoMode() == QLineEdit.Password:
             password_field.setEchoMode(QLineEdit.Normal)
-            eye_button.setText("🔒")
+            eye_button.setText("\U0001F512")  # 🔒
         else:
             password_field.setEchoMode(QLineEdit.Password)
-            eye_button.setText("👁")
+            eye_button.setText("\U0001F441")  # 👁
     
     def handle_signup(self):
         """Handle the sign-up process"""
@@ -847,139 +885,152 @@ class LoginDialog(QDialog, BaseDialogMixin):
         """Initialize the login dialog UI"""
         self.setWindowTitle("Login")
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
-        self.setMinimumSize(450, 400)
+        self.setFixedSize(620, 560)
         self.setModal(True)
         
-        # Set background gradient similar to sign-up dialog
+        # Match the "User Login" visual style, but keep a black secondary button
         self.setStyleSheet("""
             QDialog {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, 
-                    stop:0 #f8f9fa, stop:1 #e9ecef);
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #161a31, stop:0.55 #1d2444, stop:1 #101427);
             }
             QLabel {
-                color: #333;
-                font-size: 14px;
+                color: #f5f1ea;
+                font-size: 15px;
+                font-weight: 600;
+                background: transparent;
+                border: none;
+            }
+            QLabel#titleLabel {
+                font-size: 30px;
                 font-weight: bold;
+                color: #fff8f2;
+            }
+            QLabel#subtitleLabel {
+                font-size: 15px;
+                font-weight: 600;
+                color: rgba(255,255,255,0.72);
             }
             QLineEdit {
-                background: white;
-                border: 2px solid #dee2e6;
-                border-radius: 8px;
-                padding: 10px 12px;
+                padding: 14px 16px;
+                border: 1px solid rgba(255,255,255,0.14);
+                border-radius: 14px;
                 font-size: 14px;
-                color: #333;
-                min-height: 35px;
+                background: rgba(255,255,255,0.08);
+                color: #fffaf5;
+                min-height: 22px;
             }
             QLineEdit:focus {
-                border-color: #007bff;
+                border: 1px solid #ff8d33;
+                background: rgba(255,255,255,0.12);
+            }
+            QLineEdit::placeholder {
+                color: rgba(255,255,255,0.45);
             }
             QPushButton {
-                background: #007bff;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #ff6a00, stop:1 #ff9533);
+                color: white;
+                border: 1px solid rgba(255,255,255,0.12);
+                border-radius: 14px;
+                padding: 12px;
+                font-size: 15px;
+                font-weight: bold;
+                min-height: 18px;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #ff7b14, stop:1 #ffa347);
+            }
+            QPushButton#toggleBtn {
+                background: #6c757d;
                 color: white;
                 border: none;
                 border-radius: 8px;
-                padding: 12px;
-                font-size: 16px;
+                font-size: 15px;
                 font-weight: bold;
+                padding: 0px;
             }
-            QPushButton:hover {
-                background: #0056b3;
-            }
-            QPushButton#eye_btn {
-                background: #6c757d;
-                border: none;
-                border-radius: 4px;
-                padding: 4px;
-                font-size: 12px;
-                min-width: 30px;
-                min-height: 30px;
-            }
-            QPushButton#eye_btn:hover {
+            QPushButton#toggleBtn:hover {
                 background: #5a6268;
             }
+            QPushButton#phoneLoginBtn {
+                background: rgba(0,0,0,0.40);
+                color: #ffffff;
+                border: 1px solid rgba(255,255,255,0.12);
+            }
+            QPushButton#phoneLoginBtn:hover {
+                background: rgba(0,0,0,0.55);
+            }
+            QFrame#headLoginCard {
+                background: rgba(12,16,30,0.62);
+                border: 1px solid rgba(255,255,255,0.10);
+                border-radius: 24px;
+            }
         """)
-        
-        layout = QVBoxLayout(self)
-        layout.setSpacing(20)
-        layout.setContentsMargins(40, 50, 40, 40)
-        
-        # Title
+
+        outer = QVBoxLayout(self)
+        outer.setSpacing(0)
+        outer.setContentsMargins(24, 24, 24, 24)
+
+        card = QFrame()
+        card.setObjectName("headLoginCard")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(32, 30, 32, 28)
+        card_layout.setSpacing(12)
+        outer.addWidget(card)
+
         title = QLabel("Login to Account")
         title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet("font-size: 24px; color: #007bff; margin-bottom: 20px;")
-        layout.addWidget(title)
-        
-        # Subtitle with role and organization
+        title.setObjectName("titleLabel")
+        card_layout.addWidget(title)
+
         subtitle = QLabel(f"{self.role} - {self.organization}")
         subtitle.setAlignment(Qt.AlignCenter)
-        subtitle.setStyleSheet("font-size: 14px; color: #6c757d; margin-bottom: 20px;")
-        layout.addWidget(subtitle)
-        
-        # Full Name field
-        full_name_layout = QHBoxLayout()
+        subtitle.setObjectName("subtitleLabel")
+        card_layout.addWidget(subtitle)
+
         full_name_label = QLabel("Full Name:")
-        full_name_label.setFixedWidth(100)
-        full_name_label.setStyleSheet("font-weight: bold; color: #333;")
+        full_name_label.setObjectName("fieldLabel")
+        card_layout.addWidget(full_name_label)
+
         self.full_name_edit = QLineEdit()
         self.full_name_edit.setPlaceholderText("Enter your full name")
-        self.full_name_edit.setMaximumWidth(300)
         self.full_name_edit.returnPressed.connect(self.handle_login)
-        full_name_layout.addWidget(full_name_label)
-        full_name_layout.addWidget(self.full_name_edit)
-        full_name_layout.addStretch()
-        layout.addLayout(full_name_layout)
-        layout.addSpacing(8)
-        
-        # Password field with eye toggle
-        password_layout = QHBoxLayout()
+        card_layout.addWidget(self.full_name_edit)
+
         password_label = QLabel("Password:")
-        password_label.setFixedWidth(100)
-        password_label.setStyleSheet("font-weight: bold; color: #333;")
+        password_label.setObjectName("fieldLabel")
+        card_layout.addWidget(password_label)
+
         self.password_edit = QLineEdit()
         self.password_edit.setPlaceholderText("Enter your password")
         self.password_edit.setEchoMode(QLineEdit.Password)
-        self.password_edit.setMaximumWidth(250)
         self.password_edit.returnPressed.connect(self.handle_login)
-        password_layout.addWidget(password_label)
-        password_layout.addWidget(self.password_edit)
-        
-        self.password_eye_btn = QPushButton("👁")
-        self.password_eye_btn.setObjectName("eye_btn")
-        self.password_eye_btn.clicked.connect(lambda: self.toggle_password_visibility(self.password_edit, self.password_eye_btn))
-        password_layout.addWidget(self.password_eye_btn)
-        password_layout.addStretch()
-        layout.addLayout(password_layout)
-        layout.addSpacing(20)
-        
-        # Login button
+
+        password_row = QHBoxLayout()
+        password_row.setSpacing(12)
+        password_row.addWidget(self.password_edit, 1)
+        self.password_eye_btn = QPushButton("\U0001F441")  # 👁
+        self.password_eye_btn.setObjectName("toggleBtn")
+        self.password_eye_btn.setFixedSize(40, 40)
+        self.password_eye_btn.clicked.connect(lambda checked=False: self.toggle_password_visibility(self.password_edit, self.password_eye_btn))
+        password_row.addWidget(self.password_eye_btn)
+        card_layout.addLayout(password_row)
+
+        card_layout.addSpacing(8)
         self.login_btn = QPushButton("Login")
         self.login_btn.clicked.connect(self.handle_login)
-        self.login_btn.setMaximumWidth(400)
-        self.login_btn.setMinimumHeight(45)
-        layout.addWidget(self.login_btn)
-        
-        # Phone login button
+        self.login_btn.setMinimumHeight(52)
+        card_layout.addWidget(self.login_btn)
+
         self.phone_login_btn = QPushButton("Login with Phone Number")
+        self.phone_login_btn.setObjectName("phoneLoginBtn")
         self.phone_login_btn.clicked.connect(self.handle_phone_login)
-        self.phone_login_btn.setMaximumWidth(400)
-        self.phone_login_btn.setMinimumHeight(40)
-        self.phone_login_btn.setStyleSheet("""
-            QPushButton {
-                background: #6c757d;
-                color: white;
-                border: none;
-                border-radius: 8px;
-                padding: 10px;
-                font-size: 14px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background: #5a6268;
-            }
-        """)
-        layout.addWidget(self.phone_login_btn)
-        
-        layout.addStretch()
+        self.phone_login_btn.setMinimumHeight(52)
+        card_layout.addWidget(self.phone_login_btn)
+
+        card_layout.addStretch()
     
     def toggle_password_visibility(self, password_field, eye_button):
         """Toggle password visibility between hidden and visible"""
@@ -990,6 +1041,20 @@ class LoginDialog(QDialog, BaseDialogMixin):
             password_field.setEchoMode(QLineEdit.Password)
             eye_button.setText("👁")
     
+        try:
+            if password_field.echoMode() == QLineEdit.Normal:
+                eye_button.setText("\U0001F512")  # 🔒
+            else:
+                eye_button.setText("\U0001F441")  # 👁
+        except Exception:
+            pass
+
+        # Final correction for mojibake icons
+        if password_field.echoMode() == QLineEdit.Normal:
+            eye_button.setText("\U0001F512")  # 🔒
+        else:
+            eye_button.setText("\U0001F441")  # 👁
+
     def handle_login(self):
         """Handle the login process"""
         full_name = self.full_name_edit.text().strip()
@@ -1407,7 +1472,7 @@ class DashboardWindow(QDialog):
         layout.addLayout(main_content)
         
         # Footer
-        footer_label = QLabel("© 2024 CardioX by Deckmount. All rights reserved.")
+        footer_label = QLabel("© 2026 CardioX by Deckmount. All rights reserved.")
         footer_label.setAlignment(Qt.AlignCenter)
         footer_label.setStyleSheet("color: #666; font-size: 12px; margin-top: 20px;")
         layout.addWidget(footer_label)
@@ -1925,7 +1990,18 @@ class DashboardWindow(QDialog):
     def edit_created_user_details(self, user_data):
         """Edit and update an existing created sub-user across storage."""
         try:
-            from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton
+            from PyQt5.QtWidgets import (
+                QDialog,
+                QVBoxLayout,
+                QHBoxLayout,
+                QGridLayout,
+                QLabel,
+                QLineEdit,
+                QPushButton,
+                QFrame,
+                QScrollArea,
+                QWidget,
+            )
             from PyQt5.QtGui import QIntValidator
 
             original_username = user_data.get("username") or user_data.get("phone") or ""
@@ -1936,65 +2012,142 @@ class DashboardWindow(QDialog):
             dialog = QDialog(self)
             dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint)
             dialog.setWindowTitle("Edit User")
-            dialog.setMinimumSize(700, 750)
+            dialog.setMinimumSize(760, 780)
             dialog.setModal(True)
             dialog.setStyleSheet("""
                 QDialog {
                     background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                        stop:0 #f8f9fa, stop:1 #e9ecef);
+                        stop:0 #161a31, stop:0.55 #1d2444, stop:1 #101427);
                 }
                 QLabel {
-                    color: #333;
-                    font-size: 13px;
+                    color: #f5f1ea;
+                    font-size: 15px;
+                    font-weight: 600;
+                    background: transparent;
+                    border: none;
+                }
+                QLabel#titleLabel {
+                    font-size: 30px;
                     font-weight: bold;
+                    color: #fff8f2;
+                }
+                QLabel#subtitleLabel {
+                    font-size: 15px;
+                    font-weight: 600;
+                    color: rgba(255,255,255,0.70);
+                }
+                QLabel#fieldLabel {
+                    font-size: 14px;
+                    font-weight: 700;
+                    color: #fff0e6;
                 }
                 QLineEdit {
-                    background: white;
-                    border: 2px solid #dee2e6;
-                    border-radius: 8px;
-                    padding: 10px 12px;
-                    font-size: 13px;
-                    color: #333;
-                    min-height: 34px;
+                    padding: 14px 16px;
+                    border: 1px solid rgba(255,255,255,0.14);
+                    border-radius: 14px;
+                    font-size: 14px;
+                    background: rgba(255,255,255,0.08);
+                    color: #fffaf5;
+                    min-height: 22px;
                 }
                 QLineEdit:focus {
-                    border-color: #007bff;
+                    border: 1px solid #ff8d33;
+                    background: rgba(255,255,255,0.12);
+                }
+                QLineEdit::placeholder {
+                    color: rgba(255,255,255,0.45);
+                }
+                QFrame#editCard {
+                    background: rgba(12,16,30,0.62);
+                    border: 1px solid rgba(255,255,255,0.10);
+                    border-radius: 24px;
                 }
                 QPushButton {
-                    background: #007bff;
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                        stop:0 #ff6a00, stop:1 #ff9533);
+                    color: white;
+                    border: 1px solid rgba(255,255,255,0.12);
+                    border-radius: 14px;
+                    padding: 12px;
+                    font-size: 15px;
+                    font-weight: bold;
+                    min-height: 18px;
+                }
+                QPushButton:hover {
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                        stop:0 #ff7b14, stop:1 #ffa347);
+                }
+                QPushButton#saveBtn { }
+                QPushButton#cancelBtn {
+                    background: rgba(255,255,255,0.10);
+                    color: #fff7ef;
+                    border: 1px solid rgba(255,255,255,0.12);
+                }
+                QPushButton#cancelBtn:hover {
+                    background: rgba(255,255,255,0.16);
+                }
+                QPushButton#toggleBtn {
+                    background: #6c757d;
                     color: white;
                     border: none;
                     border-radius: 8px;
-                    padding: 10px 14px;
-                    font-size: 14px;
+                    font-size: 15px;
                     font-weight: bold;
-                    min-height: 38px;
-                    min-width: 120px;
+                    padding: 0px;
                 }
-                QPushButton:hover {
-                    background: #0056b3;
-                }
-                QPushButton#cancel_btn {
-                    background: #6c757d;
-                }
-                QPushButton#cancel_btn:hover {
+                QPushButton#toggleBtn:hover {
                     background: #5a6268;
+                }
+                QScrollArea {
+                    background: transparent;
+                    border: none;
+                }
+                QScrollBar:vertical {
+                    border: none;
+                    background: transparent;
+                    width: 10px;
+                    margin: 8px 4px 8px 4px;
+                }
+                QScrollBar::handle:vertical {
+                    background: rgba(255,255,255,0.20);
+                    min-height: 40px;
+                    border-radius: 5px;
+                }
+                QScrollBar::handle:vertical:hover {
+                    background: rgba(255,255,255,0.28);
+                }
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                    height: 0px;
+                }
+                QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+                    background: transparent;
                 }
             """)
 
             outer = QVBoxLayout(dialog)
-            outer.setContentsMargins(40, 40, 40, 40)
-            outer.setSpacing(15)
+            outer.setContentsMargins(26, 26, 26, 26)
+            outer.setSpacing(14)
+
+            card = QFrame()
+            card.setObjectName("editCard")
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(34, 28, 34, 24)
+            card_layout.setSpacing(12)
+            outer.addWidget(card)
 
             header = QLabel(f"Edit {user_data.get('role', 'User')}")
+            header.setObjectName("titleLabel")
             header.setAlignment(Qt.AlignCenter)
-            header.setStyleSheet("font-size: 24px; color: #007bff; margin-bottom: 20px;")
-            outer.addWidget(header)
+
+            card_layout.addWidget(header)
 
             info = QLabel(f"{user_data.get('role', '')} • {user_data.get('organization', '')}")
+            info.setObjectName("subtitleLabel")
             info.setAlignment(Qt.AlignCenter)
-            info.setStyleSheet("font-size: 12px; color: #6c757d; font-weight: 600;")
-            outer.addWidget(info)
+
+            card_layout.addWidget(info)
+
+            card_layout.addSpacing(4)
 
             fields = [
                 ("Full Name", "full_name"),
@@ -2015,45 +2168,53 @@ class DashboardWindow(QDialog):
                     password_field.setEchoMode(QLineEdit.Password)
                     eye_button.setText("👁")
 
+            placeholders = {
+                "full_name": "Enter full name",
+                "age": "Enter age",
+                "gender": "M / F / O",
+                "address": "Enter address",
+                "phone": "10-digit phone number",
+                "email": "name@example.com",
+                "password": "Enter password",
+                "confirm_password": "Re-enter password",
+            }
+
+            def toggle_visibility_icon(password_field, eye_button):
+                if password_field.echoMode() == QLineEdit.Password:
+                    password_field.setEchoMode(QLineEdit.Normal)
+                    eye_button.setText("\U0001F512")  # 🔒
+                else:
+                    password_field.setEchoMode(QLineEdit.Password)
+                    eye_button.setText("\U0001F441")  # 👁
+
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            try:
+                scroll.setFrameShape(QFrame.NoFrame)
+                scroll.viewport().setStyleSheet("background: transparent;")
+            except Exception:
+                pass
+
+            form_body = QWidget()
+            form_body.setStyleSheet("background: transparent;")
+            form_layout = QVBoxLayout(form_body)
+            form_layout.setContentsMargins(0, 10, 0, 0)
+            form_layout.setSpacing(12)
+            scroll.setWidget(form_body)
+            card_layout.addWidget(scroll, 1)
+
             widgets = {}
             for label_text, key in fields:
-                row = QHBoxLayout()
-                row.setSpacing(12)
-
                 label = QLabel(f"{label_text}:")
-                label.setFixedWidth(120)
+                label.setObjectName("fieldLabel")
+                form_layout.addWidget(label)
 
                 edit = QLineEdit()
-                edit.setMaximumWidth(250)
                 edit.setText(str(user_data.get(key, "")) if user_data.get(key, "") is not None else "")
-
-                if key in ["password", "confirm_password"]:
-                    edit.setEchoMode(QLineEdit.Password)
-                    edit.returnPressed.connect(dialog.accept)
-
-                    toggle_btn = QPushButton("👁")
-                    toggle_btn.setFixedSize(36, 36)
-                    toggle_btn.setStyleSheet("""
-                        QPushButton {
-                            background: #6c757d;
-                            color: white;
-                            border: none;
-                            border-radius: 8px;
-                            min-width: 36px;
-                            max-width: 36px;
-                            min-height: 36px;
-                            max-height: 36px;
-                            font-size: 15px;
-                            font-weight: bold;
-                            padding: 0px;
-                        }
-                        QPushButton:hover {
-                            background: #5a6268;
-                        }
-                    """)
-                    toggle_btn.clicked.connect(lambda checked=False, pwd_field=edit, btn=toggle_btn: toggle_visibility(pwd_field, btn))
-                else:
-                    toggle_btn = None
+                edit.setMinimumSize(400, 40)
+                edit.setMaximumWidth(560)
+                if key in placeholders:
+                    edit.setPlaceholderText(placeholders[key])
 
                 if key == "phone":
                     edit.setValidator(QIntValidator(0, 2147483647, dialog))
@@ -2063,17 +2224,27 @@ class DashboardWindow(QDialog):
                     edit.setValidator(QIntValidator(0, 150, dialog))
                     edit.setMaxLength(3)
 
-                if key == "confirm_password":
+                if key in ["password", "confirm_password"]:
+                    edit.setEchoMode(QLineEdit.Password)
                     edit.returnPressed.connect(dialog.accept)
+                    pwd_row = QHBoxLayout()
+                    pwd_row.setSpacing(12)
+                    pwd_row.addWidget(edit, 1)
+                    toggle_btn = QPushButton("👁")
+                    toggle_btn.setObjectName("toggleBtn")
+                    toggle_btn.setFixedSize(40, 40)
+                    toggle_btn.setText("\U0001F441")  # 👁
+                    toggle_btn.clicked.connect(
+                        lambda checked=False, pwd_field=edit, btn=toggle_btn: toggle_visibility_icon(pwd_field, btn)
+                    )
+                    pwd_row.addWidget(toggle_btn)
+                    form_layout.addLayout(pwd_row)
+                else:
+                    edit.setClearButtonEnabled(True)
+                    form_layout.addWidget(edit)
 
                 widgets[key] = edit
-                row.addWidget(label)
-                row.addWidget(edit)
-                if toggle_btn is not None:
-                    row.addWidget(toggle_btn)
-                row.addStretch()
-                outer.addLayout(row)
-                outer.addSpacing(8)
+                form_layout.addSpacing(6)
 
             if widgets.get("confirm_password") and widgets.get("password"):
                 widgets["confirm_password"].setText(widgets["password"].text())
@@ -2081,41 +2252,15 @@ class DashboardWindow(QDialog):
             button_row = QHBoxLayout()
             button_row.setSpacing(12)
             save_btn = QPushButton("Save Changes")
-            save_btn.setStyleSheet("""
-                QPushButton {
-                    background: #28a745;
-                    color: white;
-                    border: none;
-                    border-radius: 8px;
-                    padding: 12px;
-                    font-size: 16px;
-                    font-weight: bold;
-                }
-                QPushButton:hover {
-                    background: #218838;
-                }
-            """)
+            save_btn.setObjectName("saveBtn")
             cancel_btn = QPushButton("Cancel")
-            cancel_btn.setStyleSheet("""
-                QPushButton {
-                    background: #6c757d;
-                    color: white;
-                    border: none;
-                    border-radius: 8px;
-                    padding: 12px;
-                    font-size: 16px;
-                    font-weight: bold;
-                }
-                QPushButton:hover {
-                    background: #5a6268;
-                }
-            """)
+            cancel_btn.setObjectName("cancelBtn")
             save_btn.clicked.connect(dialog.accept)
             cancel_btn.clicked.connect(dialog.reject)
             button_row.addWidget(save_btn)
             button_row.addWidget(cancel_btn)
-            outer.addSpacing(12)
-            outer.addLayout(button_row)
+            card_layout.addSpacing(8)
+            card_layout.addLayout(button_row)
 
             if dialog.exec_() != QDialog.Accepted:
                 return False
@@ -2478,6 +2623,9 @@ class UserLoginDialog(QDialog):
         super().__init__(parent)
         self.user_data = user_data
         self.init_ui()
+
+    def _clear_suppress_empty_warning(self, *_args):
+        self._suppress_empty_credentials_warning = False
     
     def keyPressEvent(self, event):
         """Handle key press events to prevent Enter key from closing dialog"""
@@ -2589,6 +2737,8 @@ class UserLoginDialog(QDialog):
         self.name_input.setPlaceholderText("Enter your full name")
         self.name_input.setMinimumSize(400, 40)
         self.name_input.returnPressed.connect(self.validate_login)
+        self._suppress_empty_credentials_warning = False
+        self.name_input.textChanged.connect(self._clear_suppress_empty_warning)
         card_layout.addWidget(self.name_input)
         
         # Password input
@@ -2601,6 +2751,7 @@ class UserLoginDialog(QDialog):
         self.password_input.setPlaceholderText("Enter your password")
         self.password_input.setMinimumSize(400, 40)
         self.password_input.returnPressed.connect(self.validate_login)
+        self.password_input.textChanged.connect(self._clear_suppress_empty_warning)
         password_row = QHBoxLayout()
         password_row.setSpacing(12)
         password_row.addWidget(self.password_input)
@@ -2666,6 +2817,9 @@ class UserLoginDialog(QDialog):
         entered_password = self.password_input.text().strip()
         
         if not entered_name or not entered_password:
+            if getattr(self, "_suppress_empty_credentials_warning", False):
+                self._suppress_empty_credentials_warning = False
+                return
             QMessageBox.warning(self, "Error", "Please enter both full name and password.")
             return
         
@@ -2677,7 +2831,10 @@ class UserLoginDialog(QDialog):
             self.accept()  # Login successful
         else:
             QMessageBox.warning(self, "Login Failed", "Invalid full name or password. Please try again.")
+            self._suppress_empty_credentials_warning = True
+            self.password_input.blockSignals(True)
             self.password_input.clear()
+            self.password_input.blockSignals(False)
             self.password_input.setFocus()
     
     def get_user_count(self):
@@ -3329,115 +3486,133 @@ class AddUsersDialog(QDialog):
         """Initialize the add users dialog UI"""
         self.setWindowTitle("Add Users")
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
-        self.setMinimumSize(700, 600)  # Made dialog bigger
+        self.setFixedSize(760, 520)
         self.setModal(True)
         
-        # Set background gradient
         self.setStyleSheet("""
             QDialog {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, 
-                    stop:0 #f8f9fa, stop:1 #e9ecef);
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #161a31, stop:0.55 #1d2444, stop:1 #101427);
             }
             QLabel {
-                color: #333;
-                font-size: 14px;
+                color: #f5f1ea;
+                font-size: 15px;
+                font-weight: 600;
+                background: transparent;
+                border: none;
+            }
+            QLabel#titleLabel {
+                font-size: 30px;
                 font-weight: bold;
+                color: #fff8f2;
+            }
+            QLabel#subtitleLabel {
+                font-size: 15px;
+                font-weight: 600;
+                color: rgba(255,255,255,0.72);
+            }
+            QLabel#sectionLabel {
+                font-size: 15px;
+                font-weight: 700;
+                color: #fff0e6;
             }
             QPushButton {
-                background: #007bff;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #ff6a00, stop:1 #ff9533);
                 color: white;
-                border: none;
-                border-radius: 8px;
+                border: 1px solid rgba(255,255,255,0.12);
+                border-radius: 14px;
                 padding: 12px;
-                font-size: 16px;
+                font-size: 15px;
                 font-weight: bold;
+                min-height: 18px;
             }
             QPushButton:hover {
-                background: #0056b3;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #ff7b14, stop:1 #ffa347);
             }
-            QPushButton#add_btn {
-                background: #28a745;
+            QFrame#addUsersCard {
+                background: rgba(12,16,30,0.62);
+                border: 1px solid rgba(255,255,255,0.10);
+                border-radius: 24px;
             }
-            QPushButton#add_btn:hover {
-                background: #218838;
+            QFrame#dividerLine {
+                background: rgba(255,255,255,0.10);
             }
         """)
         
-        layout = QVBoxLayout(self)
-        layout.setSpacing(20)
-        layout.setContentsMargins(40, 40, 40, 40)
+        outer = QVBoxLayout(self)
+        outer.setSpacing(0)
+        outer.setContentsMargins(24, 24, 24, 24)
+
+        card = QFrame()
+        card.setObjectName("addUsersCard")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(32, 30, 32, 28)
+        card_layout.setSpacing(12)
+        outer.addWidget(card)
         
         # Title
         title = QLabel(f"Add Users - {self.current_role}")
         title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet("font-size: 24px; color: #007bff; margin-bottom: 20px;")
-        layout.addWidget(title)
+        title.setObjectName("titleLabel")
+        card_layout.addWidget(title)
+
+        subtitle = QLabel("Select user type to add:")
+        subtitle.setAlignment(Qt.AlignCenter)
+        subtitle.setObjectName("subtitleLabel")
+        card_layout.addWidget(subtitle)
+
+        divider = QFrame()
+        divider.setObjectName("dividerLine")
+        divider.setFixedHeight(1)
+        card_layout.addWidget(divider)
+
+        def _mk_role_btn(text, role):
+            btn = QPushButton(text)
+            btn.setMinimumHeight(52)
+            btn.setMinimumWidth(280)
+            btn.clicked.connect(lambda checked=False, r=role: self.show_user_form(r))
+            return btn
         
         # Role selection based on current user
         if self.current_role == "Doctor Head":
-            # Doctor Head can add Clinical Users (Sr. Clinical Doctor, Jr. Clinical Doctor)
-            subtitle = QLabel("Select user type to add:")
-            subtitle.setStyleSheet("font-size: 16px; margin-bottom: 15px;")
-            layout.addWidget(subtitle)
-            
             # Clinical User buttons
             clinical_layout = QHBoxLayout()
-            
-            sr_clinical_btn = QPushButton("Add Sr. Clinical Doctor")
-            sr_clinical_btn.setObjectName("add_btn")
-            sr_clinical_btn.clicked.connect(lambda: self.show_user_form("Sr. Clinical Doctor"))
-            clinical_layout.addWidget(sr_clinical_btn)
-            
-            jr_clinical_btn = QPushButton("Add Jr. Clinical Doctor")
-            jr_clinical_btn.setObjectName("add_btn")
-            jr_clinical_btn.clicked.connect(lambda: self.show_user_form("Jr. Clinical Doctor"))
-            clinical_layout.addWidget(jr_clinical_btn)
-            
-            layout.addLayout(clinical_layout)
+            clinical_layout.setSpacing(16)
+            clinical_layout.addStretch()
+            clinical_layout.addWidget(_mk_role_btn("Add Sr. Clinical Doctor", "Sr. Clinical Doctor"))
+            clinical_layout.addWidget(_mk_role_btn("Add Jr. Clinical Doctor", "Jr. Clinical Doctor"))
+            clinical_layout.addStretch()
+            card_layout.addLayout(clinical_layout)
             
         elif self.current_role == "HCP Head":
-            # HCP Head can add Admin Users (Sr. Admin, Jr. Admin) and Sub Dealer roles
-            subtitle = QLabel("Select user type to add:")
-            subtitle.setStyleSheet("font-size: 16px; margin-bottom: 15px;")
-            layout.addWidget(subtitle)
-            
             # Admin User buttons
             admin_layout = QHBoxLayout()
-            
-            sr_admin_btn = QPushButton("Add Sr. Admin")
-            sr_admin_btn.setObjectName("add_btn")
-            sr_admin_btn.clicked.connect(lambda: self.show_user_form("Sr. Admin"))
-            admin_layout.addWidget(sr_admin_btn)
-            
-            jr_admin_btn = QPushButton("Add Jr. Admin")
-            jr_admin_btn.setObjectName("add_btn")
-            jr_admin_btn.clicked.connect(lambda: self.show_user_form("Jr. Admin"))
-            admin_layout.addWidget(jr_admin_btn)
-            
-            layout.addLayout(admin_layout)
-            
-            layout.addSpacing(20)
+            admin_layout.setSpacing(16)
+            admin_layout.addStretch()
+            admin_layout.addWidget(_mk_role_btn("Add Sr. Admin", "Sr. Admin"))
+            admin_layout.addWidget(_mk_role_btn("Add Jr. Admin", "Jr. Admin"))
+            admin_layout.addStretch()
+            card_layout.addLayout(admin_layout)
+
+            card_layout.addSpacing(18)
             
             # Sub Dealer buttons
             subtitle2 = QLabel("Or add Sub Dealer roles:")
-            subtitle2.setStyleSheet("font-size: 16px; margin-bottom: 15px;")
-            layout.addWidget(subtitle2)
-            
+            subtitle2.setAlignment(Qt.AlignCenter)
+            subtitle2.setObjectName("subtitleLabel")
+            card_layout.addWidget(subtitle2)
+
             sub_dealer_layout = QHBoxLayout()
-            
-            employee_btn = QPushButton("Add Employee")
-            employee_btn.setObjectName("add_btn")
-            employee_btn.clicked.connect(lambda: self.show_user_form("Employee"))
-            sub_dealer_layout.addWidget(employee_btn)
-            
-            receptionist_btn = QPushButton("Add Receptionist")
-            receptionist_btn.setObjectName("add_btn")
-            receptionist_btn.clicked.connect(lambda: self.show_user_form("Receptionist"))
-            sub_dealer_layout.addWidget(receptionist_btn)
-            
-            layout.addLayout(sub_dealer_layout)
-        
-        layout.addStretch()
+            sub_dealer_layout.setSpacing(16)
+            sub_dealer_layout.addStretch()
+            sub_dealer_layout.addWidget(_mk_role_btn("Add Employee", "Employee"))
+            sub_dealer_layout.addWidget(_mk_role_btn("Add Receptionist", "Receptionist"))
+            sub_dealer_layout.addStretch()
+            card_layout.addLayout(sub_dealer_layout)
+
+        card_layout.addStretch()
     
     def show_user_form(self, user_role):
         """Show user creation form for the selected role"""
@@ -3481,61 +3656,148 @@ class UserCreationDialog(QDialog):
         """Initialize the user creation dialog UI"""
         self.setWindowTitle(f"Create {self.user_role}")
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
-        self.setMinimumSize(700, 750)  # Made dialog bigger
+        self.setFixedSize(760, 780)
         self.setModal(True)
         
-        # Set background gradient
         self.setStyleSheet("""
             QDialog {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, 
-                    stop:0 #f8f9fa, stop:1 #e9ecef);
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #161a31, stop:0.55 #1d2444, stop:1 #101427);
             }
             QLabel {
-                color: #333;
-                font-size: 14px;
+                color: #f5f1ea;
+                font-size: 15px;
+                font-weight: 600;
+                background: transparent;
+                border: none;
+            }
+            QLabel#titleLabel {
+                font-size: 30px;
                 font-weight: bold;
+                color: #fff8f2;
+            }
+            QLabel#subtitleLabel {
+                font-size: 15px;
+                font-weight: 600;
+                color: rgba(255,255,255,0.72);
+            }
+            QLabel#fieldLabel {
+                font-size: 15px;
+                font-weight: 700;
+                color: #fff0e6;
             }
             QLineEdit {
-                background: white;
-                border: 2px solid #dee2e6;
-                border-radius: 8px;
-                padding: 10px 12px;
+                padding: 14px 16px;
+                border: 1px solid rgba(255,255,255,0.14);
+                border-radius: 14px;
                 font-size: 14px;
-                color: #333;
-                min-height: 35px;
+                background: rgba(255,255,255,0.08);
+                color: #fffaf5;
+                min-height: 22px;
             }
             QLineEdit:focus {
-                border-color: #007bff;
+                border: 1px solid #ff8d33;
+                background: rgba(255,255,255,0.12);
+            }
+            QLineEdit::placeholder {
+                color: rgba(255,255,255,0.45);
             }
             QPushButton {
-                background: #007bff;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #ff6a00, stop:1 #ff9533);
+                color: white;
+                border: 1px solid rgba(255,255,255,0.12);
+                border-radius: 14px;
+                padding: 12px;
+                font-size: 15px;
+                font-weight: bold;
+                min-height: 18px;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #ff7b14, stop:1 #ffa347);
+            }
+            QPushButton#toggleBtn {
+                background: #6c757d;
                 color: white;
                 border: none;
                 border-radius: 8px;
-                padding: 12px;
-                font-size: 16px;
+                font-size: 15px;
                 font-weight: bold;
+                padding: 0px;
             }
-            QPushButton:hover {
-                background: #0056b3;
+            QPushButton#toggleBtn:hover {
+                background: #5a6268;
             }
-            QPushButton#create_btn {
-                background: #28a745;
+            QPushButton#linkBtn {
+                background: transparent;
+                color: #ff8d33;
+                border: none;
+                text-decoration: underline;
+                font-size: 12px;
+                padding: 6px;
+                min-height: 0px;
             }
-            QPushButton#create_btn:hover {
-                background: #218838;
+            QPushButton#linkBtn:hover {
+                color: #ffa347;
+                background: rgba(255, 141, 51, 0.12);
+            }
+            QFrame#formCard {
+                background: rgba(12,16,30,0.62);
+                border: 1px solid rgba(255,255,255,0.10);
+                border-radius: 24px;
+            }
+            QScrollArea {
+                background: transparent;
+                border: none;
+            }
+            QScrollBar:vertical {
+                border: none;
+                background: transparent;
+                width: 10px;
+                margin: 8px 4px 8px 4px;
+            }
+            QScrollBar::handle:vertical {
+                background: rgba(255,255,255,0.20);
+                min-height: 40px;
+                border-radius: 5px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: rgba(255,255,255,0.28);
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+                background: transparent;
             }
         """)
         
-        layout = QVBoxLayout(self)
-        layout.setSpacing(15)
-        layout.setContentsMargins(40, 40, 40, 40)
+        outer = QVBoxLayout(self)
+        outer.setSpacing(0)
+        outer.setContentsMargins(24, 24, 24, 24)
+
+        card = QFrame()
+        card.setObjectName("formCard")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(32, 30, 32, 28)
+        card_layout.setSpacing(12)
+        outer.addWidget(card)
         
         # Title
         title = QLabel(f"Create {self.user_role}")
         title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet("font-size: 24px; color: #007bff; margin-bottom: 20px;")
-        layout.addWidget(title)
+        title.setObjectName("titleLabel")
+        card_layout.addWidget(title)
+
+        subtitle = QLabel("Fill in the details to create a new user")
+        subtitle.setAlignment(Qt.AlignCenter)
+        subtitle.setObjectName("subtitleLabel")
+        card_layout.addWidget(subtitle)
+
+        # Keep legacy code below working without changing logic flow:
+        # use `layout` as an alias to the card layout.
+        layout = card_layout
         
         # Form fields
         fields = [
@@ -3550,40 +3812,42 @@ class UserCreationDialog(QDialog):
         ]
         
         self.field_widgets = {}
+
+        def _toggle_visibility(pwd_field, btn):
+            try:
+                if pwd_field.echoMode() == QLineEdit.Password:
+                    pwd_field.setEchoMode(QLineEdit.Normal)
+                    btn.setText("\U0001F512")  # 🔒
+                else:
+                    pwd_field.setEchoMode(QLineEdit.Password)
+                    btn.setText("\U0001F441")  # 👁
+            except Exception:
+                pass
         
         for label_text, field_name, placeholder in fields:
             field_layout = QHBoxLayout()
             label = QLabel(label_text)
-            label.setFixedWidth(120)
-            label.setStyleSheet("font-weight: bold; color: #333;")
+            label.setObjectName("fieldLabel")
+            label.setFixedWidth(170)
             
             if field_name in ['password', 'confirm_password']:
                 field = QLineEdit()
                 field.setPlaceholderText(placeholder)
                 field.setEchoMode(QLineEdit.Password)
-                field.setMaximumWidth(250)  # Made input box smaller
+                field.setMinimumSize(400, 40)
+                field.setMaximumWidth(560)
                 field.returnPressed.connect(self.handle_create_user)
                 toggle_btn = QPushButton("👁")
                 toggle_btn.setFixedSize(40, 40)
-                toggle_btn.setStyleSheet("""
-                    QPushButton {
-                        background: #6c757d;
-                        color: white;
-                        border: none;
-                        border-radius: 8px;
-                        font-size: 15px;
-                        font-weight: bold;
-                        padding: 0px;
-                    }
-                    QPushButton:hover {
-                        background: #5a6268;
-                    }
-                """)
-                toggle_btn.clicked.connect(lambda checked, pwd_field=field, btn=toggle_btn: self.toggle_password_visibility(pwd_field, btn))
+                toggle_btn.setObjectName("toggleBtn")
+                toggle_btn.setText("\U0001F441")  # 👁
+                toggle_btn.clicked.connect(lambda checked=False, pwd_field=field, btn=toggle_btn: _toggle_visibility(pwd_field, btn))
             else:
                 field = QLineEdit()
                 field.setPlaceholderText(placeholder)
-                field.setMaximumWidth(250)  # Made input box smaller
+                field.setMinimumSize(400, 40)
+                field.setMaximumWidth(560)
+                field.setClearButtonEnabled(True)
                 if field_name == 'confirm_password':
                     field.returnPressed.connect(self.handle_create_user)
                 if field_name == 'phone':
@@ -3617,22 +3881,9 @@ class UserCreationDialog(QDialog):
 
         if creator_role not in ["Doctor Head", "HCP Head"]:
             existing_user_link = QPushButton("Existing User")
-            existing_user_link.setStyleSheet("""
-                QPushButton {
-                    background: transparent;
-                    color: #007bff;
-                    border: none;
-                    text-decoration: underline;
-                    font-size: 12px;
-                    padding: 5px;
-                }
-                QPushButton:hover {
-                    color: #0056b3;
-                    background: rgba(0, 123, 255, 0.1);
-                }
-            """)
+            existing_user_link.setObjectName("linkBtn")
             existing_user_link.clicked.connect(self.handle_existing_user)
-            layout.addWidget(existing_user_link)
+            layout.addWidget(existing_user_link, 0, Qt.AlignHCenter)
         
         layout.addStretch()
 

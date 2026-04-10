@@ -2318,13 +2318,16 @@ class ECGAnalysisWindow(QDialog):
 
             try:
                 from dashboard.history_window import append_history_entry
+                _p = self.parent()
+                _uname = getattr(_p, "username", "") if _p is not None else ""
+                _full = (getattr(_p, "user_details", {}) or {}).get("full_name") or _uname
                 append_history_entry({
                     "patient_name": pat.get('name','Unknown'),
                     "age": str(pat.get('age','')),
                     "gender": pat.get('gender',''),
                     "doctor": pat.get('doctor',''),
                     "Org.": pat.get('Org.',''),
-                }, path, report_type="Analysis")
+                }, path, report_type="Analysis", username=_uname, owner_full_name=_full)
             except Exception as h_err:
                 print(f"History append failed: {h_err}")
 
