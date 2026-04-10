@@ -851,10 +851,15 @@ def _prepare_report_waveform(samples, width_mm, target_samples=None):
         return work
 
     try:
-        from ecg.ecg_filters import apply_ecg_filters, stabilize_report_edges
+        from ecg.ecg_filters import apply_ecg_filters
         ac_param = REPORT_AC_SETTING if REPORT_AC_SETTING not in ("off", "") else None
         emg_param = REPORT_EMG_SETTING if REPORT_EMG_SETTING not in ("off", "") else None
         dft_param = REPORT_DFT_SETTING if REPORT_DFT_SETTING not in ("off", "") else None
+        # Add symmetric reflect padding so zero-phase filters do not create
+        # artificial right-edge bends/spikes in report strips.
+        pad_filt_n = min(max(12, int(0.35 * ECG_FS)), max(0, work.size // 3))
+        if pad_filt_n > 0:
+            work = np.pad(work, (pad_filt_n, pad_filt_n), mode='reflect')
         work = apply_ecg_filters(
             work,
             sampling_rate=float(ECG_FS),
@@ -862,7 +867,8 @@ def _prepare_report_waveform(samples, width_mm, target_samples=None):
             emg_filter=emg_param,
             dft_filter=dft_param,
         )
-        work = stabilize_report_edges(work, float(ECG_FS), edge_ms=180.0)
+        if pad_filt_n > 0 and work.size > (2 * pad_filt_n):
+            work = work[pad_filt_n:-pad_filt_n]
     except Exception:
         pass
 
@@ -887,12 +893,6 @@ def _prepare_report_waveform(samples, width_mm, target_samples=None):
         from scipy.ndimage import gaussian_filter1d
         if work.size > 5:
             work = gaussian_filter1d(work, sigma=0.8)
-    except Exception:
-        pass
-
-    try:
-        from ecg.ecg_filters import stabilize_report_edges
-        work = stabilize_report_edges(work, float(ECG_FS), edge_ms=120.0)
     except Exception:
         pass
 

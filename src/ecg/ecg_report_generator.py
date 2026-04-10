@@ -625,7 +625,7 @@ def _prepare_report_strip_signal(signal, sampling_rate, settings_manager, target
         return work
 
     try:
-        from ecg.ecg_filters import apply_ecg_filters, stabilize_report_edges
+        from ecg.ecg_filters import apply_ecg_filters
 
         if settings_manager is not None:
             ac_setting = str(settings_manager.get_setting("filter_ac", "50")).strip()
@@ -639,6 +639,12 @@ def _prepare_report_strip_signal(signal, sampling_rate, settings_manager, target
             if float(fs) <= required_fs:
                 ac_setting = "off"
 
+        # Reflect-pad both sides before filtering to prevent right-edge artifacts
+        # (terminal jump/curve) in rendered report strips.
+        pad_filt_n = min(max(12, int(0.35 * fs)), max(0, work.size // 3))
+        if pad_filt_n > 0:
+            work = np.pad(work, (pad_filt_n, pad_filt_n), mode="reflect")
+
         work = apply_ecg_filters(
             signal=work,
             sampling_rate=float(fs),
@@ -646,7 +652,8 @@ def _prepare_report_strip_signal(signal, sampling_rate, settings_manager, target
             emg_filter=emg_setting if emg_setting not in ("off", "") else None,
             dft_filter=dft_setting if dft_setting not in ("off", "") else None,
         )
-        work = stabilize_report_edges(work, float(fs), edge_ms=180.0)
+        if pad_filt_n > 0 and work.size > (2 * pad_filt_n):
+            work = work[pad_filt_n:-pad_filt_n]
     except Exception:
         pass
 
@@ -674,13 +681,6 @@ def _prepare_report_strip_signal(signal, sampling_rate, settings_manager, target
 
         if work.size > 5:
             work = gaussian_filter1d(work, sigma=0.8)
-    except Exception:
-        pass
-
-    try:
-        from ecg.ecg_filters import stabilize_report_edges
-
-        work = stabilize_report_edges(work, float(fs), edge_ms=120.0)
     except Exception:
         pass
 

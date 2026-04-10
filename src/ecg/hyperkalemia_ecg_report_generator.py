@@ -541,7 +541,7 @@ def capture_real_ecg_graphs_from_dashboard(dashboard_instance=None, ecg_test_pag
     # Apply report filters (AC/EMG/DFT) based on current settings
     filtered_ecg_data = real_ecg_data
     try:
-        from ecg.ecg_filters import apply_dft_filter, apply_emg_filter, apply_ac_filter, stabilize_report_edges
+        from ecg.ecg_filters import apply_dft_filter, apply_emg_filter, apply_ac_filter
         dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
         emg_setting = str(settings_manager.get_setting("filter_emg", "off")).strip()
         ac_setting = str(settings_manager.get_setting("filter_ac", "off")).strip()
@@ -550,14 +550,19 @@ def capture_real_ecg_graphs_from_dashboard(dashboard_instance=None, ecg_test_pag
             if signal is None or len(signal) == 0:
                 filtered_ecg_data[lead] = signal
                 continue
-            filtered = signal
+            filtered = np.asarray(signal, dtype=float)
+            pad_filt_n = min(max(12, int(0.35 * float(samples_per_second))), max(0, filtered.size // 3))
+            if pad_filt_n > 0:
+                filtered = np.pad(filtered, (pad_filt_n, pad_filt_n), mode="reflect")
             if dft_setting not in ("off", ""):
                 filtered = apply_dft_filter(filtered, float(samples_per_second), dft_setting)
             if emg_setting not in ("off", ""):
                 filtered = apply_emg_filter(filtered, float(samples_per_second), emg_setting)
             if ac_setting in ("50", "60"):
                 filtered = apply_ac_filter(filtered, float(samples_per_second), ac_setting)
-            filtered_ecg_data[lead] = stabilize_report_edges(filtered, float(samples_per_second))
+            if pad_filt_n > 0 and filtered.size > (2 * pad_filt_n):
+                filtered = filtered[pad_filt_n:-pad_filt_n]
+            filtered_ecg_data[lead] = filtered
         print(f" Applied report filters: DFT={dft_setting}, EMG={emg_setting}, AC={ac_setting}")
     except Exception as e:
         print(f" Could not apply report filters: {e}")
@@ -3737,19 +3742,23 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
             return baseline_path, notch_path, None
 
         try:
-            from ecg.ecg_filters import apply_dft_filter, apply_emg_filter, apply_ac_filter, stabilize_report_edges
+            from ecg.ecg_filters import apply_dft_filter, apply_emg_filter, apply_ac_filter
 
             dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
             emg_setting = str(settings_manager.get_setting("filter_emg", "off")).strip()
             ac_setting = str(settings_manager.get_setting("filter_ac", "off")).strip()
 
+            pad_filt_n = min(max(12, int(0.35 * float(report_sampling_rate))), max(0, adc_data.size // 3))
+            if pad_filt_n > 0:
+                adc_data = np.pad(adc_data, (pad_filt_n, pad_filt_n), mode="reflect")
             if dft_setting not in ("off", ""):
                 adc_data = apply_dft_filter(adc_data, float(report_sampling_rate), dft_setting)
             if emg_setting not in ("off", ""):
                 adc_data = apply_emg_filter(adc_data, float(report_sampling_rate), emg_setting)
             if ac_setting in ("50", "60"):
                 adc_data = apply_ac_filter(adc_data, float(report_sampling_rate), ac_setting)
-            adc_data = stabilize_report_edges(adc_data, float(report_sampling_rate))
+            if pad_filt_n > 0 and adc_data.size > (2 * pad_filt_n):
+                adc_data = adc_data[pad_filt_n:-pad_filt_n]
         except Exception as filter_err:
             print(f" Report filter apply failed for {lead_name}: {filter_err}")
 

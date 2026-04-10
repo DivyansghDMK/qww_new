@@ -180,8 +180,8 @@ class InteractiveLeadCanvas(FigureCanvas):
             self.draw_idle()
             return
 
-        # Always show crosshair in ruler/caliper modes, and in select mode
-        if tool in (TOOL_SELECT, TOOL_RULER, TOOL_CALIPER, TOOL_ANNOTATE):
+        # Show crosshair only for measurement tools.
+        if tool in (TOOL_RULER, TOOL_CALIPER):
             self._draw_crosshair(xd, yd)
 
         # Ruler: drag to measure
@@ -1163,6 +1163,9 @@ class ECGAnalysisWindow(QDialog):
         cursor = tool_cursor(tool_id)
         for canvas in self._lead_canvases.values():
             canvas.setCursor(cursor)
+            if tool_id not in (TOOL_RULER, TOOL_CALIPER):
+                canvas._clear_overlay('_crosshair_v', '_crosshair_h', '_readout_text')
+                canvas.draw_idle()
         self.measure_lbl.setText(tool_hint(tool_id))
 
     def _clear_all_overlays(self):
@@ -1381,7 +1384,7 @@ class ECGAnalysisWindow(QDialog):
     def _build_bottom_panel(self):
         frame = QFrame()
         frame.setObjectName("bottompanel")
-        frame.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+        frame.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
         h = QHBoxLayout(frame)
         h.setContentsMargins(12, 8, 12, 8)
         h.setSpacing(14)
@@ -1389,9 +1392,9 @@ class ECGAnalysisWindow(QDialog):
         # ── Manual marking ───────────────────────────────────────────────────
         mark_box = QFrame()
         mark_box.setStyleSheet("background:transparent;border:none;")
-        mark_box.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+        mark_box.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
         av = QVBoxLayout(mark_box)
-        av.setSpacing(4)
+        av.setSpacing(6)
 
         title_lbl = QLabel("▌ Manual Arrhythmia Marking")
         title_lbl.setStyleSheet(
@@ -1406,18 +1409,22 @@ class ECGAnalysisWindow(QDialog):
             "Bradycardia", "Tachycardia", "2nd Degree Block",
             "LBBB", "RBBB", "Normal Sinus Rhythm", "Other"
         ])
+        self.arrhythmia_type_combo.setMinimumWidth(220)
         row1.addWidget(self.arrhythmia_type_combo, 2)
         row1.addWidget(QLabel("Lead:"))
         self.mark_lead_combo = QComboBox()
         self.mark_lead_combo.addItems(["All Leads"] + self.LEADS)
+        self.mark_lead_combo.setMinimumWidth(130)
         row1.addWidget(self.mark_lead_combo, 1)
         av.addLayout(row1)
 
         row1b = QHBoxLayout()
         self.manual_type_input = QLineEdit()
         self.manual_type_input.setPlaceholderText("Custom type (if Other selected)")
+        self.manual_type_input.setMinimumWidth(220)
         self.notes_input = QLineEdit()
         self.notes_input.setPlaceholderText("Clinical notes...")
+        self.notes_input.setMinimumWidth(220)
         row1b.addWidget(self.manual_type_input)
         row1b.addWidget(self.notes_input)
         av.addLayout(row1b)
@@ -1458,7 +1465,8 @@ class ECGAnalysisWindow(QDialog):
         self.annotation_table.setHorizontalHeaderLabels(
             ["Start (s)", "End (s)", "Type", "Lead", "Notes"])
         self.annotation_table.horizontalHeader().setStretchLastSection(True)
-        self.annotation_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+        self.annotation_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.annotation_table.setMinimumHeight(96)
         av.addWidget(self.annotation_table)
 
         h.addWidget(mark_box, stretch=2)
@@ -1510,11 +1518,13 @@ class ECGAnalysisWindow(QDialog):
             self._tool_sidebar.setFixedWidth(sidebar_width)
 
         if hasattr(self, "_bottom_panel") and self._bottom_panel is not None:
-            bottom_max = max(170, min(260, int(screen_h * 0.22)))
+            bottom_min = max(220, min(280, int(screen_h * 0.24)))
+            bottom_max = max(bottom_min, min(360, int(screen_h * 0.34)))
+            self._bottom_panel.setMinimumHeight(bottom_min)
             self._bottom_panel.setMaximumHeight(bottom_max)
 
         if hasattr(self, "annotation_table") and self.annotation_table is not None:
-            self.annotation_table.setMaximumHeight(max(72, min(110, int(screen_h * 0.10))))
+            self.annotation_table.setMaximumHeight(max(96, min(170, int(screen_h * 0.15))))
 
         if hasattr(self, "metrics_table") and self.metrics_table is not None:
             self.metrics_table.setMaximumHeight(max(72, min(120, int(screen_h * 0.11))))
