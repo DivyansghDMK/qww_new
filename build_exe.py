@@ -2,9 +2,9 @@
 Deterministic Windows build script for ECG Monitor executable.
 
 Goals:
-- Produce consistent output across machines.
-- Default to ONEDIR packaging (more stable than onefile for this app).
-- Include required runtime files/assets explicitly.
+Produce consistent output across machines.
+Default to ONEDIR packaging (more stable than onefile for this app).
+Include required runtime files/assets explicitly.
 
 Usage:
     python build_exe.py
@@ -79,18 +79,28 @@ def build_args(project_root: Path, name: str, onefile: bool, console: bool) -> l
         f"--name={name}",
         "--noconfirm",
         "--clean",
+        "--runtime-tmpdir=.",
         "--windowed" if not console else "--console",
         "--onedir" if not onefile else "--onefile",
+        "--uac-admin",  # Request admin privileges for writing to app folder
+        # Imported dynamically via importlib in src/main.py
+        "--hidden-import=organization",
+        # `importlib` is stdlib, but include explicitly for deterministic PyInstaller analysis.
+        "--hidden-import=importlib",
         "--hidden-import=serial",
         "--hidden-import=serial.tools.list_ports",
+        "--hidden-import=serial.tools.list_ports.windows",
+        "--hidden-import=serial.tools.list_ports.posix",
         "--hidden-import=PyQt5",
-        "--collect-all=PyQt5",
-        "--collect-all=matplotlib",
-        "--collect-all=scipy",
+        "--hidden-import=PyQt5.sip",
+        "--collect-submodules=PyQt5",
         "--collect-all=pyqtgraph",
         "--exclude-module=PyQt6",
         "--exclude-module=PySide2",
         "--exclude-module=PySide6",
+        "--exclude-module=notebook",
+        "--exclude-module=jinja2",
+        "--exclude-module=IPython",
     ]
     args.extend(_add_data_args(project_root))
     return args

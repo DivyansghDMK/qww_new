@@ -1,60 +1,56 @@
-#ifndef MyAppName
-  #define MyAppName "ECGMonitor"
-#endif
-#ifndef MyAppVersion
-  #define MyAppVersion "1.0.0"
-#endif
-#ifndef MyAppPublisher
-  #define MyAppPublisher "Deckmount Electronics"
-#endif
-#ifndef MyAppExeName
-  #define MyAppExeName "ECGMonitor.exe"
-#endif
-#ifndef MyAppDistDir
-  #define MyAppDistDir "..\\dist\\ECGMonitor"
-#endif
-#ifndef MyAppOutputDir
-  #define MyAppOutputDir "..\\dist\\installers"
-#endif
+#define MyAppName "ECG Monitor"
+#define MyAppExeName "ECGMonitor.exe"
+#define MyAppPublisher "ECG Monitor"
+#define MyAppURL "https://example.com"
+#define MyAppVersion "2.0.0"
+; NOTE: This installer packages the recommended PyInstaller ONEDIR build output:
+;       dist\ECGMonitor\ECGMonitor.exe + dist\ECGMonitor\_internal\...
 
 [Setup]
-AppId={{9DCE38F3-0F26-4A68-9A56-7A6A27312361}
+AppId={{B29D5C9D-67E6-4F8C-8EF0-DBE8E2F0C5EA}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-DefaultDirName={autopf}\\{#MyAppName}
+AppPublisherURL={#MyAppURL}
+AppSupportURL={#MyAppURL}
+AppUpdatesURL={#MyAppURL}
+DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
-OutputDir={#MyAppOutputDir}
-OutputBaseFilename={#MyAppName}_Setup_{#MyAppVersion}
-Compression=lzma
-SolidCompression=yes
-WizardStyle=modern
-ArchitecturesAllowed=x64compatible
-ArchitecturesInstallIn64BitMode=x64compatible
-PrivilegesRequired=lowest
-PrivilegesRequiredOverridesAllowed=dialog
 DisableProgramGroupPage=yes
-UninstallDisplayIcon={app}\\{#MyAppExeName}
+OutputDir=..\dist_installer
+OutputBaseFilename=Setup_{#MyAppName}_{#MyAppVersion}
+Compression=lzma2
+SolidCompression=yes
+ArchitecturesAllowed=x64
+ArchitecturesInstallIn64BitMode=x64
+PrivilegesRequired=admin
+ChangesEnvironment=no
+SetupLogging=yes
+WizardStyle=modern
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "Create a desktop icon"; GroupDescription: "Additional icons:"; Flags: unchecked
-
-[Dirs]
-Name: "{localappdata}\\Deckmount\\ECGMonitor"
-Name: "{localappdata}\\Deckmount\\ECGMonitor\\reports"
-Name: "{localappdata}\\Deckmount\\ECGMonitor\\logs"
-Name: "{localappdata}\\Deckmount\\ECGMonitor\\offline_queue"
-Name: "{localappdata}\\Deckmount\\ECGMonitor\\temp"
+Name: "desktopicon"; Description: "Create a &desktop icon"; GroupDescription: "Additional icons:"; Flags: unchecked
 
 [Files]
-Source: "{#MyAppDistDir}\\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Main app folder (PyInstaller ONEDIR)
+Source: "..\dist\ECGMonitor\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+[Dirs]
+; Runtime folders created/used by the app
+Name: "{app}\logs"
+Name: "{app}\reports"
+Name: "{app}\offline_queue"
+Name: "{app}\recordings"
 
 [Icons]
-Name: "{group}\\{#MyAppName}"; Filename: "{app}\\{#MyAppExeName}"; WorkingDir: "{localappdata}\\Deckmount\\ECGMonitor"
-Name: "{autodesktop}\\{#MyAppName}"; Filename: "{app}\\{#MyAppExeName}"; WorkingDir: "{localappdata}\\Deckmount\\ECGMonitor"; Tasks: desktopicon
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
 
 [Run]
-Filename: "{app}\\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; WorkingDir: "{localappdata}\\Deckmount\\ECGMonitor"; Flags: nowait postinstall skipifsilent
+; ECGMonitor.exe is currently built with `--uac-admin` (requires elevation).
+; Use the `runas` verb so the post-install launch works (UAC prompt).
+Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; WorkingDir: "{app}"; Verb: "runas"; Flags: shellexec nowait postinstall skipifsilent
