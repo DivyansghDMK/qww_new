@@ -160,7 +160,7 @@ class OfflineQueue:
         self.stats["total_queued"] += 1
         self.stats["pending_count"] += 1
         
-        print(f"📥 Queued {data_type}: {item_id}")
+        print(f"[QUEUE] Queued {data_type}: {item_id}")
         return item_id
     
     def _save_to_disk(self, item: Dict[str, Any], directory: str) -> None:
@@ -170,7 +170,7 @@ class OfflineQueue:
             with open(file_path, 'w') as f:
                 json.dump(item, f, indent=2)
         except Exception as e:
-            print(f"⚠️  Failed to save queue item to disk: {e}")
+            print(f"[WARN] Failed to save queue item to disk: {e}")
     
     def _load_from_disk(self, directory: str) -> List[Dict[str, Any]]:
         """Load all queue items from disk directory"""
@@ -183,9 +183,9 @@ class OfflineQueue:
                         with open(file_path, 'r') as f:
                             items.append(json.load(f))
                     except Exception as e:
-                        print(f"⚠️  Failed to load {filename}: {e}")
+                        print(f"[WARN] Failed to load {filename}: {e}")
         except Exception as e:
-            print(f"⚠️  Failed to read queue directory: {e}")
+            print(f"[WARN] Failed to read queue directory: {e}")
         return items
     
     def _delete_from_disk(self, item_id: str, directory: str) -> None:
@@ -195,7 +195,7 @@ class OfflineQueue:
             if os.path.exists(file_path):
                 os.remove(file_path)
         except Exception as e:
-            print(f"⚠️  Failed to delete queue item from disk: {e}")
+            print(f"[WARN] Failed to delete queue item from disk: {e}")
     
     def _move_item(self, item_id: str, from_dir: str, to_dir: str) -> None:
         """Move item from one directory to another"""
@@ -205,7 +205,7 @@ class OfflineQueue:
             if os.path.exists(from_path):
                 os.rename(from_path, to_path)
         except Exception as e:
-            print(f"⚠️  Failed to move queue item: {e}")
+            print(f"[WARN] Failed to move queue item: {e}")
     
     def start_sync_thread(self) -> None:
         """Start background sync thread"""
@@ -213,14 +213,14 @@ class OfflineQueue:
             self._sync_running = True
             self._sync_thread = threading.Thread(target=self._sync_loop, daemon=True)
             self._sync_thread.start()
-            print("🔄 Offline queue sync thread started")
+            print("[SYNC] Offline queue sync thread started")
     
     def stop_sync_thread(self) -> None:
         """Stop background sync thread"""
         self._sync_running = False
         if self._sync_thread:
             self._sync_thread.join(timeout=5)
-            print("⏹️  Offline queue sync thread stopped")
+            print("[SYNC] Offline queue sync thread stopped")
     
     def _sync_loop(self) -> None:
         """Background sync loop"""
@@ -237,13 +237,13 @@ class OfflineQueue:
                     # Process items from memory queue
                     self._process_queue()
                 else:
-                    print("📴 Offline mode - data will be queued locally")
+                    print("[OFFLINE] Offline mode - data will be queued locally")
                 
                 # Update stats
                 self._update_stats()
                 
             except Exception as e:
-                print(f"⚠️  Error in sync loop: {e}")
+                print(f"[WARN] Error in sync loop: {e}")
             
             # Sleep for 30 seconds before next check
             time.sleep(30)
@@ -266,7 +266,7 @@ class OfflineQueue:
                     self._move_item(item['id'], self.pending_dir, self.synced_dir)
                     self.stats["total_synced"] += 1
                     self.stats["pending_count"] -= 1
-                    print(f"✅ Synced {item['type']}: {item['id']}")
+                    print(f"[OK] Synced {item['type']}: {item['id']}")
                     
                     # Delete old synced items (keep last 100)
                     self._cleanup_synced_items()
@@ -278,20 +278,20 @@ class OfflineQueue:
                         # Re-queue for retry
                         self._memory_queue.put(item)
                         self._save_to_disk(item, self.pending_dir)
-                        print(f"🔄 Re-queued {item['type']}: {item['id']} (retry {item['retry_count']})")
+                        print(f"[SYNC] Re-queued {item['type']}: {item['id']} (retry {item['retry_count']})")
                     else:
                         # Move to failed directory after 5 retries
                         self._move_item(item['id'], self.pending_dir, self.failed_dir)
                         self.stats["total_failed"] += 1
                         self.stats["pending_count"] -= 1
-                        print(f"❌ Failed {item['type']}: {item['id']} (max retries exceeded)")
+                        print(f"[ERR] Failed {item['type']}: {item['id']} (max retries exceeded)")
                 
                 processed += 1
                 
             except queue.Empty:
                 break
             except Exception as e:
-                print(f"⚠️  Error processing queue item: {e}")
+                print(f"[WARN] Error processing queue item: {e}")
     
     def _sync_item(self, item: Dict[str, Any]) -> bool:
         """
@@ -320,16 +320,16 @@ class OfflineQueue:
                         cloud_uploader.offline_queue = original_offline_queue  # Restore
                     
                     if result.get('status') == 'success':
-                        print(f"✅ Synced report to S3: {os.path.basename(file_path)}")
+                        print(f"[OK] Synced report to S3: {os.path.basename(file_path)}")
                         return True
                     elif result.get('status') == 'already_uploaded':
                         # Already uploaded, consider it success
                         return True
                     else:
-                        print(f"⚠️ S3 upload failed: {result.get('message', 'Unknown error')}")
+                        print(f"[WARN] S3 upload failed: {result.get('message', 'Unknown error')}")
                         return False
                 else:
-                    print(f"⚠️ Report file not found: {file_path}")
+                    print(f"[WARN] Report file not found: {file_path}")
                     return False
             
             elif item['type'] == 'cloud_user_signup':
@@ -346,13 +346,13 @@ class OfflineQueue:
                     cloud_uploader.offline_queue = original_offline_queue  # Restore
                 
                 if result.get('status') == 'success':
-                    print(f"✅ Synced user signup to S3: {user_data.get('username', 'unknown')}")
+                    print(f"[OK] Synced user signup to S3: {user_data.get('username', 'unknown')}")
                     return True
                 elif result.get('status') == 'already_uploaded':
                     # Already uploaded, consider it success
                     return True
                 else:
-                    print(f"⚠️ S3 user signup failed: {result.get('message', 'Unknown error')}")
+                    print(f"[WARN] S3 user signup failed: {result.get('message', 'Unknown error')}")
                     return False
             
             elif item['type'] == 'cloud_complete_package':
@@ -375,18 +375,18 @@ class OfflineQueue:
                         cloud_uploader.offline_queue = original_offline_queue  # Restore
                     
                     if result.get('status') == 'success':
-                        print(f"✅ Synced complete package to S3: {os.path.basename(pdf_path)}")
+                        print(f"[OK] Synced complete package to S3: {os.path.basename(pdf_path)}")
                         return True
                     else:
-                        print(f"⚠️ S3 package upload failed: {result.get('message', 'Unknown error')}")
+                        print(f"[WARN] S3 package upload failed: {result.get('message', 'Unknown error')}")
                         return False
                 else:
-                    print(f"⚠️ PDF file not found: {pdf_path}")
+                    print(f"[WARN] PDF file not found: {pdf_path}")
                     return False
         except ImportError:
             pass
         except Exception as e:
-            print(f"⚠️ Cloud uploader error: {e}")
+            print(f"[WARN] Cloud uploader error: {e}")
         
         # Fallback to BackendAPI for other data types
         try:
@@ -414,7 +414,7 @@ class OfflineQueue:
             elif item['type'] == 'session_end':
                 result = backend_api.end_session(item['data'].get('summary', {}))
             else:
-                print(f"⚠️  Unknown data type: {item['type']}")
+                print(f"[WARN] Unknown data type: {item['type']}")
                 return False
             
             return result.get('status') == 'success'
@@ -424,7 +424,7 @@ class OfflineQueue:
             print(f"ℹ️  No upload service available for {item['type']}")
             return False
         except Exception as e:
-            print(f"⚠️  Sync error for {item['type']}: {e}")
+            print(f"[WARN] Sync error for {item['type']}: {e}")
             return False
     
     def _update_stats(self) -> None:
@@ -447,7 +447,7 @@ class OfflineQueue:
                     os.remove(os.path.join(self.synced_dir, filename))
                 print(f"🧹 Cleaned up {len(files_to_delete)} old synced items")
         except Exception as e:
-            print(f"⚠️  Cleanup error: {e}")
+            print(f"[WARN] Cleanup error: {e}")
     
     def get_stats(self) -> Dict[str, Any]:
         """Get queue statistics"""
@@ -484,7 +484,7 @@ class OfflineQueue:
             self.stats["pending_count"] += 1
             count += 1
         
-        print(f"🔄 Retrying {count} failed items")
+        print(f"[SYNC] Retrying {count} failed items")
         return count
     
     def clear_synced_items(self) -> int:
@@ -496,7 +496,7 @@ class OfflineQueue:
             print(f"🧹 Cleared {len(synced_files)} synced items")
             return len(synced_files)
         except Exception as e:
-            print(f"⚠️  Clear error: {e}")
+            print(f"[WARN] Clear error: {e}")
             return 0
     
     def force_sync_now(self) -> None:

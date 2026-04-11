@@ -144,9 +144,9 @@ class CloudUploader:
         try:
             from .offline_queue import get_offline_queue
             self.offline_queue = get_offline_queue()
-            print("✅ Offline queue initialized for cloud uploader")
+            print("[OK] Offline queue initialized for cloud uploader")
         except Exception as e:
-            print(f"⚠️ Could not initialize offline queue: {e}")
+            print(f"[WARN] Could not initialize offline queue: {e}")
             self.offline_queue = None
 
     def reload_config(self):
@@ -256,12 +256,28 @@ class CloudUploader:
         return ""
 
     def _build_s3_key(self, filename: str, metadata: Optional[dict]) -> str:
+        meta = metadata or {}
+        report_type = str(meta.get("report_type") or "").strip().lower()
+        report_type = report_type.replace(" ", "_").replace("-", "_")
+        allowed_report_types = {"12_lead_ecg", "hrv", "hyperkalemia"}
+        if report_type not in allowed_report_types:
+            report_type = ""
+
+        # Make JSON objects type-identifiable in S3 key names.
+        # Example: hrv_ecg_data_20260411_123000.json
+        key_filename = filename
+        if filename.lower().endswith(".json") and report_type:
+            stem, ext = os.path.splitext(filename)
+            prefix = f"{report_type}_"
+            if not stem.lower().startswith(prefix):
+                key_filename = f"{prefix}{stem}{ext}"
+
         prefix = (os.getenv("S3_REPORTS_PREFIX", "reports") or "reports").strip().strip("/")
-        mobile = self._extract_mobile_for_s3_key(metadata or {})
+        mobile = self._extract_mobile_for_s3_key(meta)
         if mobile:
-            return f"{prefix}/{mobile}/{filename}"
+            return f"{prefix}/{mobile}/{key_filename}"
         timestamp = datetime.now().strftime("%Y/%m/%d")
-        return f"{prefix}/{timestamp}/{filename}"
+        return f"{prefix}/{timestamp}/{key_filename}"
     
     def _is_file_already_uploaded(self, file_path):
         """
@@ -278,8 +294,12 @@ class CloudUploader:
             
             # Check upload log
             if os.path.exists(self.upload_log_path):
-                with open(self.upload_log_path, 'r') as f:
-                    log_data = json.load(f)
+                try:
+                    with open(self.upload_log_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        raw = f.read().strip()
+                    log_data = json.loads(raw) if raw else []
+                except Exception:
+                    log_data = []
                 
                 # Check if this filename has been uploaded before
                 for entry in log_data:
@@ -297,7 +317,7 @@ class CloudUploader:
             return False
             
         except Exception as e:
-            print(f"⚠️ Error checking upload history: {e}")
+            print(f"[WARN] Error checking upload history: {e}")
             # If we can't check, assume not uploaded (safer to upload twice than not at all)
             return False
     
@@ -331,16 +351,40 @@ class CloudUploader:
                     "filename": filename
                 }
             
-            # Check if this is a report file (PDF or JSON report)
+            # Check if this is an uploadable report/metric payload
             file_ext = Path(file_path).suffix.lower()
             file_basename = os.path.basename(file_path).lower()
-            
-            # ONLY upload reports, metrics, and unified data - filter out everything else
-            allowed_extensions = ['.pdf', '.json']
-            is_report = file_ext in allowed_extensions and 'report' in file_basename
-            is_metric = file_ext == '.json' and ('metric' in file_basename or 'ecg_data' in file_basename)
-            
-            if not (is_report or is_metric):
+            abs_path = os.path.abspath(file_path).lower()
+
+            # PDFs: allow known report names OR anything saved under reports/ (but never sessions/).
+            is_report_pdf = (
+                file_ext == '.pdf'
+                and (
+                    'report' in file_basename
+                    or '\\reports\\' in abs_path
+                    or '/reports/' in abs_path
+                )
+                and '\\reports\\sessions\\' not in abs_path
+                and '/reports/sessions/' not in abs_path
+            )
+
+            # JSON: allow known report payload names and report folders.
+            json_name_keywords = (
+                'report', 'metric', 'ecg_data', 'payload', 'unified', 'hrv', 'hyper'
+            )
+            is_report_json_name = file_ext == '.json' and any(k in file_basename for k in json_name_keywords)
+            is_report_json_path = (
+                file_ext == '.json'
+                and (
+                    '\\reports\\' in abs_path
+                    or '/reports/' in abs_path
+                )
+                and 'upload_log.json' not in file_basename
+                and '\\reports\\sessions\\' not in abs_path
+                and '/reports/sessions/' not in abs_path
+            )
+
+            if not (is_report_pdf or is_report_json_name or is_report_json_path):
                 return {
                     "status": "skipped",
                     "message": f"File {file_basename} is not a report or metric file - not uploaded"
@@ -361,7 +405,7 @@ class CloudUploader:
                     'patient_name', 'patient_age', 'patient_gender', 'patient_address', 
                     'patient_phone', 'report_date', 'machine_serial',
                     'heart_rate', 'pr_interval', 'qrs_duration', 'qt_interval', 
-                    'qtc_interval', 'st_segment'
+                    'qtc_interval', 'st_segment', 'report_type'
                 ]
                 filtered_metadata = {k: v for k, v in metadata.items() if k in allowed_keys}
                 upload_metadata.update(filtered_metadata)
@@ -375,7 +419,7 @@ class CloudUploader:
                     'cloud_service': self.cloud_service
                 }
                 self.offline_queue.queue_data('cloud_report', queue_payload, priority=2)  # High priority
-                print(f"📥 Queued report for upload when online: {filename}")
+                print(f"[QUEUE] Queued report for upload when online: {filename}")
                 return {
                     "status": "queued",
                     "message": f"Report queued for upload when internet connection is restored",
@@ -458,21 +502,21 @@ class CloudUploader:
         Returns:
             dict: Upload result with status and details
         """
-        print(f"🔵 upload_user_signup called with data: {user_data}")
+        print(f"[INFO] upload_user_signup called with data: {user_data}")
         
         if not self.upload_enabled:
             msg = "Cloud upload is disabled"
-            print(f"❌ {msg}")
+            print(f"[ERR] {msg}")
             return {"status": "disabled", "message": msg}
         
         if not self.is_configured():
             msg = f"Cloud service '{self.cloud_service}' is not properly configured"
-            print(f"❌ {msg}")
+            print(f"[ERR] {msg}")
             return {"status": "error", "message": msg}
         
         if not user_data or not isinstance(user_data, dict):
             msg = "Invalid user data"
-            print(f"❌ {msg}")
+            print(f"[ERR] {msg}")
             return {"status": "error", "message": msg}
         
         # Check if this user has already been uploaded
@@ -491,14 +535,14 @@ class CloudUploader:
                         if (metadata.get('username') == username or 
                             (serial_number and metadata.get('serial_number') == serial_number)):
                             if entry.get('result', {}).get('status') == 'success':
-                                print(f"ℹ️ User signup for '{username}' already uploaded - skipping duplicate")
+                                print(f"[INFO] User signup for '{username}' already uploaded - skipping duplicate")
                                 return {
                                     "status": "already_uploaded",
                                     "message": f"User signup for '{username}' has already been uploaded",
                                     "username": username
                                 }
         except Exception as e:
-            print(f"⚠️ Error checking user signup history: {e}")
+            print(f"[WARN] Error checking user signup history: {e}")
         
         # Check if online - if offline, queue for later upload
         if self.offline_queue and not self.offline_queue.is_online():
@@ -507,7 +551,7 @@ class CloudUploader:
                 'cloud_service': self.cloud_service
             }
             self.offline_queue.queue_data('cloud_user_signup', queue_payload, priority=1)  # Highest priority
-            print(f"📥 Queued user signup for upload when online: {username}")
+            print(f"[QUEUE] Queued user signup for upload when online: {username}")
             return {
                 "status": "queued",
                 "message": f"User signup queued for upload when internet connection is restored",
@@ -534,7 +578,7 @@ class CloudUploader:
             with open(file_path, 'w') as f:
                 json.dump(upload_data, f, indent=2)
             
-            print(f"✅ User signup file created successfully")
+            print(f"[OK] User signup file created successfully")
             
             # Upload to cloud
             metadata = {
@@ -571,21 +615,21 @@ class CloudUploader:
                 os.remove(file_path)
                 print(f"🗑️ Temp file removed: {file_path}")
             except Exception as cleanup_err:
-                print(f"⚠️ Could not remove temp file: {cleanup_err}")
+                print(f"[WARN] Could not remove temp file: {cleanup_err}")
             
             # Log upload
             if result and result.get("status") == "success":
                 self._log_upload(filename, result, metadata)
-                print(f"✅ User signup uploaded to {self.cloud_service}: {username}")
+                print(f"[OK] User signup uploaded to {self.cloud_service}: {username}")
             else:
-                print(f"❌ Upload failed: {result}")
+                print(f"[ERR] Upload failed: {result}")
             
             return result
             
         except Exception as e:
             import traceback
             error_msg = f"Failed to upload user signup: {str(e)}"
-            print(f"❌ {error_msg}")
+            print(f"[ERR] {error_msg}")
             print(f"Stack trace: {traceback.format_exc()}")
             return {"status": "error", "message": error_msg}
 
@@ -648,15 +692,15 @@ class CloudUploader:
                 doctors = list(dict.fromkeys(doctors))
                 
                 if doctors:
-                    print(f"✅ Fetched {len(doctors)} doctors from API")
+                    print(f"[OK] Fetched {len(doctors)} doctors from API")
                     self._doctor_list_cache = doctors
                     self._last_doctor_fetch_time = now
                     return doctors
             
-            print(f"⚠️ Failed to fetch doctors (Status {response.status_code}). Using fallback.")
+            print(f"[WARN] Failed to fetch doctors (Status {response.status_code}). Using fallback.")
             
         except Exception as e:
-            print(f"⚠️ Error fetching doctor list: {e}. Using fallback.")
+            print(f"[WARN] Error fetching doctor list: {e}. Using fallback.")
             
         # If fetch failed but we have a stale cache, return it
         if self._doctor_list_cache:
@@ -755,7 +799,7 @@ class CloudUploader:
         
         # Check if online - if offline, queue for later upload
         if self.offline_queue and not self.offline_queue.is_online():
-            print(f"📥 Offline mode - queuing complete report package for upload when online")
+            print(f"[OFFLINE] Queuing complete report package for upload when online")
             return {
                 "status": "queued",
                 "message": "Report package queued for upload when internet connection is restored"
@@ -807,7 +851,7 @@ class CloudUploader:
                     "key": pdf_s3_key,
                     "url": f"https://{self.s3_bucket}.s3.{self.s3_region}.amazonaws.com/{pdf_s3_key}"
                 })
-                print(f"✅ Uploaded PDF report to S3: {pdf_s3_key}")
+                print(f"[OK] Uploaded PDF report to S3: {pdf_s3_key}")
             
             # 2. Upload Patient Details (JSON)
             if patient_data:
@@ -839,7 +883,7 @@ class CloudUploader:
                         "key": patient_s3_key,
                         "url": f"https://{self.s3_bucket}.s3.{self.s3_region}.amazonaws.com/{patient_s3_key}"
                     })
-                    print(f"✅ Uploaded patient details to S3: {patient_s3_key}")
+                    print(f"[OK] Uploaded patient details to S3: {patient_s3_key}")
                 finally:
                     try:
                         os.remove(patient_file)
@@ -876,7 +920,7 @@ class CloudUploader:
                             ecg_metadata[f"lead_{lead_name}_samples"] = str(actual_samples)
                     
                 except Exception as e:
-                    print(f"⚠️ Warning: Could not verify ECG data: {e}")
+                    print(f"[WARN] Could not verify ECG data: {e}")
                     ecg_metadata = {
                         "type": "ecg_12lead_data",
                         "uploaded_at": datetime.now().isoformat(),
@@ -895,7 +939,7 @@ class CloudUploader:
                     "key": ecg_s3_key,
                     "url": f"https://{self.s3_bucket}.s3.{self.s3_region}.amazonaws.com/{ecg_s3_key}"
                 })
-                print(f"✅ Uploaded 12-lead ECG data to S3: {ecg_s3_key}")
+                print(f"[OK] Uploaded 12-lead ECG data to S3: {ecg_s3_key}")
             
             # Log the upload
             if upload_results["uploads"]:
@@ -987,11 +1031,11 @@ class CloudUploader:
             
             # Delete the object
             s3.delete_object(Bucket=self.s3_bucket, Key=key)
-            print(f"✅ Deleted from S3: {key}")
+            print(f"[OK] Deleted from S3: {key}")
             return {"status": "success", "message": f"Deleted {key}"}
             
         except Exception as e:
-            print(f"❌ S3 deletion error for {key}: {e}")
+            print(f"[ERR] S3 deletion error for {key}: {e}")
             return {"status": "error", "message": str(e)}
     
     def _upload_to_azure(self, file_path, metadata):
@@ -1184,8 +1228,12 @@ class CloudUploader:
             # Load existing log
             log_data = []
             if os.path.exists(self.upload_log_path):
-                with open(self.upload_log_path, 'r') as f:
-                    log_data = json.load(f)
+                try:
+                    with open(self.upload_log_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        raw = f.read().strip()
+                    log_data = json.loads(raw) if raw else []
+                except Exception:
+                    log_data = []
             
             # Add new entry
             log_entry = {
@@ -1199,7 +1247,7 @@ class CloudUploader:
             
             # Save log
             os.makedirs(os.path.dirname(self.upload_log_path), exist_ok=True)
-            with open(self.upload_log_path, 'w') as f:
+            with open(self.upload_log_path, 'w', encoding='utf-8') as f:
                 json.dump(log_data, f, indent=2)
                 
         except Exception as e:
@@ -1240,7 +1288,7 @@ class CloudUploader:
                 return uploaded_files
             return []
         except Exception as e:
-            print(f"⚠️ Error getting uploaded files list: {e}")
+            print(f"[WARN] Error getting uploaded files list: {e}")
             return []
     
     def clear_upload_log(self):
@@ -1346,18 +1394,18 @@ class CloudUploader:
                 )
 
             if response.status_code in [200, 201]:
-                print(f"✅ Report uploaded successfully for review!")
+                print(f"[OK] Report uploaded successfully for review!")
                 
                 # Log success
                 self._log_upload(file_path, {"status": "success"}, {"type": "doctor_review", "doctor": doctor_name})
                 
                 return {"status": "success", "message": "Report sent for review successfully"}
             else:
-                print(f"❌ Upload failed: {response.status_code} - {response.text}")
+                print(f"[ERR] Upload failed: {response.status_code} - {response.text}")
                 return {"status": "error", "message": f"Upload failed: {response.text or response.status_code}"}
                 
         except Exception as e:
-            print(f"❌ Error sending for review: {e}")
+            print(f"[ERR] Error sending for review: {e}")
             return {"status": "error", "message": str(e)}
 
 

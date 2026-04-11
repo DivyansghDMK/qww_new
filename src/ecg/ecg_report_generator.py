@@ -1504,6 +1504,13 @@ def generate_ecg_report(
         # Data will be automatically saved before report generation
     """
    
+    # Ensure we use a single canonical PDF path everywhere (save + upload).
+    filename = os.path.abspath(filename)
+    try:
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
+    except Exception:
+        pass
+
     # Ensure mm is available in local scope
     from reportlab.lib.units import mm
     
@@ -3787,6 +3794,7 @@ def generate_ecg_report(
                 "report_date": data.get('date', ''),
                 "machine_serial": data.get('machine_serial', ''),
                 "heart_rate": str(data.get('Heart_Rate', '')),
+                "report_type": "12_lead_ecg",
             }
             
             # Upload the report PDF

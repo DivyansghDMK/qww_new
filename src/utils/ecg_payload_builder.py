@@ -287,11 +287,25 @@ def _settings_details(settings_manager: Any) -> Dict[str, str]:
 # ---------------------------------------------------------------------------
 
 def _build_patient_block(patient: Dict, data: Dict, report_id: str, signup: Optional[Dict] = None) -> Dict:
-    first = str(patient.get('first_name') or '').strip()
-    last = str(patient.get('last_name') or '').strip()
+    data_patient = data.get('patient') if isinstance(data.get('patient'), dict) else {}
+
+    first = str(
+        patient.get('first_name')
+        or data_patient.get('first_name')
+        or ''
+    ).strip()
+    last = str(
+        patient.get('last_name')
+        or data_patient.get('last_name')
+        or ''
+    ).strip()
     full = str(
         patient.get('patient_name')
         or patient.get('name')
+        or data_patient.get('patient_name')
+        or data_patient.get('name')
+        or data.get('patient_name')
+        or data.get('name')
         or (signup or {}).get('full_name')
         or ''
     ).strip()
@@ -299,7 +313,12 @@ def _build_patient_block(patient: Dict, data: Dict, report_id: str, signup: Opti
         full = f"{first} {last}".strip()
 
     report_date = (
-        str(data.get('report_date') or patient.get('report_date') or '').strip()
+        str(
+            data.get('report_date')
+            or patient.get('report_date')
+            or data_patient.get('report_date')
+            or ''
+        ).strip()
         or _report_date_str()
     )
 
@@ -307,7 +326,11 @@ def _build_patient_block(patient: Dict, data: Dict, report_id: str, signup: Opti
         "user_id": str(
             patient.get('serial_id')
             or patient.get('serial_number')
+            or data_patient.get('serial_id')
+            or data_patient.get('serial_number')
             or data.get('user_id')
+            or data.get('serial_id')
+            or data.get('serial_number')
             or (signup or {}).get('serial_id')
             or (signup or {}).get('serial_number')
             or (signup or {}).get('phone')
@@ -315,12 +338,26 @@ def _build_patient_block(patient: Dict, data: Dict, report_id: str, signup: Opti
         ).strip() or "0",
         "report_id": report_id,
         "name": full or "Unknown",
-        "age": _safe_int(patient.get('age') or data.get('age') or (signup or {}).get('age')),
-        "gender": str(patient.get('gender') or data.get('gender') or (signup or {}).get('gender') or 'Unknown').strip(),
+        "age": _safe_int(
+            patient.get('age')
+            or data_patient.get('age')
+            or data.get('age')
+            or (signup or {}).get('age')
+        ),
+        "gender": str(
+            patient.get('gender')
+            or data_patient.get('gender')
+            or data.get('gender')
+            or (signup or {}).get('gender')
+            or 'Unknown'
+        ).strip(),
         "mobile_no": str(
             patient.get('phone')
             or patient.get('mobile_no')
+            or data_patient.get('phone')
+            or data_patient.get('mobile_no')
             or data.get('mobile_no')
+            or data.get('phone')
             or (signup or {}).get('phone')
             or (signup or {}).get('contact')
             or ''
@@ -551,6 +588,27 @@ def _pdf_upload_metadata_from_payload(payload: Dict) -> Dict[str, Any]:
         "hyperkalemia": findings.get("hyperkalemia", []),
     }
     return metadata
+
+
+def _backend_report_json_from_payload(payload: Dict) -> Dict[str, Any]:
+    """
+    Compact JSON sent alongside PDF upload.
+    Keeps clinically relevant report data + patient details, without large waveform blobs.
+    """
+    return {
+        "schema_version": payload.get("schema_version"),
+        "event_type": payload.get("event_type"),
+        "generated_at": payload.get("generated_at"),
+        "report_type": payload.get("report_type"),
+        "report_format": payload.get("report_format"),
+        "source_report_file": payload.get("source_report_file"),
+        "patient_details": payload.get("patient_details", {}) or {},
+        "device_details": payload.get("device_details", {}) or {},
+        "result_reading": payload.get("result_reading", {}) or {},
+        "hrv_result_reading": payload.get("hrv_result_reading", {}) or {},
+        "rr_intervals": payload.get("rr_intervals", {}) or {},
+        "clinical_findings": payload.get("clinical_findings", {}) or {},
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -840,6 +898,7 @@ def send_pdf_report_to_backend(
 
     url = f"{base_url.rstrip('/')}/reports/upload"
     metadata = _pdf_upload_metadata_from_payload(payload)
+    report_json = _backend_report_json_from_payload(payload)
 
     def _post() -> Dict:
         try:
@@ -854,7 +913,10 @@ def send_pdf_report_to_backend(
 
             with open(pdf_path, "rb") as fh:
                 files = {"file": (os.path.basename(pdf_path), fh, "application/pdf")}
-                data = {"metadata": json.dumps(metadata)}
+                data = {
+                    "metadata": json.dumps(metadata, ensure_ascii=False),
+                    "report_json": json.dumps(report_json, ensure_ascii=False),
+                }
                 resp = requests.post(url, files=files, data=data, headers=headers, timeout=60)
 
             result = {
@@ -931,6 +993,7 @@ def dispatch_12lead_report(
     send: bool = True,
 ) -> Optional[str]:
     """Build, optionally save, and optionally send a 12-lead payload. Returns local file path."""
+    pdf_path = os.path.abspath(str(pdf_path))
     payload = build_12lead_payload(
         data=data, patient=patient, settings_manager=settings_manager,
         signup_details=signup_details, ecg_test_page=ecg_test_page,
@@ -961,6 +1024,7 @@ def dispatch_hrv_report(
     send: bool = True,
 ) -> Optional[str]:
     """Build, optionally save, and optionally send an HRV payload. Returns local file path."""
+    pdf_path = os.path.abspath(str(pdf_path))
     payload = build_hrv_payload(
         data=data, patient=patient, settings_manager=settings_manager,
         signup_details=signup_details, ecg_test_page=ecg_test_page,
@@ -991,6 +1055,7 @@ def dispatch_hyperkalemia_report(
     send: bool = True,
 ) -> Optional[str]:
     """Build, optionally save, and optionally send a hyperkalemia payload. Returns local file path."""
+    pdf_path = os.path.abspath(str(pdf_path))
     payload = build_hyperkalemia_payload(
         data=data, patient=patient, settings_manager=settings_manager,
         signup_details=signup_details, ecg_test_page=ecg_test_page,

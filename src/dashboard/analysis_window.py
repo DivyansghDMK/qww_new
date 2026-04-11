@@ -2165,7 +2165,8 @@ class ECGAnalysisWindow(QDialog):
     def export_report(self):
         if not self.current_report:
             QMessageBox.warning(self, "Export", "No report selected"); return
-        default_name = f"analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        # Name includes "report" so auto-sync/cloud uploader treats it as uploadable report JSON.
+        default_name = f"analysis_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         path, _ = QFileDialog.getSaveFileName(self, "Export JSON", default_name, "JSON (*.json)")
         if not path: return
         try:
@@ -2232,7 +2233,7 @@ class ECGAnalysisWindow(QDialog):
 
         from PyQt5.QtWidgets import (
             QDialog as _QD, QVBoxLayout as _VL, QButtonGroup,
-            QRadioButton, QDialogButtonBox, QLabel as _QL
+            QRadioButton, QDialogButtonBox, QLabel as _QL, QCheckBox
         )
         fmt_dlg = _QD(self)
         fmt_dlg.setWindowTitle("Report Format")
@@ -2252,12 +2253,17 @@ class ECGAnalysisWindow(QDialog):
         grp = QButtonGroup(fmt_dlg)
         for rb in (rb1, rb2, rb3):
             grp.addButton(rb); fmt_lay.addWidget(rb)
+
+        anonymize_cb = QCheckBox("Hide patient details on PDF (send to server only)")
+        anonymize_cb.setChecked(True)
+        fmt_lay.addWidget(anonymize_cb)
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.accepted.connect(fmt_dlg.accept)
         bb.rejected.connect(fmt_dlg.reject)
         fmt_lay.addWidget(bb)
         if fmt_dlg.exec_() != _QD.Accepted: return
         pdf_format = "4_3" if rb1.isChecked() else ("12_1" if rb2.isChecked() else "6_2")
+        anonymize_pdf = bool(anonymize_cb.isChecked())
 
         try:
             self.pdf_btn.setText("Generating…")
@@ -2306,12 +2312,14 @@ class ECGAnalysisWindow(QDialog):
             except: pass
 
             pat_mapped = {
-                'first_name': pat.get('name', 'Unknown'), 'last_name': '',
-                'age': pat.get('age', ''), 'gender': pat.get('gender', ''),
+                'first_name': '' if anonymize_pdf else pat.get('name', 'Unknown'),
+                'last_name': '',
+                'age': '' if anonymize_pdf else pat.get('age', ''),
+                'gender': '' if anonymize_pdf else pat.get('gender', ''),
                 'date_time': pat.get('report_date') or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                'doctor_name': pat.get('doctor', ''),
-                'org': pat.get('Org.', ''),
-                'phone': pat.get('phone', '') or pat.get('doctor_mobile', ''),
+                'doctor_name': '' if anonymize_pdf else pat.get('doctor', ''),
+                'org': '' if anonymize_pdf else pat.get('Org.', ''),
+                'phone': '' if anonymize_pdf else (pat.get('phone', '') or pat.get('doctor_mobile', '')),
             }
             extra_figs = []
             if self.manual_annotations:
@@ -2322,6 +2330,104 @@ class ECGAnalysisWindow(QDialog):
             _gen(snap_raw=snap_raw, frozen=frozen, patient=pat_mapped,
                  filename=path, fmt=pdf_format, conc_list=conclusions,
                  fs=float(self.sampling_rate), extra_figs=extra_figs)
+
+            # Build a companion ECG JSON (lead arrays + patient/meta) and send/upload in background.
+            ecg_json_path = ""
+            try:
+                import os as _os
+                import numpy as _np
+                base_no_ext = _os.path.splitext(path)[0]
+                ecg_json_path = base_no_ext + "_ecg_data.json"
+
+                target_samples = int(round(float(self.sampling_rate) * 10.0)) if self.sampling_rate else 5000
+                if target_samples <= 0:
+                    target_samples = 5000
+
+                leads_out = {}
+                for lead_name in leads_order:
+                    arr = self.lead_data.get(lead_name, _np.array([]))
+                    if hasattr(arr, "__len__") and len(arr) > st:
+                        seg = arr[st:st + target_samples]
+                    else:
+                        seg = _np.array([])
+                    try:
+                        seg_i = _np.rint(_np.asarray(seg, dtype=float)).astype(int).tolist()
+                    except Exception:
+                        seg_i = []
+                    leads_out[lead_name] = seg_i
+
+                ecg_json_obj = {
+                    "patient_details": pat,
+                    "report_format": pdf_format,
+                    "sampling_rate": float(self.sampling_rate),
+                    "frame_start_sample": int(st),
+                    "generated_at": datetime.now().isoformat(timespec="seconds"),
+                    "metrics": raw_metrics,
+                    "clinical_findings": clinical,
+                    "leads": leads_out,
+                }
+                with open(ecg_json_path, "w", encoding="utf-8") as f:
+                    json.dump(ecg_json_obj, f, indent=2, ensure_ascii=False)
+            except Exception as json_err:
+                print(f"ECG JSON save failed: {json_err}")
+                ecg_json_path = ""
+
+            upload_metadata = {
+                "patient_name": pat.get("name", "Unknown"),
+                "patient_age": str(pat.get("age", "")),
+                "patient_gender": str(pat.get("gender", "")),
+                "report_date": str(pat.get("report_date", "")),
+                "report_type": "analysis",
+                "report_format": str(pdf_format),
+            }
+
+            def _send_to_server():
+                try:
+                    from utils.cloud_uploader import get_cloud_uploader
+                    cloud_uploader = get_cloud_uploader()
+                    if cloud_uploader.is_configured():
+                        cloud_uploader.upload_report(path, metadata=upload_metadata)
+                        if ecg_json_path:
+                            cloud_uploader.upload_report(ecg_json_path, metadata=upload_metadata)
+                except Exception as up_err:
+                    print(f"Cloud upload failed: {up_err}")
+
+                try:
+                    from utils.ecg_payload_builder import dispatch_12lead_report
+                    data_payload = {
+                        "HR": hr or 0,
+                        "RR": rr or 0,
+                        "PR": pr or 0,
+                        "QRS": qrs or 0,
+                        "QT": qt or 0,
+                        "QTc": qtc or 0,
+                        "QTcF": qtcf or 0,
+                        "report_date": pat.get("report_date", ""),
+                        "patient": pat,
+                    }
+                    dispatch_12lead_report(
+                        data=data_payload,
+                        patient=pat,
+                        pdf_path=path,
+                        settings_manager=None,
+                        signup_details=None,
+                        ecg_test_page=None,
+                        ecg_data_file=ecg_json_path or None,
+                        report_format=str(pdf_format),
+                        conclusions=conclusions,
+                        arrhythmia=None,
+                        reports_dir=str((Path(__file__).resolve().parents[2] / "reports")),
+                        save_local=True,
+                        send=True,
+                    )
+                except Exception as payload_err:
+                    print(f"Unified payload send failed: {payload_err}")
+
+            try:
+                import threading as _threading
+                _threading.Thread(target=_send_to_server, daemon=True).start()
+            except Exception:
+                _send_to_server()
 
             try:
                 from dashboard.history_window import append_history_entry
