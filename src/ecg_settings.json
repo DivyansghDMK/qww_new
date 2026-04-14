@@ -7,7 +7,7 @@
   "hardware_version": "",
   "printer_average_wave": "on",
   "filter_ac": "50",
-  "filter_emg": "25",
+  "filter_emg": "150",
   "filter_dft": "0.5",
   "system_beat_vol": "off",
   "system_language": "en",

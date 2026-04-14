@@ -2298,6 +2298,8 @@ class ECGAnalysisWindow(QDialog):
                 'p_axis': '--', 'QRS_axis': '--', 't_axis': '--',
                 'lead_seq': lead_seq,
                 'logo_path': str(self.analysis_pdf_logo_path),
+                'filter_band': f"{self.filter_dft or '0.5'}-{self.filter_emg or '150'}Hz",
+                'ac_frequency': f"{self.filter_ac or '50'}Hz",
             }
             try:
                 if rv5sv1:
@@ -2323,6 +2325,7 @@ class ECGAnalysisWindow(QDialog):
                 'doctor_name': '' if anonymize_pdf else pat.get('doctor', ''),
                 'org': '' if anonymize_pdf else pat.get('Org.', ''),
                 'phone': '' if anonymize_pdf else (pat.get('phone', '') or pat.get('doctor_mobile', '')),
+                'name': '' if anonymize_pdf else patient_name,
             }
             extra_figs = []
             if self.manual_annotations:
