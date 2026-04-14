@@ -543,7 +543,7 @@ def capture_real_ecg_graphs_from_dashboard(dashboard_instance=None, ecg_test_pag
     try:
         from ecg.ecg_filters import apply_dft_filter, apply_emg_filter, apply_ac_filter
         dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
-        emg_setting = str(settings_manager.get_setting("filter_emg", "off")).strip()
+        emg_setting = str(settings_manager.get_setting("filter_emg", "25")).strip()
         ac_setting = str(settings_manager.get_setting("filter_ac", "off")).strip()
         filtered_ecg_data = {}
         for lead, signal in real_ecg_data.items():
@@ -2457,7 +2457,7 @@ def generate_ecg_report(filename="ecg_report.pdf", data=None, lead_images=None, 
     master_drawing.add(st_label)
 
     # SECOND COLUMN - Filter Band (SAME LINE AS QTc - right column)
-    emg_setting = str(settings_manager.get_setting("filter_emg", "off")).strip()
+    emg_setting = str(settings_manager.get_setting("filter_emg", "25")).strip()
     dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
     ac_setting = str(settings_manager.get_setting("filter_ac", "off")).strip()
     ac_frequency = f"{ac_setting}Hz" if ac_setting in ("50", "60") else "Off"
@@ -3154,7 +3154,7 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     wave_gain_setting = settings_manager.get_setting("wave_gain", "10")
     wave_speed_mm_s = _safe_float(wave_speed_setting, 25.0)
     wave_gain_mm_mv = _safe_float(wave_gain_setting, 10.0)
-    emg_setting = str(settings_manager.get_setting("filter_emg", "off")).strip()
+    emg_setting = str(settings_manager.get_setting("filter_emg", "25")).strip()
     dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
     ac_setting = str(settings_manager.get_setting("filter_ac", "off")).strip()
     ac_frequency = f"{ac_setting}Hz" if ac_setting in ("50", "60") else "Off"
@@ -3755,7 +3755,7 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
             from ecg.ecg_filters import apply_dft_filter, apply_emg_filter, apply_ac_filter
 
             dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
-            emg_setting = str(settings_manager.get_setting("filter_emg", "off")).strip()
+            emg_setting = str(settings_manager.get_setting("filter_emg", "25")).strip()
             ac_setting = str(settings_manager.get_setting("filter_ac", "off")).strip()
 
             pad_filt_n = min(max(12, int(0.35 * float(report_sampling_rate))), max(0, adc_data.size // 3))
@@ -4109,7 +4109,7 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
     # ST removed per user request
     
     # Filter Band and Speed/Gain (merged in one line)
-    emg_setting = str(settings_manager.get_setting("filter_emg", "off")).strip()
+    emg_setting = str(settings_manager.get_setting("filter_emg", "25")).strip()
     dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
     ac_setting = str(settings_manager.get_setting("filter_ac", "off")).strip()
     ac_frequency = f"{ac_setting}Hz" if ac_setting in ("50", "60") else "Off"

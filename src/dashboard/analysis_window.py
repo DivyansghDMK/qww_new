@@ -2220,7 +2220,10 @@ class ECGAnalysisWindow(QDialog):
             c2 = rpt.get('conclusion', [])
             conclusions = [c2] if isinstance(c2, str) else (c2 if isinstance(c2, list) else [])
 
-        patient_name = pat.get('name', 'Unknown')
+        p_fallback = rpt.get('patient', {})
+        patient_name = pat.get('name') or rpt.get('patient_name') or p_fallback.get('name') or 'Unknown'
+        patient_age = pat.get('age') or p_fallback.get('age') or ''
+        patient_gender = pat.get('gender') or p_fallback.get('gender') or ''
         timestamp    = datetime.now().strftime('%Y%m%d_%H%M%S')
         project_root = Path(__file__).resolve().parents[2]
         reports_dir  = project_root / "reports"
@@ -2255,7 +2258,7 @@ class ECGAnalysisWindow(QDialog):
             grp.addButton(rb); fmt_lay.addWidget(rb)
 
         anonymize_cb = QCheckBox("Hide patient details on PDF (send to server only)")
-        anonymize_cb.setChecked(True)
+        anonymize_cb.setChecked(False)
         fmt_lay.addWidget(anonymize_cb)
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.accepted.connect(fmt_dlg.accept)
@@ -2312,10 +2315,10 @@ class ECGAnalysisWindow(QDialog):
             except: pass
 
             pat_mapped = {
-                'first_name': '' if anonymize_pdf else pat.get('name', 'Unknown'),
+                'first_name': '' if anonymize_pdf else patient_name,
                 'last_name': '',
-                'age': '' if anonymize_pdf else pat.get('age', ''),
-                'gender': '' if anonymize_pdf else pat.get('gender', ''),
+                'age': '' if anonymize_pdf else patient_age,
+                'gender': '' if anonymize_pdf else patient_gender,
                 'date_time': pat.get('report_date') or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 'doctor_name': '' if anonymize_pdf else pat.get('doctor', ''),
                 'org': '' if anonymize_pdf else pat.get('Org.', ''),

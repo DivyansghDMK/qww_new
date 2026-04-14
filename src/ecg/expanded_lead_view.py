@@ -1909,7 +1909,7 @@ class ExpandedLeadView(QDialog):
                     dft_opt = 'off'
                     if hasattr(self._parent, 'settings_manager') and self._parent.settings_manager is not None:
                         ac_opt = str(self._parent.settings_manager.get_setting('filter_ac', '50')).strip()
-                        emg_opt = str(self._parent.settings_manager.get_setting('filter_emg', 'off')).strip()
+                        emg_opt = str(self._parent.settings_manager.get_setting('filter_emg', '25')).strip()
                         dft_opt = str(self._parent.settings_manager.get_setting('filter_dft', 'off')).strip()
 
                     if apply_ecg_filters is not None:
@@ -2508,7 +2508,7 @@ class ExpandedLeadView(QDialog):
                     dft_opt = "off"
                     if hasattr(self._parent, "settings_manager") and self._parent.settings_manager is not None:
                         ac_opt = str(self._parent.settings_manager.get_setting("filter_ac", "50")).strip()
-                        emg_opt = str(self._parent.settings_manager.get_setting("filter_emg", "off")).strip()
+                        emg_opt = str(self._parent.settings_manager.get_setting("filter_emg", "25")).strip()
                         dft_opt = str(self._parent.settings_manager.get_setting("filter_dft", "off")).strip()
 
                     filtered_signal = apply_ecg_filters(

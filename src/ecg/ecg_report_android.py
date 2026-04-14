@@ -39,7 +39,7 @@ FIXED_SPEED   = 25.0
 FIXED_GAIN    = 10.0
 MM_PER_SAMPLE = FIXED_SPEED / ECG_FS   # 0.05 mm/sample
 REPORT_AC_SETTING = "50"
-REPORT_EMG_SETTING = "150"
+REPORT_EMG_SETTING = "25"
 REPORT_DFT_SETTING = "0.5"
 REPORT_DEMO_MODE = False
 # ADC_PER_MM: ADC counts per 1mm at standard 10mm/mV gain.
@@ -136,7 +136,7 @@ def generate_report(
             return default
 
     ac_setting  = _get_filter_setting("filter_ac",  "50")   # "50", "60", or "off"
-    emg_setting = _get_filter_setting("filter_emg", "150")  # "25".."150" or "off"
+    emg_setting = _get_filter_setting("filter_emg", "25")  # "25".."150" or "off"
     dft_setting = _get_filter_setting("filter_dft", "0.5")  # "0.05", "0.5", or "off"
     REPORT_AC_SETTING = ac_setting
     REPORT_EMG_SETTING = emg_setting
@@ -308,7 +308,7 @@ def _draw_header(ax, frozen, patient, PW, fmt):
                 phone = f"+91 {digits_only}"
             else:
                 phone = f"+91 {phone.strip()}"
-        filter_band = frozen.get('filter_band', '0.5-150Hz')
+        filter_band = frozen.get('filter_band', '0.5-25Hz')
         ac_freq     = frozen.get('ac_frequency', '50Hz')
         speed_text  = frozen.get('speed_text', f"{FIXED_SPEED:.1f} mm/s")
         gain_text   = frozen.get('gain_text', f"{FIXED_GAIN:.1f} mm/mV")
@@ -471,7 +471,7 @@ def _draw_header(ax, frozen, patient, PW, fmt):
             phone = f"+91 {digits_only}"
         else:
             phone = f"+91 {phone.strip()}"
-    filter_band = frozen.get('filter_band', '0.5-150Hz')
+    filter_band = frozen.get('filter_band', '0.5-25Hz')
     ac_freq     = frozen.get('ac_frequency', '50Hz')
     speed_text  = frozen.get('speed_text', f'{FIXED_SPEED:.1f} mm/s')
     gain_text   = frozen.get('gain_text',  f'{FIXED_GAIN:.1f} mm/mV')

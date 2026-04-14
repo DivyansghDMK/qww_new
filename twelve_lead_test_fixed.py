@@ -6986,7 +6986,7 @@ class ECGTestPage(QWidget):
 
     def _create_overlay_widget(self):
         
-        from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QFrame
+        from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QFrame, QLabel
         
         # Create overlay container
         self._overlay_widget = QWidget()
@@ -7091,6 +7091,10 @@ class ECGTestPage(QWidget):
         # Add widgets to top panel
         top_layout.addWidget(close_btn)
         top_layout.addStretch()
+        # Shows current overlay window length (seconds + samples) for 12:1 / 6:2 in all modes
+        self._overlay_window_label = QLabel("")
+        self._overlay_window_label.setStyleSheet("color: #e0e0e0; font-weight: bold; font-size: 12px;")
+        top_layout.addWidget(self._overlay_window_label)
         top_layout.addWidget(self.light_mode_btn)
         top_layout.addWidget(self.dark_mode_btn)
         top_layout.addWidget(self.graph_mode_btn)
@@ -7146,61 +7150,67 @@ class ECGTestPage(QWidget):
     #         return (16, num_leads * 1.2) if layout == "12x1" else (16, 12)
 
     def _create_overlay_figure(self, overlay_layout):
-        
-        from matplotlib.figure import Figure
-        from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+        """Build the 12:1 overlay using PyQtGraph (same library as main grid) so
+        wave density is pixel-identical across Light / Dark / Graph modes."""
+        import pyqtgraph as pg
         import numpy as np
-        from PyQt5.QtWidgets import QScrollArea
-        
-        # Create figure with all leads - adjust spacing for better visibility
+        from PyQt5.QtWidgets import QScrollArea, QWidget, QVBoxLayout
+
         num_leads = len(self.leads)
-        fig = Figure(figsize=(16, num_leads * 1.2), facecolor='none')  # Changed to transparent
-        # figsize = self._calculate_adaptive_figsize("12x1", num_leads)
-        # fig = Figure(figsize=figsize, facecolor='none')  # Changed to transparent
-        
-        # Adjust subplot parameters for better spacing
-        fig.subplots_adjust(left=0.05, right=0.95, top=0.99, bottom=0.06, hspace=0.02)
-        
-        self._overlay_axes = []
-        self._overlay_lines = []
-        
+
+        # Container that holds all individual PlotWidgets
+        container = QWidget()
+        container.setStyleSheet("background: transparent;")
+        vbox = QVBoxLayout(container)
+        vbox.setContentsMargins(0, 0, 0, 0)
+        vbox.setSpacing(0)
+
+        self._overlay_axes = []   # list of pg.PlotWidget (used as "axes")
+        self._overlay_lines = []  # list of pg.PlotDataItem
+        self._overlay_pg = True   # flag so mode-switch code knows we're using pg
+
+        lead_h = 72  # px per lead row
+
         for idx, lead in enumerate(self.leads):
-            ax = fig.add_subplot(num_leads, 1, idx+1)
-            ax.set_facecolor('none')  # Changed to transparent
-            
-            # Remove all borders and spines
-            for spine in ax.spines.values():
-                spine.set_visible(False)
-            
-            # Remove all ticks and labels for cleaner look
-            ax.set_xticks([])
-            ax.set_yticks([])
-            ax.set_ylabel(lead, color='#00ff00', fontsize=12, fontweight='bold', labelpad=5)
-            
-            # Create line with initial data
-            line, = ax.plot(np.arange(self.buffer_size), [np.nan]*self.buffer_size, color="#00ff00", lw=0.7)
-            line.set_clip_on(False)
-            self._overlay_axes.append(ax)
-            self._overlay_lines.append(line)
-        
-        self._overlay_canvas = FigureCanvas(fig)
-        self._overlay_canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self._overlay_canvas.setStyleSheet("background: transparent;")
+            pw = pg.PlotWidget()
+            pw.setFixedHeight(lead_h)
+            pw.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            pw.setBackground('transparent')
+            pw.showAxis('left', False)
+            pw.showAxis('bottom', False)
+            pw.getPlotItem().setContentsMargins(0, 0, 0, 0)
+            pw.getViewBox().setMouseEnabled(x=False, y=False)
+            pw.getViewBox().setDefaultPadding(0)
+
+            # Lead name label
+            label = pg.TextItem(text=lead, color='#00ff00',
+                                anchor=(0, 0.5))
+            label.setFont(pg.Qt.QtGui.QFont('Arial', 9, pg.Qt.QtGui.QFont.Bold))
+            pw.addItem(label)
+            label.setPos(0, 2048)   # will be repositioned in update
+
+            curve = pw.plot(np.full(self.buffer_size, np.nan),
+                            pen=pg.mkPen('#00ff00', width=0.8))
+            self._overlay_axes.append(pw)
+            self._overlay_lines.append(curve)
+            vbox.addWidget(pw)
+
         scroll_area = QScrollArea()
         scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll_area.setWidgetResizable(True)
-        scroll_area.setAlignment(Qt.AlignTop)
         scroll_area.setFrameShape(QFrame.NoFrame)
         scroll_area.setStyleSheet("QScrollArea { border: none; background: transparent; }")
-        lead_height = 80
-        self._overlay_canvas.setMinimumHeight(int(num_leads * lead_height))
-        scroll_area.setWidget(self._overlay_canvas)
-        scroll_area.setMinimumHeight(int(6 * lead_height))
+        container.setMinimumHeight(num_leads * lead_h)
+        scroll_area.setWidget(container)
+        scroll_area.setMinimumHeight(6 * lead_h)
         scroll_area.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         overlay_layout.addWidget(scroll_area, 1)
-        
-        # Start update timer for overlay
+
+        # Keep canvas reference for compatibility
+        self._overlay_canvas = None
+        self._overlay_container = container
+
         self._overlay_timer = QTimer(self)
         self._overlay_timer.timeout.connect(self._update_overlay_plots)
         self._overlay_timer.start(100)
@@ -7232,6 +7242,12 @@ class ECGTestPage(QWidget):
             elif hasattr(self, 'sampling_rate') and self.sampling_rate > 10:
                 sampling_rate = float(self.sampling_rate)
             samples_to_show = int(sampling_rate * seconds_to_show)
+
+            # Update the on-screen window info (same for light/dark/graph; only depends on layout + speed)
+            try:
+                self._set_overlay_window_info(layout, seconds_to_show, samples_to_show, sampling_rate, wave_speed)
+            except Exception:
+                pass
             
             # Return the calculated samples (same as main plots - no buffer size limit)
             # The data selection will handle cases where data is smaller
@@ -7254,7 +7270,37 @@ class ECGTestPage(QWidget):
             sampling_rate = float(self.demo_manager.samples_per_second)
         
         samples_to_show = int(sampling_rate * seconds_to_show)
+
+        # Update the on-screen window info (same for light/dark/graph; only depends on layout + speed)
+        try:
+            self._set_overlay_window_info(layout, seconds_to_show, samples_to_show, sampling_rate, wave_speed)
+        except Exception:
+            pass
         return max(1, samples_to_show)
+
+    def _set_overlay_window_info(self, layout, seconds_to_show, samples_to_show, sampling_rate, wave_speed):
+        """
+        Keep a small UI indicator updated with the current overlay time window.
+        This answers "how many samples" are used for 12:1 / 6:2 and stays the same across light/dark/graph modes.
+        """
+        # Cache to avoid re-setting the label every timer tick when nothing changed
+        state = (
+            str(layout),
+            float(seconds_to_show),
+            int(samples_to_show),
+            float(sampling_rate),
+            float(wave_speed),
+        )
+        if getattr(self, "_overlay_window_state", None) == state:
+            return
+        self._overlay_window_state = state
+
+        layout_label = "12:1" if str(layout) == "12x1" else ("6:2" if str(layout) == "6x2" else str(layout))
+        text = f"{layout_label} • {seconds_to_show:.1f}s • {int(samples_to_show)} samples"
+
+        lbl = getattr(self, "_overlay_window_label", None)
+        if lbl is not None:
+            lbl.setText(text)
 
     def _update_overlay_plots(self):
         
@@ -7275,23 +7321,12 @@ class ECGTestPage(QWidget):
                 line = self._overlay_lines[idx]
                 ax = self._overlay_axes[idx]
 
-                # Ensure overlay line length matches current buffer size
+                # PyQtGraph: buffer size is just the target length -- no xdata sync needed
                 buffer_len = target_buffer_len
-                try:
-                    xdata = line.get_xdata()
-                    current_len = len(xdata) if xdata is not None else 0
-                    if current_len != buffer_len:
-                        new_x = np.arange(buffer_len)
-                        line.set_xdata(new_x)
-                        current_len = buffer_len
-                    if current_len:
-                        buffer_len = current_len
-                except Exception as e:
-                    print(f" Overlay line sync error (12-lead): {e}")
-                    buffer_len = target_buffer_len
-                
+
                 plot_data = np.full(buffer_len, np.nan)
-                
+
+
                 if data is not None and len(data) > 0:
                     # 12:1 overlay waves appear immediately at acquisition start.
                     try:
@@ -7400,45 +7435,29 @@ class ECGTestPage(QWidget):
                     if is_demo_mode and idx == 1:  # Lead II
                         print(f" Overlay demo mode: Lead {lead}, gain={gain_factor:.2f}, raw_range={np.max(np.abs(raw)):.1f}, gained_range={np.max(np.abs(centered)):.1f}")
                     
-                    # Match main plots: if we have enough data, take exactly buffer_len samples
-                    # If not enough data, stretch what we have to fill buffer_len
                     n = len(centered)
-                    if n < buffer_len:
-                        # Stretch available data to fill buffer_len
-                        stretched = np.interp(
-                            np.linspace(0, n-1, buffer_len),
-                            np.arange(n),
-                            centered
-                        )
-                        plot_data[:] = stretched
-                    else:
-                        # Take exactly buffer_len samples from the end (same as main plots)
+                    if n >= buffer_len:
                         plot_data[:] = centered[-buffer_len:]
-                    
-                    # Set fixed Y-axis range: 0-4095 for non-AVR leads (centered at 2048), -4095-0 for AVR (centered at -2048)
-                    # Same as main 12-lead grid view
+                    elif n > 0:
+                        plot_data[-n:] = centered
+
                     lead_name = self.leads[idx] if idx < len(self.leads) else ""
                     if lead_name == 'aVR':
                         ymin, ymax = -4095, 0
                     else:
                         ymin, ymax = 0, 4095
-                    
-                    ax.set_ylim(ymin, ymax)
+
+                    # PyQtGraph update
+                    line.setData(plot_data)
+                    ax.setYRange(ymin, ymax, padding=0)
+                    ax.setXRange(0, max(buffer_len - 1, 1), padding=0)
                 else:
-                    # Default range when no data
                     lead_name = self.leads[idx] if idx < len(self.leads) else ""
                     if lead_name == 'aVR':
-                        ymin, ymax = -4095, 0
+                        ax.setYRange(-4095, 0, padding=0)
                     else:
-                        ymin, ymax = 0, 4095
-                    ax.set_ylim(ymin, ymax)
-                
-                # Set x-limits
-                ax.set_xlim(0, max(buffer_len - 1, 1))
-                line.set_ydata(plot_data)
-        
-        if hasattr(self, '_overlay_canvas'):
-            self._overlay_canvas.draw_idle()
+                        ax.setYRange(0, 4095, padding=0)
+                    ax.setXRange(0, max(target_buffer_len - 1, 1), padding=0)
 
     def _apply_current_overlay_mode(self):
 
@@ -7509,18 +7528,23 @@ class ECGTestPage(QWidget):
                 }
             """)
             
-            for ax in self._overlay_axes:
-                ax.set_facecolor('#ffffff')
-                ax.tick_params(axis='x', colors='#333333', labelsize=10)
-                ax.tick_params(axis='y', colors='#333333', labelsize=10)
-                ax.set_ylabel(ax.get_ylabel(), color='#333333', fontsize=14, fontweight='bold', labelpad=15)
-                for spine in ax.spines.values():
-                    spine.set_visible(False)
-            
-            for line in self._overlay_lines:
-                line.set_color('#0066cc')
-                line.set_linewidth(0.7)
-        
+            # Light mode: white background, dark-blue waveform
+            import pyqtgraph as pg
+            if hasattr(self, '_overlay_container') and self._overlay_container:
+                self._overlay_container.setStyleSheet("background: #ffffff;")
+            for pw in self._overlay_axes:
+                pw.setBackground('#ffffff')
+                for item in pw.getPlotItem().items:
+                    if hasattr(item, 'setColor'):
+                        item.setColor('#333333')
+            for curve in self._overlay_lines:
+                curve.setPen(pg.mkPen('#0066cc', width=0.8))
+            try:
+                if hasattr(self, "_overlay_window_label") and self._overlay_window_label:
+                    self._overlay_window_label.setStyleSheet("color: #333333; font-weight: bold; font-size: 12px;")
+            except Exception:
+                pass
+
         elif mode == "dark":
             self.dark_mode_btn.setStyleSheet(active_button_style)
             self._overlay_widget.setStyleSheet("""
@@ -7530,25 +7554,32 @@ class ECGTestPage(QWidget):
                     border-radius: 15px;
                 }
             """)
-            
-            for ax in self._overlay_axes:
-                ax.set_facecolor('#000')
-                ax.tick_params(axis='x', colors='#00ff00', labelsize=10)
-                ax.tick_params(axis='y', colors='#00ff00', labelsize=10)
-                ax.set_ylabel(ax.get_ylabel(), color='#00ff00', fontsize=14, fontweight='bold', labelpad=15)
-                for spine in ax.spines.values():
-                    spine.set_visible(False)
-            
-            for line in self._overlay_lines:
-                line.set_color('#00ff00')
-                line.set_linewidth(0.7)
-        
+            # Dark mode: black background, green waveform
+            import pyqtgraph as pg
+            if hasattr(self, '_overlay_container') and self._overlay_container:
+                self._overlay_container.setStyleSheet("background: #000000;")
+            for pw in self._overlay_axes:
+                pw.setBackground('#000000')
+                for item in pw.getPlotItem().items:
+                    if hasattr(item, 'setColor'):
+                        item.setColor('#00ff00')
+            for curve in self._overlay_lines:
+                curve.setPen(pg.mkPen('#00ff00', width=0.8))
+            try:
+                if hasattr(self, "_overlay_window_label") and self._overlay_window_label:
+                    self._overlay_window_label.setStyleSheet("color: #e0e0e0; font-weight: bold; font-size: 12px;")
+            except Exception:
+                pass
+
         elif mode == "graph":
             self.graph_mode_btn.setStyleSheet(active_button_style)
             self._apply_graph_mode()
-        
-        if hasattr(self, '_overlay_canvas'):
-            self._overlay_canvas.draw_idle()
+            try:
+                if hasattr(self, "_overlay_window_label") and self._overlay_window_label:
+                    self._overlay_window_label.setStyleSheet("color: #333333; font-weight: bold; font-size: 12px;")
+            except Exception:
+                pass
+        # PyQtGraph redraws automatically — no draw_idle() needed
 
     def _clear_all_backgrounds(self):
         
@@ -7596,131 +7627,6 @@ class ECGTestPage(QWidget):
         except Exception as e:
             print(f"Error clearing backgrounds: {e}")
 
-    def _apply_graph_mode(self):
-        """
-        Apply graph mode with pink ECG grid lines drawn on the container background.
-        Adjust minor grid density for 12x1 vs 6x2 overlay modes.
-        """
-        try:
-            from matplotlib.collections import LineCollection
-
-            bg_color = '#ffe7eb'
-            minor_color = '#ffd1d1'
-            major_color = '#ffb3b3'
-            
-            if hasattr(self, '_overlay_widget'):
-                self._overlay_widget.setStyleSheet(f"""
-                    QWidget {{
-                        background: {bg_color};
-                        border: 2px solid #ff6600;
-                        border-radius: 15px;
-                    }}
-                """)
-
-            # Apply pink grid background to the figure using Line2D
-            if hasattr(self, '_overlay_canvas') and self._overlay_canvas.figure:
-                fig = self._overlay_canvas.figure
-
-                # Pink paper background
-                fig.patch.set_facecolor(bg_color)
-
-                # Clear any previous grid/background
-                if hasattr(fig, '_grid_lines'):
-                    for artist in fig._grid_lines:
-                        try:
-                            artist.remove()
-                        except:
-                            pass
-                    fig._grid_lines = []
-
-                # Remove any existing background image from figure
-                if hasattr(fig, '_figure_background'):
-                    try:
-                        fig._figure_background.remove()
-                        delattr(fig, '_figure_background')
-                    except:
-                        pass
-
-                # --- True 1mm / 5mm grid based on figure physical size ---
-                mm_per_inch = 25.4
-                fig_width_in = fig.get_figwidth()
-                fig_height_in = fig.get_figheight()
-                width_mm = max(1.0, fig_width_in * mm_per_inch)
-                height_mm = max(1.0, fig_height_in * mm_per_inch)
-
-                # Fraction of figure for 1mm step in each direction
-                minor_step_x = 1.0 / width_mm
-                minor_step_y = 1.0 / height_mm
-                v_lines_minor = []
-                v_lines_major = []
-                h_lines_minor = []
-                h_lines_major = []
-
-                # Vertical lines (time axis)
-                x = 0.0
-                idx = 0
-                while x <= 1.0 + 1e-9:
-                    is_major = (idx % 5 == 0)
-                    if is_major:
-                        v_lines_major.append([(x, 0), (x, 1)])
-                    else:
-                        v_lines_minor.append([(x, 0), (x, 1)])
-                    x += minor_step_x
-                    idx += 1
-
-                # Horizontal lines (amplitude axis)
-                y = 0.0
-                jdx = 0
-                while y <= 1.0 + 1e-9:
-                    is_major = (jdx % 5 == 0)
-                    if is_major:
-                        h_lines_major.append([(0, y), (1, y)])
-                    else:
-                        h_lines_minor.append([(0, y), (1, y)])
-                    y += minor_step_y
-                    jdx += 1
-
-                grid_artists = []
-                
-                # Add minor grid (drawn first, behind major)
-                if v_lines_minor or h_lines_minor:
-                    minor_lc = LineCollection(v_lines_minor + h_lines_minor, 
-                                             colors=minor_color, linewidths=0.6, 
-                                             alpha=0.9, zorder=0, transform=fig.transFigure)
-                    fig.add_artist(minor_lc)
-                    grid_artists.append(minor_lc)
-                
-                # Add major grid
-                if v_lines_major or h_lines_major:
-                    major_lc = LineCollection(v_lines_major + h_lines_major, 
-                                             colors=major_color, linewidths=1.0, 
-                                             alpha=0.9, zorder=0, transform=fig.transFigure)
-                    fig.add_artist(major_lc)
-                    grid_artists.append(major_lc)
-
-                fig._grid_lines = grid_artists
-
-            # Make all axes transparent
-            for ax in getattr(self, '_overlay_axes', []):
-                ax.set_facecolor('none')
-                ax.patch.set_alpha(0.0)
-                ax.grid(False)
-                for spine in ax.spines.values():
-                    spine.set_visible(False)
-                ax.set_xticks([])
-                ax.set_yticks([])
-                ax.set_ylabel(ax.get_ylabel(), color='#333333',
-                            fontsize=12, fontweight='bold', labelpad=12)
-
-            # ECG line style
-            for line in getattr(self, '_overlay_lines', []):
-                line.set_color('#000000')
-                line.set_linewidth(0.8)
-                line.set_alpha(1.0)
-                line.set_zorder(50)
-
-        except Exception as e:
-            print(f"Error applying graph mode: {e}")
 
     def _replace_plot_area_with_overlay(self):
         
@@ -7837,7 +7743,7 @@ class ECGTestPage(QWidget):
             print("Demo mode active - overlay will show demo data")
 
     def _create_two_column_overlay_widget(self):
-        from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QFrame
+        from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QFrame, QLabel
         
         # Create overlay container
         self._overlay_widget = QWidget()
@@ -7942,6 +7848,10 @@ class ECGTestPage(QWidget):
         # Add widgets to top panel
         top_layout.addWidget(close_btn)
         top_layout.addStretch()
+        # Shows current overlay window length (seconds + samples) for 12:1 / 6:2 in all modes
+        self._overlay_window_label = QLabel("")
+        self._overlay_window_label.setStyleSheet("color: #e0e0e0; font-weight: bold; font-size: 12px;")
+        top_layout.addWidget(self._overlay_window_label)
         top_layout.addWidget(self.light_mode_btn)
         top_layout.addWidget(self.dark_mode_btn)
         top_layout.addWidget(self.graph_mode_btn)
@@ -7960,72 +7870,57 @@ class ECGTestPage(QWidget):
         self._apply_overlay_mode("dark")
 
     def _create_two_column_figure(self, overlay_layout):
-        from matplotlib.figure import Figure
-        from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+        """Build the 6:2 overlay using PyQtGraph so wave density is identical across all modes."""
+        import pyqtgraph as pg
         import numpy as np
-        
-        # Define the two columns of leads
-        left_leads = ["I", "II", "III", "aVR", "aVL", "aVF"]
-        right_leads = ["V1", "V2", "V3", "V4", "V5", "V6"]
-        
-        # Create figure with 2 columns and 6 rows
-        fig = Figure(figsize=(16, 12), facecolor='none')
-        # figsize = self._calculate_adaptive_figsize("6x2")
-        # fig = Figure(figsize=figsize, facecolor='none')
-        
-        # Adjust subplot parameters for better spacing
-        fig.subplots_adjust(left=0.05, right=0.95, top=0.98, bottom=0.02, hspace=0.05, wspace=0.1)
-        
+        from PyQt5.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout
+
+        left_leads  = ["I",  "II",  "III", "aVR", "aVL", "aVF"]
+        right_leads = ["V1", "V2",  "V3",  "V4",  "V5",  "V6"]
+
         self._overlay_axes = []
         self._overlay_lines = []
-        
-        # Create left column (limb leads)
-        for idx, lead in enumerate(left_leads):
-            ax = fig.add_subplot(6, 2, 2*idx + 1)
-            ax.set_facecolor('none')
-            
-            # Remove all borders and spines
+        self._overlay_pg = True
 
-            for spine in ax.spines.values():
-                spine.set_visible(False)
-            
-            # Remove all ticks and labels for cleaner look
-            ax.set_xticks([])
-            ax.set_yticks([])
-            ax.set_ylabel(lead, color='#00ff00', fontsize=12, fontweight='bold', labelpad=12)
-            
-            # Create line with initial data
-            line, = ax.plot(np.arange(self.buffer_size), [np.nan]*self.buffer_size, color="#00ff00", lw=0.7)
-            line.set_clip_on(False)
-            self._overlay_axes.append(ax)
-            self._overlay_lines.append(line)
-        
-        # Create right column (chest leads)
-        for idx, lead in enumerate(right_leads):
-            ax = fig.add_subplot(6, 2, 2*idx + 2)
-            ax.set_facecolor('none')
-            
-            # Remove all borders and spines
-            for spine in ax.spines.values():
-                spine.set_visible(False)
-            
-            # Remove all ticks and labels for cleaner look
-            ax.set_xticks([])
-            ax.set_yticks([])
-            ax.set_ylabel(lead, color='#00ff00', fontsize=12, fontweight='bold', labelpad=12)
-            
-            # Create line with initial data
-            line, = ax.plot(np.arange(self.buffer_size), [np.nan]*self.buffer_size, color="#00ff00", lw=0.7)
-            line.set_clip_on(False)
-            self._overlay_axes.append(ax)
-            self._overlay_lines.append(line)
-        
-        self._overlay_canvas = FigureCanvas(fig)
-        self._overlay_canvas.setStyleSheet("background: transparent;")
-        self._overlay_canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        overlay_layout.addWidget(self._overlay_canvas, 1)
-        
-        # Start update timer for overlay
+        lead_h = 72
+
+        grid_widget = QWidget()
+        grid_widget.setStyleSheet("background: transparent;")
+        hbox = QHBoxLayout(grid_widget)
+        hbox.setContentsMargins(0, 0, 0, 0)
+        hbox.setSpacing(4)
+
+        for col_leads in (left_leads, right_leads):
+            col_widget = QWidget()
+            col_widget.setStyleSheet("background: transparent;")
+            vbox = QVBoxLayout(col_widget)
+            vbox.setContentsMargins(0, 0, 0, 0)
+            vbox.setSpacing(0)
+            for lead in col_leads:
+                pw = pg.PlotWidget()
+                pw.setFixedHeight(lead_h)
+                pw.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                pw.setBackground('transparent')
+                pw.showAxis('left', False)
+                pw.showAxis('bottom', False)
+                pw.getPlotItem().setContentsMargins(0, 0, 0, 0)
+                pw.getViewBox().setMouseEnabled(x=False, y=False)
+                pw.getViewBox().setDefaultPadding(0)
+                label = pg.TextItem(text=lead, color='#00ff00', anchor=(0, 0.5))
+                label.setFont(pg.Qt.QtGui.QFont('Arial', 9, pg.Qt.QtGui.QFont.Bold))
+                pw.addItem(label)
+                label.setPos(0, 2048)
+                curve = pw.plot(np.full(self.buffer_size, np.nan),
+                                pen=pg.mkPen('#00ff00', width=0.8))
+                self._overlay_axes.append(pw)
+                self._overlay_lines.append(curve)
+                vbox.addWidget(pw)
+            hbox.addWidget(col_widget)
+
+        overlay_layout.addWidget(grid_widget, 1)
+        self._overlay_canvas = None
+        self._overlay_container = grid_widget
+
         self._overlay_timer = QTimer(self)
         self._overlay_timer.timeout.connect(self._update_two_column_plots)
         self._overlay_timer.start(100)
@@ -8057,20 +7952,8 @@ class ECGTestPage(QWidget):
                 line = self._overlay_lines[idx]
                 ax = self._overlay_axes[idx]
                 
-                # Ensure overlay line length matches current buffer size
+                # PyQtGraph: no xdata sync needed -- setData() accepts any length
                 buffer_len = target_buffer_len
-                try:
-                    xdata = line.get_xdata()
-                    current_len = len(xdata) if xdata is not None else 0
-                    if current_len != buffer_len:
-                        new_x = np.arange(buffer_len)
-                        line.set_xdata(new_x)
-                        current_len = buffer_len
-                    if current_len:
-                        buffer_len = current_len
-                except Exception as e:
-                    print(f" Overlay line sync error (6-lead): {e}")
-                    buffer_len = target_buffer_len
 
                 plot_data = np.full(buffer_len, np.nan)
                 
@@ -8180,43 +8063,31 @@ class ECGTestPage(QWidget):
                     if is_demo_mode and idx == 1:  # Lead II
                         print(f" 6:2 Overlay demo mode: Lead {lead}, gain={gain_factor:.2f}, raw_range={np.max(np.abs(raw)):.1f}, gained_range={np.max(np.abs(centered)):.1f}")
                     
-                    # Match main plots: if we have enough data, take exactly buffer_len samples
-                    # If not enough data, stretch what we have to fill buffer_len
+                    # Always represent the true sample window:
+                    # - if we have >= buffer_len samples, show the newest buffer_len
+                    # - if we have < buffer_len samples, right-align what we have and leave leading NaNs
                     n = len(centered)
-                    if n < buffer_len:
-                        # Stretch available data to fill buffer_len
-                        stretched = np.interp(
-                            np.linspace(0, n-1, buffer_len),
-                            np.arange(n),
-                            centered
-                        )
-                        plot_data[:] = stretched
-                    else:
-                        # Take exactly buffer_len samples from the end (same as main plots)
+                    if n >= buffer_len:
                         plot_data[:] = centered[-buffer_len:]
+                    elif n > 0:
+                        plot_data[-n:] = centered
                     
-                    # Set fixed Y-axis range: 0-4095 for non-AVR leads (centered at 2048), -4095-0 for AVR (centered at -2048)
-                    # Same as main 12-lead grid view
                     if lead == 'aVR':
                         ymin, ymax = -4095, 0
                     else:
                         ymin, ymax = 0, 4095
-                    
-                    ax.set_ylim(ymin, ymax)
+
+                    # PyQtGraph update
+                    line.setData(plot_data)
+                    ax.setYRange(ymin, ymax, padding=0)
+                    ax.setXRange(0, max(buffer_len - 1, 1), padding=0)
                 else:
-                    # Default range when no data
                     if lead == 'aVR':
-                        ymin, ymax = -4095, 0
+                        ax.setYRange(-4095, 0, padding=0)
                     else:
-                        ymin, ymax = 0, 4095
-                    ax.set_ylim(ymin, ymax)
-                
-                # Set x-limits
-                ax.set_xlim(0, max(buffer_len - 1, 1))
-                line.set_ydata(plot_data)
-        
-        if hasattr(self, '_overlay_canvas'):
-            self._overlay_canvas.draw_idle()
+                        ax.setYRange(0, 4095, padding=0)
+                    ax.setXRange(0, max(buffer_len - 1, 1), padding=0)
+        # PyQtGraph redraws automatically
 
     def interpolate(self, signal, factor):
         try:

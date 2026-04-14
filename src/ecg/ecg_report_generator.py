@@ -102,7 +102,7 @@ def _add_patient_header(master_drawing, full_name, age, gender, patient, date_ti
     p_qrs_t_text = f"{_fmt_axis(p_axis)}/{_fmt_axis(qrs_axis)}/{_fmt_axis(t_axis)}"
 
     # 4. Prepare Filter Info
-    emg_setting = str(settings_manager.get_setting("filter_emg", "off")).strip()
+    emg_setting = str(settings_manager.get_setting("filter_emg", "25")).strip()
     dft_setting = str(settings_manager.get_setting("filter_dft", "off")).strip()
     ac_setting = str(settings_manager.get_setting("filter_ac", "off")).strip()
     ac_frequency = f"{ac_setting}Hz" if ac_setting in ("50", "60") else "Off"

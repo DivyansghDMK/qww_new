@@ -267,7 +267,7 @@ def _settings_details(settings_manager: Any) -> Dict[str, str]:
         speed = settings_manager.get_setting('wave_speed', '25')
         gain = settings_manager.get_setting('wave_gain', '10')
         ac = settings_manager.get_setting('filter_ac', '50')
-        emg = settings_manager.get_setting('filter_emg', '150')
+        emg = settings_manager.get_setting('filter_emg', '25')
         dft = settings_manager.get_setting('filter_dft', '0.5')
         lead_seq = str(settings_manager.get_setting('lead_sequence', 'Standard') or 'Standard').lower()
         arrangement = 'cabrera' if lead_seq == 'cabrera' else 'standard'

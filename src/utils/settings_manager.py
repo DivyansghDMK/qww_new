@@ -19,7 +19,8 @@ class SettingsManager:
 
             # Filter settings
             "filter_ac": "50",
-            "filter_emg": "150",
+            # Default EMG cutoff for all modes (user can change in settings).
+            "filter_emg": "25",
             "filter_dft": "0.5",
 
             # System Setup settings
@@ -61,7 +62,7 @@ class SettingsManager:
                 hz = match.group(1).rstrip("0").rstrip(".")
                 if hz in {"25", "35", "40", "75", "100", "150"}:
                     return hz
-            return self.default_settings.get("filter_emg", "150") if hasattr(self, "default_settings") else "150"
+            return self.default_settings.get("filter_emg", "25") if hasattr(self, "default_settings") else "25"
 
         if key == "filter_dft":
             if text in ("off", "", "none", "0"):

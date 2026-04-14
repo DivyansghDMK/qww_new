@@ -2958,7 +2958,7 @@ class Dashboard(QWidget):
 
                         try:
                             from ecg.ecg_filters import apply_emg_filter, apply_ac_filter
-                            emg_setting = str(settings_src.get_setting("filter_emg", "150")).strip()
+                            emg_setting = str(settings_src.get_setting("filter_emg", "25")).strip()
                             ac_setting = str(settings_src.get_setting("filter_ac", "50")).strip()
                             if emg_setting.lower() != "off" and len(filtered_slice) >= 10:
                                 filtered_slice = apply_emg_filter(filtered_slice, float(actual_sampling_rate), emg_setting)
@@ -3981,13 +3981,7 @@ class Dashboard(QWidget):
                     if qtc_abnormal:
                         findings.append(f"Prolonged QTc - {qtc} ms")
 
-                # 2f. HRV
-                if hrv_label:
-                    conclusion_html += "<br><b style='color:#ff6600; font-size:14px;'>HRV:</b><br>"
-                    conclusion_html += f"{hrv_label}<br>"
-                    if hrv_issue:
-                        findings.append(f"Low HRV - {self._current_hrv:.1f} ms")
-
+                
                 # Recommendations
                 if recommendations:
                     conclusion_html += "<br><b style='color:#ff6600; font-size:14px;'>Recommendations:</b><br>"
