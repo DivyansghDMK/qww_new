@@ -917,7 +917,8 @@ def analyze_ecg(leads_dict: Dict[str, Sequence[float]], fs: float = DEFAULT_FS, 
     if sokolow_mv > 3.5 and "Normal sinus rhythm" not in results["arrhythmias"]:
         results["arrhythmias"].append("Normal sinus rhythm")
     if (gender.startswith("M") and cornell_mv > 2.8) or (gender.startswith("F") and cornell_mv > 2.0):
-        results["arrhythmias"].append("Normal sinus rhythm")
+        if "Normal sinus rhythm" not in results["arrhythmias"]:
+            results["arrhythmias"].append("Normal sinus rhythm")
 
     return results
 
@@ -939,7 +940,7 @@ def get_interpretation(results_dict: Dict[str, object]) -> List[str]:
     else:
         interpretations.append(rate_label)
 
-    if results_dict.get("is_nsr"):
+    if results_dict.get("is_nsr") or "Normal sinus rhythm" in arrhythmias:
         interpretations.append("Normal sinus rhythm")
     elif results_dict.get("nsr_failed_criteria"):
         interpretations.append("Sinus rhythm criteria not fully satisfied")

@@ -1476,7 +1476,7 @@ class Dashboard(QWidget):
             self.schedule_calendar.setSelectedDate(max_qdate)
             self.schedule_calendar.setCurrentPage(max_qdate.year(), max_qdate.month())
             
-            print(f" Calendar restrictions applied for new user. Signup: {signup_date_str}, Max: {max_date_obj}")
+            print(f" Calendar restrictions applied for new user. Signup: {signup_date_str}, Max: {max_qdate.toString('yyyy-MM-dd')}")
             
         except Exception as e:
             print(f"Error applying calendar restrictions: {e}")
@@ -2828,6 +2828,14 @@ class Dashboard(QWidget):
             #     self.metric_labels['sampling_rate'].setText(ecg_metrics['sampling_rate'])
             # Record last update time
             self._last_metrics_update_ts = _time.time()
+
+            # Refresh the ECG interpretation immediately after the metrics change.
+            # This keeps the dashboard conclusion in sync with the expanded 12-lead
+            # view instead of waiting for a slower fallback timer.
+            try:
+                self.update_live_conclusion()
+            except Exception:
+                pass
             
             # Keep ECG test page metrics identical to dashboard
             try:
@@ -3039,12 +3047,6 @@ class Dashboard(QWidget):
                             self.update_stress_and_hrv(original_data, actual_sampling_rate)
                             self._last_stress_update = time.time()
                         
-                        # Update live conclusion every 5 seconds
-                        if not hasattr(self, '_last_conclusion_update'):
-                            self._last_conclusion_update = 0
-                        if time.time() - self._last_conclusion_update > 5:
-                            self.update_live_conclusion()
-                            self._last_conclusion_update = time.time()
                     except Exception as e:
                         print(f" Error calculating ECG metrics: {e}")
                         # Continue with display even if metrics fail
@@ -3801,7 +3803,14 @@ class Dashboard(QWidget):
             rhythm_issue         = None
             is_normal_rhythm     = False
             rhythm_clean         = ""
-            ignore_values        = {"", "Analyzing Rhythm...", "Detecting...", "Insufficient Data", "Insufficient data"}
+            ignore_values        = {
+                "",
+                "Analyzing Rhythm...",
+                "Detecting...",
+                "Insufficient Data",
+                "Insufficient data",
+                "No specific arrhythmia detected.",
+            }
 
             if rhythm_text:
                 rhythm_clean = rhythm_text.strip()
@@ -3867,22 +3876,12 @@ class Dashboard(QWidget):
                 else:
                     qtc_label = f"QTc: <b>{qtc} ms</b> — <span style='color:#27ae60;'>Normal (&lt;440 ms)</span>"
 
-            # ─── HRV status ─────────────────────────────────────────────────────
-            hrv_issue = False
-            hrv_label = ""
-            if hasattr(self, '_current_hrv'):
-                hrv = self._current_hrv
-                if hrv < 50:
-                    hrv_issue = True
-                    hrv_label = f"HRV: <b>{hrv:.1f} ms</b> — <span style='color:#e74c3c;'>Low</span>"
-
             # ─── BUILD HTML ─────────────────────────────────────────────────────
             any_metric_abnormal = (
                 pr_status is not None
                 or qrs_status is not None
                 or hr_abnormal
                 or qtc_abnormal
-                or hrv_issue
             )
 
             # If acquisition/metrics are already available but the ECG page hasn't produced a rhythm label yet,
@@ -3949,7 +3948,7 @@ class Dashboard(QWidget):
                         "<b style='color:#ff6600; font-size:14px;'>♥ Heart-Based Rhythm Analysis:</b><br>"
                         "<span style='color:#27ae60; font-weight:bold;'>✔ Normal Sinus Rhythm</span><br><br>"
                     )
-                    findings.append("Normal Sinus Rhythm (with interval abnormality)")
+                    findings.append("Normal Sinus Rhythm")
 
                 # 2b. HR
                 if hr_label:

@@ -7,12 +7,10 @@ import sys
 import time
 import numpy as np
 from scipy.signal import butter, filtfilt
-from scipy.interpolate import interp1d
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QGridLayout,
     QSizePolicy, QScrollArea, QGroupBox, QFormLayout, QLineEdit, QComboBox,
-    QMessageBox, QApplication, QDialog, QGraphicsDropShadowEffect, QSlider, QCheckBox,
-    QTextEdit
+    QMessageBox, QApplication, QDialog, QGraphicsDropShadowEffect, QSlider, QCheckBox
 )
 from PyQt5.QtGui import QFont, QColor
 from PyQt5.QtCore import Qt, QTimer
@@ -21,18 +19,6 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import matplotlib.patches as patches
 from .arrhythmia_detector import ArrhythmiaDetector
-from .signal_quality import assess_signal_quality
-from .utils.helpers import get_display_gain
-
-try:
-    # Optional NeuroKit2-powered PQRST analyzer (if dependency is installed).
-    from .pqrst_neurokit import PQRSTAnalyzerNK
-    NEUROKIT2_AVAILABLE = True
-except Exception:
-    PQRSTAnalyzerNK = None
-    NEUROKIT2_AVAILABLE = False
-    print(" [ExpandedLeadView] NeuroKit2 not available — using basic PQRSTAnalyzer")
-
 try:
     from .ecg_filters import extract_respiration, estimate_baseline_drift, apply_ac_filter, apply_emg_filter, apply_ecg_filters
 except ImportError:
@@ -133,11 +119,9 @@ class PQRSTAnalyzer:
             if len(signal) < 10:
                 return []
             
-            # Signal is already filtered by the caller (_filter_signal in analyze_signal).
-            # FIX-BUG4: Do NOT filter again here — double Butterworth filtering introduces
-            # phase distortion and suppresses real R-peaks, causing underdetection.
-            filtered_signal = signal
-
+            # Filter the signal first to reduce noise
+            filtered_signal = self._filter_signal(signal)
+            
             # Differentiate
             diff = np.ediff1d(filtered_signal)
             # Square
@@ -390,20 +374,8 @@ class ExpandedLeadView(QDialog):
         self.sampling_rate = sampling_rate
         # Keep a reference to parent ECG page for shared metrics
         self._parent = parent
-
-        # Hardware calibration (12‑bit ADC, India-tuned mV scaling).
-        # adc_midpoint centers raw samples; counts_per_mv converts ADC counts → mV.
-        self.adc_midpoint = 2048.0
-        self.counts_per_mv = 500.0
-
-        if NEUROKIT2_AVAILABLE and PQRSTAnalyzerNK is not None:
-            self.analyzer = PQRSTAnalyzerNK(sampling_rate)
-            print(f" [ExpandedLeadView] Using NeuroKit2 PQRSTAnalyzer for lead {lead_name}")
-        else:
-            self.analyzer = PQRSTAnalyzer(sampling_rate)
-        # Pass India‑specific counts_per_mv into the detector so all amplitude
-        # thresholds operate in real mV instead of raw ADC counts.
-        self.arrhythmia_detector = ArrhythmiaDetector(sampling_rate, counts_per_mv=self.counts_per_mv)
+        self.analyzer = PQRSTAnalyzer(sampling_rate)
+        self.arrhythmia_detector = ArrhythmiaDetector(sampling_rate)
         # Display gain (no pre-scaling; gain applied once at display stage)
         self.display_gain = 1.0
 
@@ -461,12 +433,6 @@ class ExpandedLeadView(QDialog):
         # Track the rendered history window so display stabilization can reset
         # when the user jumps to a different portion of the recording.
         self._last_window_bounds = None
-        self._last_history_slider_update_time = 0.0
-        self._last_button_state_update_time = 0.0
-        self.ecg_line = None
-        self._quality_text_artist = None
-        self._live_display_lag_seconds = 0.5
-        self._live_baseline_anchor = None
         
         # Live data update
         self.timer = QTimer()
@@ -1140,8 +1106,6 @@ class ExpandedLeadView(QDialog):
             time = time[:min_len]
             scaled = scaled[:min_len]
         
-        self.ecg_line, = self.ax.plot([], [], color='#000080', linewidth=0.7, label='ECG Signal', antialiased=True, animated=True)
-
         if len(scaled) > 0:
             # Ensure we have valid (non-NaN) data
             valid_mask = ~np.isnan(scaled)
@@ -1157,7 +1121,7 @@ class ExpandedLeadView(QDialog):
                             kernel_size = 3
                             kernel = np.ones(kernel_size) / kernel_size
                             scaled = np.convolve(scaled, kernel, mode='same')
-                    self.ecg_line.set_data(time, scaled)
+                    self.ax.plot(time, scaled, color='#000080', linewidth=0.7, label='ECG Signal', antialiased=True)  # Dark Navy Blue
                 else:
                     # Plot only valid segments
                     time_valid = time[valid_mask]
@@ -1173,7 +1137,7 @@ class ExpandedLeadView(QDialog):
                                 kernel_size = 3
                                 kernel = np.ones(kernel_size) / kernel_size
                                 scaled_valid = np.convolve(scaled_valid, kernel, mode='same')
-                        self.ecg_line.set_data(time_valid, scaled_valid)
+                        self.ax.plot(time_valid, scaled_valid, color='#000080', linewidth=0.7, label='ECG Signal', antialiased=True)  # Dark Navy Blue
             else:
                 print(f"All data is NaN in expanded view initialization for lead {self.lead_name}")
         
@@ -1214,20 +1178,6 @@ class ExpandedLeadView(QDialog):
 
         if hasattr(self, 'canvas'):
             self.canvas.draw_idle()
-
-    def _can_use_fast_live_path(self):
-        """Always use the fast (no ax.clear) path during live mode.
-
-        Copying the 12-lead ECG box: it only calls set_data() on the existing
-        Line2D artist every frame and never clears the axes.  Calling ax.clear()
-        20 times per second forces matplotlib to re-layout tick labels, spine
-        widths, and the canvas bounding box, which is the root cause of the
-        waveform jumping up and down at high BPM.
-        """
-        try:
-            return self.is_live and self.ecg_line is not None
-        except Exception:
-            return False
     
     def create_metrics_panel(self, parent_layout):
         """Create the metrics panel"""
@@ -1319,20 +1269,10 @@ class ExpandedLeadView(QDialog):
     def start_live_mode(self):
         """Start live data updates"""
         self.is_live = True
-        # Persistent overlay artists managed in-place (no ax.clear each frame)
-        self._iso_line_artist = None    # isoelectric dashed baseline
-        self._median_line_artist = None  # median beat overlay
-        self._blit_bg = None
-        # Pre-seed the centering EMA from the full buffer so it doesn't drift on startup
-        if hasattr(self, 'ecg_data') and len(self.ecg_data) > 0:
-            self._live_center_ema = float(np.nanmedian(self.ecg_data))
-        else:
-            self._live_center_ema = None
-        self.timer.start(50)  # Faster refresh for smoother live feel
+        self.timer.start(100)  # Update every 100ms
 
     def resizeEvent(self, event):
         """Respond to window resizing by scaling fonts and components."""
-        self._blit_bg = None  # invalidate background cache if resized
         try:
             # Baseline matches initial size above
             base_w, base_h = 1400.0, 900.0
@@ -1351,9 +1291,6 @@ class ExpandedLeadView(QDialog):
         """Stop live data updates"""
         self.is_live = False
         self.timer.stop()
-        # Reset persistent overlay artists so the slow (non-live) path starts clean
-        self._iso_line_artist = None
-        self._median_line_artist = None
 
     def _resolve_runtime_sampling_rate(self, parent=None):
         """Return stable runtime sampling rate for plotting/analysis.
@@ -1384,12 +1321,12 @@ class ExpandedLeadView(QDialog):
     
     def update_live_data(self):
         """Update ECG data from parent (hardware)"""
-        if not self.is_live or self._parent is None:
+        if not self.is_live or not hasattr(self, 'parent') or self.parent() is None:
             return
         
         try:
             # Get current data from parent ECG test page
-            parent = self._parent
+            parent = self.parent()
             # Keep expanded-view sampling stable across focus/tab switches.
             try:
                 self.sampling_rate = float(self._resolve_runtime_sampling_rate(parent))
@@ -1410,8 +1347,16 @@ class ExpandedLeadView(QDialog):
                         # Only auto-advance if user hasn't manually positioned the slider
                         if not self.manual_view and not self.history_slider_active:
                             total_duration = len(self.ecg_data) / max(1.0, self.sampling_rate)
-                            lag_seconds = max(0.0, float(getattr(self, '_live_display_lag_seconds', 0.0)))
-                            self.view_window_offset = max(0.0, total_duration - self.view_window_duration - lag_seconds)
+                            target_offset = max(0.0, total_duration - self.view_window_duration)
+                            # Smooth the live follow position so bursty serial updates
+                            # do not make the visible window jump frame-to-frame.
+                            if not hasattr(self, "_live_follow_offset"):
+                                self._live_follow_offset = target_offset
+                            self._live_follow_offset = (
+                                0.85 * float(self._live_follow_offset)
+                                + 0.15 * float(target_offset)
+                            )
+                            self.view_window_offset = self._live_follow_offset
                         
                         # Update plot first (visual update)
                         self.update_plot()
@@ -1425,15 +1370,12 @@ class ExpandedLeadView(QDialog):
                         if current_time - self._last_analysis_time >= 0.5:  # Analyze every 500ms
                             self.analyze_ecg()
                             self._last_analysis_time = current_time
-
-                        if current_time - self._last_history_slider_update_time >= 0.25:
-                            self.update_history_slider()
-                            self._last_history_slider_update_time = current_time
+                        
+                        self.update_history_slider()
 
                         # Update button states to reflect parent's status
-                        if hasattr(self, 'expanded_start_btn') and current_time - self._last_button_state_update_time >= 0.25:
+                        if hasattr(self, 'expanded_start_btn'):
                             self.update_button_states()
-                            self._last_button_state_update_time = current_time
 
         except Exception as e:
             print(f"Error updating live data: {e}")
@@ -1507,6 +1449,106 @@ class ExpandedLeadView(QDialog):
         else:
             return 0
     
+    def analyze_ecg(self):
+        """Analyze the current ECG data segment for PQRST features and arrhythmias."""
+        if len(self.ecg_data) == 0:
+            return
+
+        try:
+            # FIX-ELV2: Pull metrics from parent's authoritative calculation
+            # so that expanded view and 12-lead view show identical numbers.
+            parent = self.parent() if hasattr(self, 'parent') and callable(self.parent) else None
+            parent_metrics = None
+            if parent and hasattr(parent, 'get_current_metrics'):
+                try:
+                    parent_metrics = parent.get_current_metrics()
+                except Exception:
+                    parent_metrics = None
+
+            if parent_metrics:
+                # Use parent's calculated metrics — single source of truth
+                rr_val = parent_metrics.get('rr_interval')
+                pr_val = parent_metrics.get('pr_interval')
+                qrs_val = parent_metrics.get('qrs_duration')
+                p_val = parent_metrics.get('p_duration') or parent_metrics.get('st_interval')
+
+                if rr_val is not None:
+                    try:
+                        self.update_metric('rr_interval', int(float(str(rr_val).replace('--', '0'))))
+                    except (ValueError, TypeError):
+                        self.update_metric('rr_interval', 0)
+                if pr_val is not None:
+                    try:
+                        self.update_metric('pr_interval', int(float(str(pr_val).replace('--', '0'))))
+                    except (ValueError, TypeError):
+                        self.update_metric('pr_interval', 0)
+                if qrs_val is not None:
+                    try:
+                        self.update_metric('qrs_duration', int(float(str(qrs_val).replace('--', '0'))))
+                    except (ValueError, TypeError):
+                        self.update_metric('qrs_duration', 0)
+                if p_val is not None:
+                    try:
+                        self.update_metric('p_duration', int(float(str(p_val).replace('--', '0'))))
+                    except (ValueError, TypeError):
+                        self.update_metric('p_duration', 0)
+            else:
+                # Fallback: compute locally (same as before but with fixed min_distance)
+                filtered_signal = self._apply_display_bandpass(self.ecg_data, self.sampling_rate)
+                p_peaks, q_peaks, r_peaks, s_peaks, t_peaks = self.analyzer.find_pqrst(filtered_signal)
+
+                self.p_peaks = p_peaks
+                self.q_peaks = q_peaks
+                self.r_peaks = r_peaks
+                self.s_peaks = s_peaks
+                self.t_peaks = t_peaks
+
+                rr_intervals = np.diff(r_peaks) / self.sampling_rate * 1000
+                if len(rr_intervals) > 0:
+                    self.update_metric('rr_interval', int(np.median(rr_intervals)))
+                else:
+                    self.update_metric('rr_interval', 0)
+
+                pr_intervals = self.analyzer.calculate_pr_interval(p_peaks, r_peaks)
+                if len(pr_intervals) > 0:
+                    self.update_metric('pr_interval', int(np.median(pr_intervals)))
+                else:
+                    self.update_metric('pr_interval', 0)
+
+                qrs_durations = self.analyzer.calculate_qrs_duration(q_peaks, s_peaks)
+                if len(qrs_durations) > 0:
+                    self.update_metric('qrs_duration', int(np.median(qrs_durations)))
+                else:
+                    self.update_metric('qrs_duration', 0)
+
+                p_duration = self.calculate_p_duration(p_peaks, filtered_signal)
+                self.update_metric('p_duration', p_duration)
+
+            # Still run PQRST analysis for markers/arrhythmia display
+            # (even when using parent metrics for numbers)
+            filtered_signal = self._apply_display_bandpass(self.ecg_data, self.sampling_rate)
+            p_peaks, q_peaks, r_peaks, s_peaks, t_peaks = self.analyzer.find_pqrst(filtered_signal)
+            self.p_peaks = p_peaks
+            self.q_peaks = q_peaks
+            self.r_peaks = r_peaks
+            self.s_peaks = s_peaks
+            self.t_peaks = t_peaks
+
+            rr_intervals = np.diff(r_peaks) / self.sampling_rate * 1000 if len(r_peaks) > 1 else np.array([])
+            
+            # Fix call to detect_arrhythmias: it expects (signal, analysis_dict)
+            analysis_dict = {
+                'r_peaks': r_peaks,
+                'p_peaks': p_peaks,
+                'q_peaks': q_peaks,
+                's_peaks': s_peaks,
+                't_peaks': t_peaks
+            }
+            arrhythmias = self.arrhythmia_detector.detect_arrhythmias(filtered_signal, analysis_dict)
+            self.update_arrhythmia_display(arrhythmias)
+
+        except Exception as e:
+            print(f" Error during ECG analysis: {e}")
     
     def get_lead_index(self):
         """Get the lead index for this lead name"""
@@ -1601,12 +1643,12 @@ class ExpandedLeadView(QDialog):
         except Exception:
             return signal
 
-    def _smooth_display_signal(self, signal, sigma=1.2):
-        """One-pass Gaussian smooth — mirror-padded to avoid right-edge jump.
+    def _smooth_display_signal(self, signal, sigma=0.8):
+        """Smooth plotted data without introducing right-edge jumps.
 
-        sigma=1.2 samples at 500 Hz is the sweet spot: smooths powerline noise
-        without blurring the QRS upstroke.  Don't call this twice on the same
-        data — compounding passes add group delay and make the waveform lag.
+        The expanded lead window usually follows the newest samples. If we
+        smooth with implicit zero-padding, the newest samples can dip or spike
+        at the end of the plot. Mirror-padding avoids that visible tail jump.
         """
         if signal is None:
             return signal
@@ -1615,150 +1657,22 @@ class ExpandedLeadView(QDialog):
         if arr.size <= 5:
             return arr
 
-        # Pad = 4*sigma is wide enough to avoid boundary effects
-        pad = max(3, int(np.ceil(float(sigma) * 4)))
+        pad = max(3, int(np.ceil(max(0.5, float(sigma)) * 3)))
         if arr.size <= pad:
             return arr
 
         try:
             from scipy.ndimage import gaussian_filter1d
+
             padded = np.pad(arr, pad_width=pad, mode='reflect')
             smoothed = gaussian_filter1d(padded, sigma=float(sigma), mode='nearest')
             return smoothed[pad:-pad]
         except Exception:
-            return arr
-
-    def _interpolate_display_signal(self, signal, factor):
-        """Match the live 12-lead page's cubic interpolation step."""
-        arr = np.asarray(signal, dtype=float)
-        if arr.size < 2 or factor <= 1:
-            return arr
-        try:
-            x = np.arange(arr.size, dtype=float)
-            f = interp1d(x, arr, kind='cubic')
-            xi = np.linspace(0.0, float(arr.size - 1), int(arr.size * factor))
-            return np.asarray(f(xi), dtype=float)
-        except Exception:
-            x = np.arange(arr.size, dtype=float)
-            xi = np.linspace(0.0, float(arr.size - 1), int(arr.size * factor))
-            return np.interp(xi, x, arr)
-
-    def _prepare_stable_live_display(self):
-        """Mirror the stable 12-lead live rendering pipeline."""
-        raw_data = np.asarray(self.ecg_data, dtype=float)
-        if raw_data.size == 0:
-            return None
-
-        fs = max(1.0, float(self.sampling_rate))
-        samples_to_show = max(1, int(round(self.view_window_duration * fs)))
-
-        try:
-            non_zero_indices = np.where(raw_data != 0)[0]
-            if len(non_zero_indices) > 0:
-                recent_data = raw_data[int(non_zero_indices[0]):]
-            else:
-                recent_data = raw_data[-min(samples_to_show, raw_data.size):]
-        except Exception:
-            recent_data = raw_data
-
-        if recent_data.size > samples_to_show:
-            data_slice = recent_data[-samples_to_show:]
-        else:
-            data_slice = recent_data
-
-        if data_slice.size == 0:
-            data_slice = raw_data[-min(50, raw_data.size):]
-        if data_slice.size == 0:
-            return None
-
-        window_signal = np.asarray(data_slice, dtype=float)
-        filtered_slice = window_signal.copy()
-
-        try:
-            baseline_estimate = extract_low_frequency_baseline(filtered_slice, fs)
-            if self._live_baseline_anchor is None:
-                self._live_baseline_anchor = baseline_estimate
-            baseline_alpha = 0.0005
-            self._live_baseline_anchor = (
-                (1.0 - baseline_alpha) * self._live_baseline_anchor
-                + baseline_alpha * baseline_estimate
-            )
-            filtered_slice = filtered_slice - self._live_baseline_anchor
-            current_dc = float(np.nanmean(filtered_slice)) if filtered_slice.size > 0 else 0.0
-            if np.isfinite(current_dc):
-                filtered_slice = filtered_slice - current_dc
-        except Exception:
-            pass
-
-        emg_opt = "150"
-        ac_opt = "50"
-        try:
-            if hasattr(self._parent, "settings_manager") and self._parent.settings_manager is not None:
-                emg_opt = str(self._parent.settings_manager.get_setting("filter_emg", "150")).strip()
-                ac_opt = str(self._parent.settings_manager.get_setting("filter_ac", "50")).strip()
-        except Exception:
-            pass
-
-        try:
-            if apply_emg_filter is not None and emg_opt.lower() != "off" and filtered_slice.size >= 10:
-                filtered_slice = apply_emg_filter(filtered_slice, fs, emg_opt)
-        except Exception:
-            pass
-
-        try:
-            if apply_ac_filter is not None and ac_opt in ("50", "60") and filtered_slice.size > 30:
-                filtered_slice = apply_ac_filter(filtered_slice, fs, ac_opt)
-        except Exception:
-            pass
-
-        wave_gain_mm = 10.0
-        try:
-            if hasattr(self._parent, "settings_manager") and self._parent.settings_manager is not None:
-                wave_gain_mm = float(self._parent.settings_manager.get_wave_gain())
-        except Exception:
-            wave_gain_mm = 10.0
-
-        gain_factor = get_display_gain(wave_gain_mm) * float(self.amplification)
-        scaled_data = filtered_slice * gain_factor
-        scaled_data = np.nan_to_num(scaled_data, copy=False)
-
-        smooth_sigma = 0.8
-        interp_factor = 4
-        try:
-            if self._parent is not None:
-                smooth_sigma = float(getattr(self._parent, "SMOOTH_SIGMA", 0.8) or 0.8)
-                interp_factor = int(getattr(self._parent, "INTERP_FACTOR", 4) or 4)
-        except Exception:
-            pass
-
-        try:
-            if scaled_data.size > 5 and smooth_sigma > 0:
-                from scipy.ndimage import gaussian_filter1d
-                scaled_data = gaussian_filter1d(scaled_data, sigma=smooth_sigma)
-        except Exception:
-            pass
-
-        try:
-            if scaled_data.size > 1 and interp_factor > 1:
-                scaled_data = self._interpolate_display_signal(scaled_data, interp_factor)
-        except Exception:
-            pass
-
-        try:
-            edge_trim = int(0.5 * fs)
-            if edge_trim > 0 and scaled_data.size > 2 * edge_trim:
-                scaled_data = scaled_data[edge_trim:-edge_trim]
-        except Exception:
-            pass
-
-        if scaled_data.size == 0:
-            scaled_data = np.array([0.0], dtype=float)
-
-        adc_center = -2048.0 if str(self.lead_name).upper() == 'AVR' else 2048.0
-        display_adc = scaled_data + adc_center
-        time_axis = np.linspace(0.0, self.view_window_duration, display_adc.size) if display_adc.size > 1 else np.array([0.0])
-        current_window_bounds = (max(0, raw_data.size - data_slice.size), raw_data.size)
-        return time_axis, display_adc, window_signal, current_window_bounds
+            kernel_size = max(3, min(7, (pad * 2) + 1))
+            kernel = np.ones(kernel_size, dtype=float) / float(kernel_size)
+            padded = np.pad(arr, pad_width=pad, mode='edge')
+            smoothed = np.convolve(padded, kernel, mode='same')
+            return smoothed[pad:-pad]
     
     def calculate_respiration_ylim(self, respiration_signal):
         """Calculate dynamic Y-limits for respiration using percentiles.
@@ -1846,13 +1760,6 @@ class ExpandedLeadView(QDialog):
             start_idx = int(self.view_window_offset * self.sampling_rate)
             end_idx = min(total_samples, start_idx + window_samples)
 
-            live_fixed_axis = self.is_live and not self.manual_view and not self.history_slider_active
-            if live_fixed_axis:
-                lag_samples = int(max(0.0, float(getattr(self, '_live_display_lag_seconds', 0.0))) * self.sampling_rate)
-                if lag_samples > 0 and total_samples > window_samples + lag_samples:
-                    end_idx = max(window_samples, total_samples - lag_samples)
-                    start_idx = max(0, end_idx - window_samples)
-
             try:
                 non_zero_indices = np.where(self.ecg_data != 0)[0]
                 if len(non_zero_indices) > 0:
@@ -1866,102 +1773,169 @@ class ExpandedLeadView(QDialog):
             if end_idx - start_idx <= 1:
                 return
 
-            if live_fixed_axis:
-                prepared_live = self._prepare_stable_live_display()
-                if prepared_live is None:
-                    return
-                time, display_adc, window_signal, current_window_bounds = prepared_live
-                self._last_window_bounds = current_window_bounds
-                ylim_low, ylim_high = (-4096.0, 0.0) if str(self.lead_name).upper() == 'AVR' else (0.0, 4096.0)
-            else:
-                # To avoid filter edge artifacts at the very start/end of the visible box
-                # (especially when 50 Hz AC filter is enabled), we apply all display‑only
-                # filters on a slightly larger padded segment, then crop back to the
-                # requested [start_idx, end_idx) window.
-                pad_seconds = 0.5  # 500 ms padding on each side
-                pad_samples = int(pad_seconds * self.sampling_rate)
-                padded_start = max(0, start_idx - pad_samples)
-                padded_end = min(total_samples, end_idx + pad_samples)
+            # To avoid filter edge artifacts at the very start/end of the visible box
+            # (especially when 50 Hz AC filter is enabled), we apply all display‑only
+            # filters on a slightly larger padded segment, then crop back to the
+            # requested [start_idx, end_idx) window.
+            pad_seconds = 0.5  # 500 ms padding on each side
+            pad_samples = int(pad_seconds * self.sampling_rate)
+            padded_start = max(0, start_idx - pad_samples)
+            padded_end = min(total_samples, end_idx + pad_samples)
 
-                signal_raw = self.ecg_data[padded_start:padded_end]
+            signal_raw = self.ecg_data[padded_start:padded_end]
 
-                # ── FIX: Mirror-pad right edge when at buffer end ─────────────────
-                right_missing = pad_samples - (padded_end - end_idx)
-                if right_missing > 0 and len(signal_raw) > right_missing:
-                    mirror_right = signal_raw[-right_missing:][::-1]
-                    signal_raw = np.concatenate([signal_raw, mirror_right])
+            # ── FIX: Mirror-pad right edge when at buffer end ─────────────────
+            # When end_idx = total_samples (live view), right pad = 0
+            # → filtfilt has no causal data → Gibbs ringing → jump at right edge
+            # Solution: mirror-extend the last pad_samples worth of signal
+            right_missing = pad_samples - (padded_end - end_idx)
+            if right_missing > 0 and len(signal_raw) > right_missing:
+                mirror_right = signal_raw[-right_missing:][::-1]  # mirror last N samples
+                signal_raw = np.concatenate([signal_raw, mirror_right])
+            # ─────────────────────────────────────────────────────────────────
 
-                padded_signal = signal_raw
-                if len(padded_signal) <= 1:
-                    return
+            padded_signal = signal_raw
+            if len(padded_signal) <= 1:
+                return
 
-                visible_len = end_idx - start_idx
-                visible_offset = start_idx - padded_start
-                current_window_bounds = (start_idx, end_idx)
-                window_signal = padded_signal
-                if len(window_signal) == 0:
-                    return
+            # This is the portion we will actually display after filtering
+            visible_len = end_idx - start_idx
+            visible_offset = start_idx - padded_start
+            current_window_bounds = (start_idx, end_idx)
 
-                display_signal = window_signal.copy()
-                try:
-                    ac_opt = '50'
-                    emg_opt = 'off'
-                    dft_opt = 'off'
-                    if hasattr(self._parent, 'settings_manager') and self._parent.settings_manager is not None:
-                        ac_opt = str(self._parent.settings_manager.get_setting('filter_ac', '50')).strip()
-                        emg_opt = str(self._parent.settings_manager.get_setting('filter_emg', '25')).strip()
-                        dft_opt = str(self._parent.settings_manager.get_setting('filter_dft', 'off')).strip()
+            window_signal = padded_signal  # use padded for filtering
+            
+            # Ensure we have valid data
+            if len(window_signal) == 0:
+                return
+            
+            # ---------------- DISPLAY-ONLY PIPELINE ----------------
+            # Clinical signal (raw) is untouched; display_signal is for plotting only.
+            display_signal = window_signal.copy()
+            try:
+                # Keep expanded view filter behavior aligned with 12-box defaults.
+                # Default AC notch is 50 Hz; if user turns it off, both views follow that.
+                ac_opt = '50'
+                emg_opt = 'off'
+                dft_opt = 'off'
+                if hasattr(self._parent, 'settings_manager') and self._parent.settings_manager is not None:
+                    ac_opt = str(self._parent.settings_manager.get_setting('filter_ac', '50')).strip()
+                    emg_opt = str(self._parent.settings_manager.get_setting('filter_emg', 'off')).strip()
+                    dft_opt = str(self._parent.settings_manager.get_setting('filter_dft', 'off')).strip()
 
-                    if apply_ecg_filters is not None:
-                        display_signal = apply_ecg_filters(
-                            signal=display_signal,
-                            sampling_rate=float(self.sampling_rate),
-                            ac_filter=ac_opt if ac_opt in ('50', '60') else None,
-                            emg_filter=emg_opt if emg_opt not in ('off', '') else None,
-                            dft_filter=dft_opt if dft_opt not in ('off', '') else None,
-                        )
-                    else:
-                        if apply_emg_filter is not None and emg_opt not in ('off', ''):
-                            display_signal = apply_emg_filter(display_signal, float(self.sampling_rate), emg_opt)
-                        if apply_ac_filter is not None and ac_opt in ('50', '60'):
-                            display_signal = apply_ac_filter(display_signal, float(self.sampling_rate), ac_opt)
+                if apply_ecg_filters is not None:
+                    display_signal = apply_ecg_filters(
+                        signal=display_signal,
+                        sampling_rate=float(self.sampling_rate),
+                        ac_filter=ac_opt if ac_opt in ('50', '60') else None,
+                        emg_filter=emg_opt if emg_opt not in ('off', '') else None,
+                        dft_filter=dft_opt if dft_opt not in ('off', '') else None,
+                    )
+                else:
+                    if apply_emg_filter is not None and emg_opt not in ('off', ''):
+                        display_signal = apply_emg_filter(display_signal, float(self.sampling_rate), emg_opt)
+                    if apply_ac_filter is not None and ac_opt in ('50', '60'):
+                        display_signal = apply_ac_filter(display_signal, float(self.sampling_rate), ac_opt)
 
-                    if self.use_clean_view:
-                        display_signal = self._remove_respiration_display(display_signal, fs=self.sampling_rate, window_sec=2.0)
-                except Exception as filter_error:
-                    print(f" Expanded view display filter error: {filter_error}")
+                # Optional clean-view mode can further suppress respiration drift.
+                if self.use_clean_view:
+                    display_signal = self._remove_respiration_display(display_signal, fs=self.sampling_rate, window_sec=2.0)
+            except Exception as filter_error:
+                print(f" Expanded view display filter error: {filter_error}")
 
-                try:
-                    if (visible_len > 0 and
-                            len(display_signal) >= visible_offset + visible_len):
-                        display_signal = display_signal[visible_offset:visible_offset + visible_len]
-                    else:
-                        display_signal = self.ecg_data[start_idx:end_idx].copy()
-                except Exception:
-                    display_signal = self.ecg_data[start_idx:end_idx].copy()
+            # After all filters, crop back to the exact visible window to remove
+            # edge transients introduced by filtering the padded segment.
+            try:
+                if visible_len > 0 and len(display_signal) >= visible_offset + visible_len:
+                    display_signal = display_signal[visible_offset:visible_offset + visible_len]
+            except Exception:
+                # In case of any indexing issues, fall back to the original (unpadded) slice
+                display_signal = self.ecg_data[start_idx:end_idx]
 
-                display_signal = self._smooth_display_signal(display_signal, sigma=1.2)
+            sigma = 0.8
+            if hasattr(self._parent, 'SMOOTH_SIGMA'):
+                sigma = float(self._parent.SMOOTH_SIGMA)
+            display_signal = self._smooth_display_signal(display_signal, sigma=sigma)
 
+            # ---------------- DISPLAY SCALING (apply gain ONCE, last) ----------------
+            wave_gain_mm = 10.0
+            try:
+                if hasattr(self._parent, "settings_manager"):
+                    wave_gain_mm = float(self._parent.settings_manager.get_wave_gain())
+            except Exception:
                 wave_gain_mm = 10.0
-                try:
-                    if hasattr(self._parent, "settings_manager"):
-                        wave_gain_mm = float(self._parent.settings_manager.get_wave_gain())
-                except Exception:
-                    wave_gain_mm = 10.0
-                gain = wave_gain_mm / 10.0
-                centered = display_signal - self.adc_midpoint
-                scaled = centered * (gain * self.amplification)
-                visual_gain = 1.5
-                adc_center = -2048 if str(self.lead_name).upper() == 'AVR' else 2048
-                display_adc = adc_center + scaled * visual_gain
+            gain = wave_gain_mm / 10.0  # 10mm/mV = 1.0x baseline
 
-                fs = max(1.0, float(self.sampling_rate))
-                time = np.arange(len(display_adc), dtype=float) / fs + (start_idx / fs)
-                ylim_low, ylim_high = (-4096.0, 0.0) if str(self.lead_name).upper() == 'AVR' else (0.0, 4096.0)
+            center_slice = display_signal
+            if len(display_signal) > 20:
+                edge_trim = max(1, min(len(display_signal) // 10, int(self.sampling_rate * 0.2)))
+                if (len(display_signal) - (edge_trim * 2)) >= 5:
+                    center_slice = display_signal[edge_trim:-edge_trim]
 
-            fast_live_path = self._can_use_fast_live_path() and self.ecg_line is not None
+            # ── FIX: Percentile-based baseline — works at ALL BPM incl 219 ────
+            # median fails at high BPM: 36 beats in window → median IS the QRS
+            # P10 tracks the true isoelectric line regardless of heart rate
+            # (10th percentile ≈ TP segment baseline at any BPM)
+            if len(center_slice) > 0:
+                raw_center = float(np.percentile(center_slice, 10))
+            else:
+                raw_center = 0.0
 
-            # Heatmap overlay intentionally disabled per user request.
+            if (
+                not hasattr(self, '_display_center_ema')
+                or self._last_window_bounds is None
+                or abs(current_window_bounds[0] - self._last_window_bounds[0]) > max(1, int(self.sampling_rate * 30.0))
+            ):
+                self._display_center_ema = raw_center
+            else:
+                # Keep the live expanded view visually stable.
+                # The dashboard view already renders against a fixed center;
+                # here we only allow very slow baseline drift correction so the
+                # waveform does not wobble as new samples arrive.
+                if self.manual_view or self.history_slider_active:
+                    center_alpha = 0.01
+                    self._display_center_ema = (
+                        (center_alpha * raw_center)
+                        + ((1.0 - center_alpha) * self._display_center_ema)
+                    )
+            self._last_window_bounds = current_window_bounds
+            # ─────────────────────────────────────────────────────────────────
+
+            centered = display_signal - self._display_center_ema
+            scaled = centered * (gain * self.amplification)
+            visual_gain = 1.5
+            adc_center = -2048 if str(self.lead_name).upper() == 'AVR' else 2048
+            display_adc = adc_center + scaled * visual_gain
+            
+            # Create time array matching the signal length
+            fs = max(1.0, float(self.sampling_rate))
+            time = np.arange(len(display_adc), dtype=float) / fs + (start_idx / fs)
+
+            ylim_low, ylim_high = (-4096.0, 0.0) if str(self.lead_name).upper() == 'AVR' else (0.0, 4096.0)
+
+            self.ax.clear()
+
+            # Heat map overlay behind waveform
+            if (
+                self.heatmap_overlay is not None
+                and self.heatmap_time_axis is not None
+                and len(self.heatmap_time_axis) > 0
+            ):
+                window_half = max(0.001, self.heatmap_window_step / 2.0)
+                extent = [
+                    self.heatmap_time_axis[0] - window_half,
+                    self.heatmap_time_axis[-1] + window_half,
+                    ylim_low,
+                    ylim_high,
+                ]
+                self.ax.imshow(
+                    self.heatmap_overlay,
+                    extent=extent,
+                    aspect='auto',
+                    origin='lower',
+                    interpolation='nearest',
+                    zorder=0,
+                )
 
             # Ensure time and display_adc arrays have matching lengths
             if len(time) != len(display_adc):
@@ -1972,8 +1946,6 @@ class ExpandedLeadView(QDialog):
             # Only plot if we have valid data
             waveform_alpha = 1.0
             quality_text = None
-            plot_x = np.array([])
-            plot_y = np.array([])
             if len(display_adc) > 0:
                 # Remove NaN values for plotting (replace with interpolation or skip)
                 valid_mask = ~np.isnan(display_adc)
@@ -1981,166 +1953,51 @@ class ExpandedLeadView(QDialog):
                     # Simple beat quality: peak-to-peak vs threshold
                     try:
                         ptp = np.ptp(display_adc[valid_mask])
-                        if self.show_quality:
-                            if not hasattr(self, '_quality_state'):
-                                self._quality_state = 'unknown'
-                            if self._quality_state != 'noisy' and ptp < 0.12:
-                                self._quality_state = 'noisy'
-                            elif self._quality_state != 'clean' and ptp > 0.20:
-                                self._quality_state = 'clean'
-
-                            if self._quality_state == 'noisy':
-                                waveform_alpha = 0.4
-                                quality_text = "Quality: Noisy/Low"
-                            elif self._quality_state == 'clean':
-                                quality_text = "Quality: Clean"
+                        if self.show_quality and ptp < 0.15:
+                            waveform_alpha = 0.4
+                            quality_text = "Quality: Noisy/Low"
+                        elif self.show_quality:
+                            quality_text = "Quality: Clean"
                     except Exception:
                         pass
-                    # Bug 2 fix: remove second _smooth_display_signal call.
-                    # display_signal was already smoothed with sigma=0.8 above;
-                    # a second Gaussian pass compounds the group delay and makes
-                    # the waveform visually lag behind the true signal.
-
+                    # Apply light smoothing for smooth wave appearance without
+                    # zero-padding artifacts at the newest/right edge.
+                    display_adc = self._smooth_display_signal(display_adc, sigma=0.5)
+                    
                     # Plot only valid points
                     if np.all(valid_mask):
-                        plot_x = time
-                        plot_y = display_adc
+                        # All data is valid - plot normally with anti-aliasing
+                        self.ax.plot(time, display_adc, color='#000080', linewidth=0.7, label='ECG Signal', zorder=1, alpha=waveform_alpha, antialiased=True)  # Dark Navy Blue
                     else:
-                        # Some NaN values - plot valid segments only
+                        # Some NaN values - plot segments
                         time_valid = time[valid_mask]
                         scaled_valid = display_adc[valid_mask]
                         if len(time_valid) > 1:
-                            plot_x = time_valid
-                            plot_y = scaled_valid
+                            # Apply smoothing to valid segment without edge
+                            # artifacts at the segment tail.
+                            scaled_valid = self._smooth_display_signal(scaled_valid, sigma=0.5)
+                            self.ax.plot(time_valid, scaled_valid, color='#000080', linewidth=0.7, label='ECG Signal', zorder=1, alpha=waveform_alpha, antialiased=True)  # Dark Navy Blue
                 else:
                     print(f" All data is NaN in expanded view for lead {self.lead_name}")
             else:
                 print(f" No data to plot in expanded view for lead {self.lead_name}: len={len(display_adc)}")
-
-            if fast_live_path:
-                # ── BLIT RENDERING: hospital-monitor quality ─────────────────────────
-                # Only the ECG Line2D artist is redrawn each frame.
-                # The axes background (grid, ticks, labels, title, spine) is
-                # captured once into self._blit_bg and restored cheaply every
-                # frame — identical to the technique used in oscilloscope UIs.
-                self.ecg_line.set_alpha(waveform_alpha)
-                self.ecg_line.set_data(plot_x, plot_y)
-
-                # X limits: NEVER change in live mode (fixed 0 → window_duration).
-                # Any set_xlim() call invalidates the blit background — only do it
-                # if the window duration actually changed (zoom in/out button).
-                if live_fixed_axis:
-                    cur_xlim = self.ax.get_xlim()
-                    if abs(cur_xlim[0]) > 0.01 or abs(cur_xlim[1] - self.view_window_duration) > 0.05:
-                        self.ax.set_xlim(0.0, self.view_window_duration)
-                        self._blit_bg = None  # invalidate so background is captured fresh
-                else:
-                    if len(time) > 0:
-                        cur_xlim = self.ax.get_xlim()
-                        new_xmin, new_xmax = float(time[0]), float(time[-1])
-                        if abs(cur_xlim[0] - new_xmin) > 0.05 or abs(cur_xlim[1] - new_xmax) > 0.05:
-                            self.ax.set_xlim(new_xmin, new_xmax)
-                            self._blit_bg = None
-                cur_ylim = self.ax.get_ylim()
-                if cur_ylim != (ylim_low, ylim_high):
-                    self.ax.set_ylim(ylim_low, ylim_high)
-                    self._blit_bg = None
-
-                # Title: update only when amplification changes (also invalidates bg)
-                amp_text = f" (Zoom: {self.amplification:.2f}x)" if self.amplification != 1.0 else ""
-                wanted_title = f'Lead {self.lead_name} - Live PQRST Analysis{amp_text}'
-                if self.ax.get_title() != wanted_title:
-                    self.ax.set_title(wanted_title, fontsize=18, fontweight='bold', color='#2c3e50')
-                    self._blit_bg = None
-
-                # Isoelectric baseline — persistent dashed line (part of background)
-                try:
-                    adc_center_val = -2048 if str(self.lead_name).upper() == 'AVR' else 2048
-                    if not hasattr(self, '_iso_line_artist') or self._iso_line_artist is None:
-                        self._iso_line_artist = self.ax.axhline(
-                            adc_center_val, color="#95a5a6", linestyle="--",
-                            linewidth=1.0, alpha=0.7, zorder=0
-                        )
-                        self._blit_bg = None  # new artist added, background must be refreshed
-                except Exception:
-                    pass
-
-                # Quality text — only update when text changes (rare)
-                new_qt = quality_text or ""
-                old_qt = getattr(self._quality_text_artist, 'get_text', lambda: "")() if self._quality_text_artist else ""
-                if new_qt != old_qt:
-                    if self._quality_text_artist is not None:
-                        try:
-                            self._quality_text_artist.remove()
-                        except Exception:
-                            pass
-                        self._quality_text_artist = None
-                    if quality_text:
-                        try:
-                            x_left = 0.0 if live_fixed_axis else (float(time[0]) if len(time) > 0 else 0.0)
-                            self._quality_text_artist = self.ax.text(
-                                x_left, ylim_high * 0.9, quality_text,
-                                color="#7f8c8d", fontsize=9, va="top"
-                            )
-                        except Exception:
-                            self._quality_text_artist = None
-                    self._blit_bg = None  # text changed — regenerate background
-
-                # ── BLIT DRAW: capture background once, restore + draw line each frame ─
-                try:
-                    fc = self.canvas.figure.canvas
-                    if getattr(self, '_blit_bg', None) is None:
-                        fc.draw()  # draws background WITHOUT the animated ecg_line
-                        self._blit_bg = fc.copy_from_bbox(self.ax.bbox)
-
-                    # Restore background + draw only the line — ~10x faster than draw_idle
-                    fc.restore_region(self._blit_bg)
-                    self.ax.draw_artist(self.ecg_line)
-                    fc.blit(self.ax.bbox)
-                except Exception:
-                    # Blit not supported by this backend — fall back gracefully
-                    self._blit_bg = None
-                    self.canvas.draw_idle()
-                return
-
-            self.ax.clear()
-
-            if len(plot_x) > 0 and len(plot_y) > 0:
-                self.ax.plot(
-                    plot_x,
-                    plot_y,
-                    color='#000080',
-                    linewidth=0.7,
-                    label='ECG Signal',
-                    zorder=1,
-                    alpha=waveform_alpha,
-                    antialiased=True,
-                )
             
             # Overlay vertical markers at detected arrhythmia event times within the visible window
             if hasattr(self, "arrhythmia_events") and self.arrhythmia_events:
                 t_start, t_end = time[0], time[-1]
                 for evt_time, evt_label in self.arrhythmia_events:
                     if t_start <= evt_time <= t_end:
-                        # Vertical dashed line color per rhythm type.
-                        evt_label_str = str(evt_label or "")
-                        if "Atrial Flutter" in evt_label_str:
-                            line_color = "#9b59b6"
-                        elif "Atrial Fibrillation" in evt_label_str:
-                            line_color = "#e74c3c"
-                        else:
-                            line_color = "#e74c3c"
-                        self.ax.axvline(evt_time, color=line_color, linestyle="--", linewidth=1.0, alpha=0.9, zorder=2)
+                        # Vertical dashed red line
+                        self.ax.axvline(evt_time, color="#e74c3c", linestyle="--", linewidth=1.0, alpha=0.9, zorder=2)
                         # Small label at the top of the plot
                         try:
                             ylim_current = self.ax.get_ylim()
                             y_top = ylim_current[1]
-                            star_color = line_color
                             self.ax.text(
                                 evt_time,
                                 y_top,
                                 "★",
-                                color=star_color,
+                                color="#e74c3c",
                                 fontsize=10,
                                 fontweight="bold",
                                 ha="center",
@@ -2301,12 +2158,6 @@ class ExpandedLeadView(QDialog):
                 except Exception:
                     pass
 
-            try:
-                if len(getattr(self.ax, "lines", [])) > 0:
-                    self.ecg_line = self.ax.lines[0]
-            except Exception:
-                pass
-
             self.canvas.draw_idle()
         except Exception as e:
             print(f"Error updating plot: {e}")
@@ -2424,9 +2275,7 @@ class ExpandedLeadView(QDialog):
     def create_arrhythmia_panel(self, parent_layout):
         """Create the arrhythmia analysis panel"""
         arrhythmia_frame = QFrame()
-        # Keep this compact so it matches the interpretation-only UI.
-        # (Graph code and plot rendering are not touched.)
-        arrhythmia_frame.setFixedHeight(118)
+        arrhythmia_frame.setFixedHeight(70)
         arrhythmia_frame.setStyleSheet("""
             QFrame {
                 background: white;
@@ -2434,34 +2283,21 @@ class ExpandedLeadView(QDialog):
                 border: 1px solid #e0e0e0;
             }
         """)
-        arrhythmia_layout = QVBoxLayout(arrhythmia_frame)
+        arrhythmia_layout = QHBoxLayout(arrhythmia_frame)
         arrhythmia_layout.setContentsMargins(15, 10, 15, 10)
-        arrhythmia_layout.setSpacing(6)
-
-        top_row = QHBoxLayout()
-        top_row.setSpacing(15)
+        arrhythmia_layout.setSpacing(15)
         
         title = QLabel("Arrhythmia Interpretation:")
         title.setFont(QFont("Segoe UI", 13, QFont.Bold))
         title.setStyleSheet("color: #2c3e50; border: none; background: transparent;")
-        top_row.addWidget(title)
+        arrhythmia_layout.addWidget(title)
         
-        # QLabel style to match the second screenshot (no boxed QTextEdit).
         self.arrhythmia_list = QLabel("Analyzing...")
         self.arrhythmia_list.setFont(QFont("Segoe UI", 12, QFont.Bold))
         self.arrhythmia_list.setStyleSheet("color: #34495e; border: none; background: transparent;")
         self.arrhythmia_list.setWordWrap(True)
         self.arrhythmia_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        top_row.addWidget(self.arrhythmia_list, 1)
-        arrhythmia_layout.addLayout(top_row)
-
-        self.rhythm_reason_label = QLabel("Decision summary will appear here.")
-        self.rhythm_reason_label.setFont(QFont("Segoe UI", 9))
-        self.rhythm_reason_label.setStyleSheet("color: #5d6d7e; border: none; background: transparent;")
-        self.rhythm_reason_label.setWordWrap(True)
-        self.rhythm_reason_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-        self.rhythm_reason_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        arrhythmia_layout.addWidget(self.rhythm_reason_label, 1)
+        arrhythmia_layout.addWidget(self.arrhythmia_list, 1)
         
         parent_layout.addWidget(arrhythmia_frame)
     
@@ -2479,66 +2315,9 @@ class ExpandedLeadView(QDialog):
                 if hasattr(self, 'arrhythmia_list'):
                     self.arrhythmia_list.setText("Collecting data...")
                 return
-
-            # Convert raw ADC counts to calibrated mV for quality assessment and amplitudes.
-            raw_adc = self.ecg_data.astype(float)
-            signal_mv = (raw_adc - float(self.adc_midpoint)) / float(self.counts_per_mv)
-
-            # Stage 1 — Signal quality gate (India-specific, 500 Hz).
-            quality_score, quality_reason = assess_signal_quality(signal_mv, int(self.sampling_rate))
-            print(f"[Quality] {quality_score:.2f} — {quality_reason}")
-            if quality_score < 0.5:
-                if hasattr(self, 'arrhythmia_list'):
-                    self.arrhythmia_list.setText(f"Poor signal quality: {quality_reason}")
-                # Do not attempt PQRST / arrhythmia on noisy windows.
-                return
-
-            # FIX-BUG3: Filter signal before PQRST analysis AND before detect_arrhythmias.
-            # Raw ADC data has a large DC offset (0-4095 range); we center it here and
-            # then apply the clinical display filter chain.
-            adc_centered = raw_adc - float(self.adc_midpoint)
-            filtered_signal = adc_centered
-
-            # Prefer the same clinical-grade filter chain used by display.
-            # This aligns analysis behavior with Philips-style monitors more closely.
-            try:
-                if apply_ecg_filters is not None:
-                    ac_opt = "50"
-                    emg_opt = "off"
-                    dft_opt = "off"
-                    if hasattr(self._parent, "settings_manager") and self._parent.settings_manager is not None:
-                        ac_opt = str(self._parent.settings_manager.get_setting("filter_ac", "50")).strip()
-                        emg_opt = str(self._parent.settings_manager.get_setting("filter_emg", "25")).strip()
-                        dft_opt = str(self._parent.settings_manager.get_setting("filter_dft", "off")).strip()
-
-                    filtered_signal = apply_ecg_filters(
-                        signal=adc_centered,
-                        sampling_rate=float(self.sampling_rate),
-                        ac_filter=(ac_opt if ac_opt in ("50", "60") else None),
-                        emg_filter=(emg_opt if emg_opt not in ("off", "") else None),
-                        dft_filter=(dft_opt if dft_opt not in ("off", "") else None),
-                    )
-                else:
-                    filtered_signal = self._apply_display_bandpass(
-                        adc_centered,
-                        self.sampling_rate,
-                        low=0.5,
-                        high=40.0,
-                        order=2,
-                    )
-            except Exception:
-                filtered_signal = self._apply_display_bandpass(
-                    adc_centered,
-                    self.sampling_rate,
-                    low=0.5,
-                    high=40.0,
-                    order=2,
-                )
-
-            # Analyze signal for PQRST waves using the filtered signal
-            analysis = self.analyzer.analyze_signal(filtered_signal)
-            self._last_analysis = analysis
-            self._last_filtered_signal = filtered_signal
+            
+            # Analyze signal for PQRST waves
+            analysis = self.analyzer.analyze_signal(self.ecg_data)
             self.calculate_metrics(analysis)
             
             # Check if serial data has actually started flowing (not just initial state)
@@ -2559,32 +2338,39 @@ class ExpandedLeadView(QDialog):
                         else:
                             print(f" Waiting for serial data: {data_count}/{min_serial_data_packets} packets - asystole detection disabled")
             
-            # Detect arrhythmias using bandpass-filtered signal (not raw ADC)
-            print(f" Analyzing arrhythmias for {self.lead_name}: {len(filtered_signal)} samples, {len(analysis.get('r_peaks', []))} R-peaks detected")
-
-            # Optional multi-lead fusion: when we have other leads available, pass them in.
-            lead_signals = None
-            try:
-                parent = getattr(self, "_parent", None)
-                if parent is not None and hasattr(parent, "latest_multilead_snapshot") and getattr(parent, "latest_multilead_snapshot", None):
-                    lead_signals = getattr(parent, "latest_multilead_snapshot")
-            except Exception:
-                lead_signals = None
-
+            # Detect arrhythmias using raw ECG data
+            print(f" Analyzing arrhythmias for {self.lead_name}: {len(self.ecg_data)} samples, {len(analysis.get('r_peaks', []))} R-peaks detected")
             arrhythmias = self.arrhythmia_detector.detect_arrhythmias(
-                filtered_signal,
-                {**analysis, "lead_name": self.lead_name},
+                self.ecg_data, 
+                analysis,
                 has_received_serial_data=has_received_serial_data,
-                min_serial_data_packets=min_serial_data_packets,
-                lead_signals=lead_signals
+                min_serial_data_packets=min_serial_data_packets
             )
             print(f" Arrhythmia detection result for {self.lead_name}: {arrhythmias}")
             self.update_arrhythmia_display(arrhythmias)
-            self.update_rhythm_reasoning(analysis, filtered_signal, arrhythmias)
             
-            # Heatmap intentionally disabled.
-            self.heatmap_overlay = None
-            self.heatmap_time_axis = None
+            # Generate heat map data (optional - don't break if method doesn't exist)
+            try:
+                if len(analysis.get('r_peaks', [])) > 0:
+                    # Check if method exists before calling
+                    if hasattr(self.arrhythmia_detector, 'detect_arrhythmias_with_probabilities'):
+                        heat_map_data = self.arrhythmia_detector.detect_arrhythmias_with_probabilities(
+                            self.ecg_data, analysis['r_peaks'], window_size=2.0
+                        )
+                        self.prepare_heatmap_overlay(heat_map_data)
+                    else:
+                        # Method doesn't exist, clear heatmap
+                        self.heatmap_overlay = None
+                        self.heatmap_time_axis = None
+                else:
+                    # No R-peaks detected, clear heatmap
+                    self.heatmap_overlay = None
+                    self.heatmap_time_axis = None
+            except Exception as heatmap_error:
+                # Heatmap is optional - don't break arrhythmia display
+                print(f" Heatmap generation error (non-critical): {heatmap_error}")
+                self.heatmap_overlay = None
+                self.heatmap_time_axis = None
             
             self.update_plot_with_markers(analysis)
             
@@ -2595,36 +2381,19 @@ class ExpandedLeadView(QDialog):
             error_msg = f"Error in ECG analysis for {self.lead_name}: {str(e)}"
             print(error_msg)
             traceback.print_exc()
+            if hasattr(self, 'arrhythmia_list'):
+                self.arrhythmia_list.setText(f"Analysis error: {str(e)[:50]}")
             print(traceback.format_exc())
-            # Still try to show rate-based detection even if full pipeline failed.
-            # Route through update_arrhythmia_display so colour-coding and bullet
-            # formatting are applied consistently (Bug 5 fix).
-            fallback_labels = []
+            # Still try to show rate-based detection even if other detections fail
             try:
                 if len(self.ecg_data) > 0:
+                    # Try to get r_peaks from analyzer if analysis failed
                     try:
-                        adc_centered = self.ecg_data.astype(float) - float(self.adc_midpoint)
-                        if apply_ecg_filters is not None:
-                            _fs = apply_ecg_filters(
-                                signal=adc_centered,
-                                sampling_rate=float(self.sampling_rate),
-                                ac_filter=None,
-                                emg_filter=None,
-                                dft_filter=None,
-                            )
-                        else:
-                            _fs = self._apply_display_bandpass(
-                                adc_centered,
-                                self.sampling_rate,
-                                low=0.5,
-                                high=40.0,
-                                order=2,
-                            )
-                        temp_analysis = self.analyzer.analyze_signal(_fs)
+                        temp_analysis = self.analyzer.analyze_signal(self.ecg_data)
                         r_peaks = temp_analysis.get('r_peaks', [])
-                    except Exception:
+                    except:
                         r_peaks = []
-
+                    
                     if len(r_peaks) >= 3:
                         rr_intervals = np.diff(r_peaks) / self.sampling_rate * 1000
                         if len(rr_intervals) >= 2:
@@ -2632,19 +2401,22 @@ class ExpandedLeadView(QDialog):
                             if mean_rr > 0:
                                 heart_rate = 60000 / mean_rr
                                 if heart_rate >= 100:
-                                    fallback_labels = ["Sinus Tachycardia"]
+                                    self.arrhythmia_list.setText("Sinus Tachycardia")
                                 elif heart_rate < 60:
-                                    fallback_labels = ["Sinus Bradycardia"]
+                                    self.arrhythmia_list.setText("Sinus Bradycardia")
+                                else:
+                                    self.arrhythmia_list.setText(f"Analysis error: {str(e)[:50]}")
+                            else:
+                                self.arrhythmia_list.setText(f"Analysis error: {str(e)[:50]}")
+                        else:
+                            self.arrhythmia_list.setText(f"Analysis error: {str(e)[:50]}")
+                    else:
+                        self.arrhythmia_list.setText(f"Analysis error: {str(e)[:50]}")
+                else:
+                    self.arrhythmia_list.setText(f"Analysis error: {str(e)[:50]}")
             except Exception as e2:
                 print(f"Error in fallback detection: {e2}")
-
-            if fallback_labels:
-                self.update_arrhythmia_display(fallback_labels)
-                self.update_rhythm_reasoning({}, np.asarray(self.ecg_data, dtype=float), fallback_labels)
-            elif hasattr(self, 'arrhythmia_list'):
-                self.arrhythmia_list.setText(f"Analysis error: {str(e)[:80]}")
-                if hasattr(self, 'rhythm_reason_label'):
-                    self.rhythm_reason_label.setText("Detailed rhythm reasoning unavailable due to analysis error.")
+                self.arrhythmia_list.setText(f"Analysis error: {str(e)[:50]}")
     
     def calculate_metrics(self, analysis):
         """Calculate ECG metrics from analysis results
@@ -2907,210 +2679,7 @@ class ExpandedLeadView(QDialog):
     
     def update_arrhythmia_display(self, arrhythmias):
         """Update the arrhythmia display"""
-        if arrhythmias:
-            # Display only true rhythm findings (avoid clutter like HRV stats).
-            filtered = []
-            for a in arrhythmias:
-                if not a:
-                    continue
-                s = str(a).strip()
-                # Normalize detector output (UI no longer adds bullet characters).
-                s = s.lstrip("•").strip()
-                if not s:
-                    continue
-                if s.startswith("HRV "):
-                    continue
-                filtered.append(s)
-
-            # Show only ONE rhythm label at a time (no extra findings).
-            # We keep detection multi-label internally, but the UI shows the best single rhythm.
-            priority = [
-                "Asystole (Cardiac Arrest)",
-                "Ventricular Fibrillation Detected",
-                "Torsade de Pointes",
-                "Polymorphic Ventricular Tachycardia",
-                "Possible Ventricular Tachycardia",
-                # Runs / frequent PVCs
-                "Run of PVCs (>=3 consecutive)",
-                "Frequent Multi-focal PVCs",
-                "Ventricular Ectopics Detected",
-                # Pauses / dropped beats (show these when present)
-                "Missed Beat at ~80 BPM (SA Block / Sinus Pause)",
-                "Missed Beat at ~120 BPM (SA Block / Sinus Pause)",
-                "Sinus Pause / Missed Beat",
-                "Atrial Fibrillation 2 (with RVR)",
-                "Atrial Fibrillation Detected",
-                # Ectopy patterns (important to surface)
-                "Trigeminy",
-                "Bigeminy",
-                "Possible Atrial Flutter",
-                "Supraventricular Tachycardia (SVT)",
-                "Paroxysmal Atrial Tachycardia (PAT)",
-                "Atrial Tachycardia",
-                "Junctional Tachycardia",
-                "Possible Junctional Rhythm",
-                "Nodal PNC (Premature Junctional Contraction)",
-                "Second-Degree AV Block (Type I - Wenckebach)",
-                "Second-Degree AV Block (Type II)",
-                "Second-Degree AV Block",
-                "Third-Degree AV Block (Complete Heart Block)",
-                "First-Degree AV Block",
-                "Sinus Tachycardia",
-                "Sinus Bradycardia",
-                "Sinus Arrhythmia",
-                "Normal Sinus Rhythm",
-            ]
-
-            # Map raw labels to canonical rhythm label buckets.
-            # (Detector sometimes returns extra descriptive text; we match by substring.)
-            def _match_label(s: str):
-                for lab in priority:
-                    if lab in s:
-                        return lab
-                return None
-
-            best = None
-
-            # Hard override: if a missed-beat/pause is present, show it (even if flutter is also present).
-            for pause_lab in (
-                "Missed Beat at ~80 BPM (SA Block / Sinus Pause)",
-                "Missed Beat at ~120 BPM (SA Block / Sinus Pause)",
-                "Sinus Pause / Missed Beat",
-            ):
-                if any(pause_lab in s for s in filtered):
-                    best = pause_lab
-                    break
-
-            # Hard override: if ectopy pattern is present, surface it (even if flutter is also present).
-            if best is None:
-                if any("Run of PVCs (>=3 consecutive)" in s for s in filtered):
-                    best = "Run of PVCs (>=3 consecutive)"
-                elif any("Frequent Multi-focal PVCs" in s for s in filtered):
-                    best = "Frequent Multi-focal PVCs"
-                if any("Trigeminy" in s for s in filtered):
-                    best = "Trigeminy"
-                elif any("Bigeminy" in s for s in filtered):
-                    best = "Bigeminy"
-
-            # Otherwise use priority order.
-            for lab in priority:
-                if best is None and any(lab in s for s in filtered):
-                    best = lab
-                    break
-            if best is None:
-                # Fallback: try substring matching into known labels.
-                for s in filtered:
-                    m = _match_label(s)
-                    if m is not None:
-                        best = m
-                        break
-
-            analysis_for_override = getattr(self, "_last_analysis", {})
-            strong_nsr = self._strong_nsr_evidence(analysis_for_override)
-            stable_sinus_metrics = self._sinus_metrics_stable(analysis_for_override)
-            parent_live_nsr = self._parent_live_rhythm_is_stable_nsr()
-            rhythm_critical_labels = {
-                "Asystole (Cardiac Arrest)",
-                "Ventricular Fibrillation Detected",
-                "Torsade de Pointes",
-                "Polymorphic Ventricular Tachycardia",
-                "Possible Ventricular Tachycardia",
-                "Run of PVCs (>=3 consecutive)",
-                "Frequent Multi-focal PVCs",
-                "Ventricular Ectopics Detected",
-                "Missed Beat at ~80 BPM (SA Block / Sinus Pause)",
-                "Missed Beat at ~120 BPM (SA Block / Sinus Pause)",
-                "Sinus Pause / Missed Beat",
-                "Atrial Fibrillation 2 (with RVR)",
-                "Atrial Fibrillation Detected",
-                "Trigeminy",
-                "Bigeminy",
-                "Possible Atrial Flutter",
-                "Supraventricular Tachycardia (SVT)",
-                "Paroxysmal Atrial Tachycardia (PAT)",
-                "Atrial Tachycardia",
-                "Junctional Tachycardia",
-                "Possible Junctional Rhythm",
-                "Nodal PNC (Premature Junctional Contraction)",
-                "Second-Degree AV Block (Type I - Wenckebach)",
-                "Second-Degree AV Block (Type II)",
-                "Second-Degree AV Block",
-                "Third-Degree AV Block (Complete Heart Block)",
-                "First-Degree AV Block",
-                "Sinus Tachycardia",
-                "Sinus Bradycardia",
-                "Sinus Arrhythmia",
-            }
-            secondary_non_rhythm_labels = {
-                "Right Ventricular Hypertrophy",
-                "ST Change Detected",
-                "T-Wave Inversion Detected",
-                "Right Bundle Branch Block (RBBB)",
-                "Left Bundle Branch Block (LBBB)",
-            }
-
-            if strong_nsr and stable_sinus_metrics:
-                if best is None or best not in rhythm_critical_labels or best in secondary_non_rhythm_labels:
-                    best = "Normal Sinus Rhythm"
-
-            hard_stop_labels = {
-                "Asystole (Cardiac Arrest)",
-                "Ventricular Fibrillation Detected",
-                "Torsade de Pointes",
-                "Polymorphic Ventricular Tachycardia",
-                "Possible Ventricular Tachycardia",
-                "Run of PVCs (>=3 consecutive)",
-                "Frequent Multi-focal PVCs",
-                "Atrial Fibrillation 2 (with RVR)",
-                "Atrial Fibrillation Detected",
-            }
-            if parent_live_nsr and stable_sinus_metrics:
-                if best is None or best not in hard_stop_labels:
-                    best = "Normal Sinus Rhythm"
-
-            if best is not None:
-                # Rhythm hold (anti-flicker): keep AF stable if it appears intermittently.
-                # Many real-world windows will alternate between AF and flutter depending on
-                # short-term RR regularity; clinically, if AF is present we don't want the UI
-                # to bounce to flutter every other window.
-                now = time.monotonic()
-                if not hasattr(self, "_rhythm_hold"):
-                    self._rhythm_hold = {"label": None, "until": 0.0}
-
-                hold_label = self._rhythm_hold.get("label")
-                hold_until = float(self._rhythm_hold.get("until", 0.0))
-
-                # If we just detected AF, hold it for a while.
-                if best in ("Atrial Fibrillation Detected", "Atrial Fibrillation 2 (with RVR)"):
-                    self._rhythm_hold["label"] = best
-                    self._rhythm_hold["until"] = now + 12.0
-
-                # If we're holding AF, don't downgrade to flutter.
-                if hold_label in ("Atrial Fibrillation Detected", "Atrial Fibrillation 2 (with RVR)") and now < hold_until:
-                    if best == "Possible Atrial Flutter":
-                        best = hold_label
-
-                # If flutter is only "possible" but we have a clear ectopy pattern, prefer it.
-                # This keeps the UI clinically useful without changing detector outputs.
-                if best == "Possible Atrial Flutter":
-                    if any("Trigeminy" in s for s in filtered):
-                        best = "Trigeminy"
-                    elif any("Bigeminy" in s for s in filtered):
-                        best = "Bigeminy"
-
-                filtered = [best]
-
-            unique = []
-            seen = set()
-            for a in filtered:
-                if a not in seen:
-                    unique.append(a)
-                    seen.add(a)
-
-            # Interpretation UI shows a single plain label (no bullet list).
-            arrhythmia_text = unique[0] if unique else "No specific arrhythmia detected."
-        else:
-            arrhythmia_text = "No specific arrhythmia detected."
+        arrhythmia_text = ", ".join(arrhythmias) if arrhythmias else "No specific arrhythmia detected."
         self.arrhythmia_list.setText(arrhythmia_text)
         
         # Keep parent ECG page's rhythm interpretation in sync for dashboard conclusions
@@ -3119,313 +2688,23 @@ class ExpandedLeadView(QDialog):
                 setattr(self._parent, '_latest_rhythm_interpretation', arrhythmia_text)
             except Exception:
                 pass
+
+            # Refresh the dashboard interpretation immediately so the dashboard card
+            # follows the same live arrhythmia text as the expanded view.
+            try:
+                dashboard = getattr(self._parent, 'dashboard_instance', None)
+                if dashboard is not None and hasattr(dashboard, 'update_live_conclusion'):
+                    dashboard.update_live_conclusion()
+            except Exception:
+                pass
         
-        # Color code based on severity (keep "no data" neutral)
+        # Color code based on severity
         is_normal = "Normal Sinus Rhythm" in arrhythmia_text
-        is_no_specific = "No specific arrhythmia detected" in arrhythmia_text
-        color = "#34495e" if is_no_specific else ("#2ecc71" if is_normal else "#b03a2e")
-        self.arrhythmia_list.setStyleSheet(
-            f"color: {color}; border: none; background: transparent;"
-        )
-
-    def _get_metric_card_value(self, metric_name, default=0):
-        try:
-            card = self.metrics_cards.get(metric_name)
-            if card is None:
-                return default
-            return getattr(card, "value", default)
-        except Exception:
-            return default
-
-    def _has_consistent_p_before_qrs(self, p_peaks, r_peaks):
-        try:
-            p_arr = np.asarray(p_peaks or [], dtype=int)
-            r_arr = np.asarray(r_peaks or [], dtype=int)
-            pr_ms = self._get_metric_card_value('pr_interval', 0)
-            p_dur_ms = self._get_metric_card_value('p_duration', 0)
-            rr_ms_card = self._get_metric_card_value('rr_interval', 0)
-
-            def _metric_fallback():
-                try:
-                    return (
-                        bool(pr_ms and 120 <= pr_ms <= 220) and
-                        bool(p_dur_ms and p_dur_ms >= 60) and
-                        bool(rr_ms_card and 450 <= rr_ms_card <= 1300)
-                    )
-                except Exception:
-                    return False
-
-            if len(r_arr) == 0:
-                return _metric_fallback()
-            if len(p_arr) == 0:
-                return _metric_fallback()
-            matched = 0
-            checked = 0
-            for r_idx in r_arr[: min(8, len(r_arr))]:
-                min_pr_samples = max(1, int(0.08 * self.sampling_rate))
-                max_pr_samples = max(min_pr_samples + 1, int(0.30 * self.sampling_rate))
-                candidates = p_arr[
-                    (p_arr < r_idx) &
-                    ((r_idx - p_arr) >= min_pr_samples) &
-                    ((r_idx - p_arr) <= max_pr_samples)
-                ]
-                checked += 1
-                if len(candidates) > 0:
-                    matched += 1
-            if checked == 0:
-                return _metric_fallback()
-            if (matched / checked) >= 0.6:
-                return True
-            return _metric_fallback()
-        except Exception:
-            return False
-
-    def _rr_is_regular(self, r_peaks):
-        try:
-            r_arr = np.asarray(r_peaks or [], dtype=int)
-            if len(r_arr) < 4:
-                rr_ms_card = self._get_metric_card_value('rr_interval', 0)
-                return bool(rr_ms_card and rr_ms_card > 0)
-            rr_ms = np.diff(r_arr) / float(self.sampling_rate) * 1000.0
-            mean_rr = float(np.mean(rr_ms))
-            if mean_rr <= 0:
-                return False
-            cv = float(np.std(rr_ms) / mean_rr)
-            if cv <= 0.18:
-                return True
-            successive_diff = np.abs(np.diff(rr_ms))
-            if successive_diff.size == 0:
-                return cv <= 0.18
-            return float(np.median(successive_diff)) <= 120.0
-        except Exception:
-            return False
-
-    def _last_five_rr_are_regular(self, r_peaks):
-        try:
-            r_arr = np.asarray(r_peaks or [], dtype=int)
-            if len(r_arr) < 6:
-                return self._rr_is_regular(r_arr)
-            rr_ms = np.diff(r_arr) / float(self.sampling_rate) * 1000.0
-            if len(rr_ms) < 5:
-                return self._rr_is_regular(r_arr)
-            last_five = np.asarray(rr_ms[-5:], dtype=float)
-            median_rr = float(np.median(last_five))
-            if median_rr <= 0:
-                return False
-            max_dev = float(np.max(np.abs(last_five - median_rr)))
-            cv = float(np.std(last_five) / median_rr)
-            return max_dev <= 80.0 and cv <= 0.08
-        except Exception:
-            return False
-
-    def _sinus_metrics_stable(self, analysis):
-        try:
-            analysis = analysis or {}
-            r_peaks = analysis.get('r_peaks', [])
-            rr_ms = self._get_metric_card_value('rr_interval', 0)
-            pr_ms = self._get_metric_card_value('pr_interval', 0)
-            qrs_ms = self._get_metric_card_value('qrs_duration', 0)
-            qt_ms = self._get_metric_card_value('qt_interval', 0)
-            qtc_ms = self._get_metric_card_value('qtc_interval', 0)
-            p_ms = self._get_metric_card_value('p_duration', 0)
-            heart_rate = int(round(60000.0 / rr_ms)) if rr_ms and rr_ms > 0 else 0
-
-            core_checks = [
-                55 <= heart_rate <= 105 if heart_rate else False,
-                120 <= pr_ms <= 220 if pr_ms else False,
-                60 <= qrs_ms < 120 if qrs_ms else False,
-                60 <= p_ms <= 140 if p_ms else True,
-                self._last_five_rr_are_regular(r_peaks),
-            ]
-            optional_checks = []
-            if qt_ms:
-                optional_checks.append(260 <= qt_ms <= 460)
-            if qtc_ms:
-                optional_checks.append(320 <= qtc_ms <= 460)
-
-            return all(core_checks) and all(optional_checks)
-        except Exception:
-            return False
-
-    def _get_parent_live_rhythm_labels(self):
-        try:
-            parent = getattr(self, "_parent", None)
-            bpm_ctrl = getattr(parent, "_bpm_ctrl", None) if parent is not None else None
-            store = getattr(bpm_ctrl, "store", None) if bpm_ctrl is not None else None
-            if store is None:
-                return []
-            labels = store.get_arrhythmias()
-            if not isinstance(labels, list):
-                return []
-            return [str(label).strip() for label in labels if str(label).strip()]
-        except Exception:
-            return []
-
-    def _parent_live_rhythm_is_stable_nsr(self):
-        try:
-            labels = self._get_parent_live_rhythm_labels()
-            return any("Normal Sinus Rhythm" in label for label in labels)
-        except Exception:
-            return False
-
-    def _strong_nsr_evidence(self, analysis):
-        try:
-            analysis = analysis or {}
-            r_peaks = analysis.get('r_peaks', [])
-            p_peaks = analysis.get('p_peaks', [])
-            p_duration = self._get_metric_card_value('p_duration', 0)
-            rr_ms = self._get_metric_card_value('rr_interval', 0)
-            pr_ms = self._get_metric_card_value('pr_interval', 0)
-            qrs_ms = self._get_metric_card_value('qrs_duration', 0)
-            heart_rate = int(round(60000.0 / rr_ms)) if rr_ms and rr_ms > 0 else 0
-            p_present = bool(len(p_peaks or []) > 0 or (p_duration and p_duration >= 60))
-            p_before_qrs = self._has_consistent_p_before_qrs(p_peaks, r_peaks)
-            rr_regular = self._last_five_rr_are_regular(r_peaks)
-            return all([
-                55 <= heart_rate <= 105 if heart_rate else False,
-                p_present,
-                p_before_qrs,
-                120 <= pr_ms <= 220 if pr_ms else False,
-                qrs_ms < 120 if qrs_ms else False,
-                rr_regular,
-                self._sinus_metrics_stable(analysis),
-            ])
-        except Exception:
-            return False
-
-    def _detect_split_r_pattern(self, signal, r_peaks):
-        try:
-            sig = np.asarray(signal, dtype=float)
-            r_arr = np.asarray(r_peaks or [], dtype=int)
-            if len(sig) == 0 or len(r_arr) < 2:
-                return False
-            hits = 0
-            checked = 0
-            for r_idx in r_arr[: min(6, len(r_arr))]:
-                start = max(0, r_idx - int(0.015 * self.sampling_rate))
-                end = min(len(sig), r_idx + int(0.09 * self.sampling_rate))
-                seg = sig[start:end]
-                if len(seg) < 6:
-                    continue
-                seg = seg - float(np.mean(seg))
-                try:
-                    peaks, _ = find_peaks(seg, distance=max(2, int(0.008 * self.sampling_rate)))
-                except Exception:
-                    continue
-                checked += 1
-                if len(peaks) >= 2:
-                    for i in range(len(peaks) - 1):
-                        delta_ms = (peaks[i + 1] - peaks[i]) / float(self.sampling_rate) * 1000.0
-                        if 15 <= delta_ms <= 70:
-                            hits += 1
-                            break
-            return checked > 0 and (hits / checked) >= 0.3
-        except Exception:
-            return False
-
-    def _detect_notched_r_pattern(self, signal, r_peaks):
-        try:
-            sig = np.asarray(signal, dtype=float)
-            r_arr = np.asarray(r_peaks or [], dtype=int)
-            if len(sig) == 0 or len(r_arr) < 2:
-                return False
-            hits = 0
-            checked = 0
-            for r_idx in r_arr[: min(6, len(r_arr))]:
-                start = max(0, r_idx - int(0.02 * self.sampling_rate))
-                end = min(len(sig), r_idx + int(0.08 * self.sampling_rate))
-                seg = sig[start:end]
-                if len(seg) < 6:
-                    continue
-                seg = seg - float(np.min(seg))
-                try:
-                    peaks, _ = find_peaks(seg, distance=max(2, int(0.01 * self.sampling_rate)))
-                except Exception:
-                    continue
-                checked += 1
-                if len(peaks) >= 2:
-                    hits += 1
-            return checked > 0 and (hits / checked) >= 0.3
-        except Exception:
-            return False
-
-    def update_rhythm_reasoning(self, analysis, signal, arrhythmias):
-        if not hasattr(self, 'rhythm_reason_label'):
-            return
-        try:
-            analysis = analysis or {}
-            r_peaks = analysis.get('r_peaks', [])
-            p_peaks = analysis.get('p_peaks', [])
-            q_peaks = analysis.get('q_peaks', [])
-
-            rr_ms = self._get_metric_card_value('rr_interval', 0)
-            pr_ms = self._get_metric_card_value('pr_interval', 0)
-            qrs_ms = self._get_metric_card_value('qrs_duration', 0)
-            p_duration = self._get_metric_card_value('p_duration', 0)
-            heart_rate = int(round(60000.0 / rr_ms)) if rr_ms and rr_ms > 0 else 0
-
-            p_present = bool(len(p_peaks or []) > 0 or (p_duration and p_duration >= 60))
-            p_before_qrs = self._has_consistent_p_before_qrs(p_peaks, r_peaks)
-            rr_regular = self._rr_is_regular(r_peaks)
-
-            nsr_checks = [
-                ("Rate", 60 <= heart_rate <= 100, f"{heart_rate} bpm" if heart_rate else "--"),
-                ("P visible", p_present, "yes" if p_present else "no"),
-                ("P→QRS", p_before_qrs, "1:1" if p_before_qrs else "not consistent"),
-                ("PR", 120 <= pr_ms <= 200 if pr_ms else False, f"{pr_ms} ms" if pr_ms else "--"),
-                ("QRS", qrs_ms < 120 if qrs_ms else False, f"{qrs_ms} ms" if qrs_ms else "--"),
-                ("RR", rr_regular, "regular" if rr_regular else "irregular"),
-            ]
-            nsr_ok = all(flag for _label, flag, _detail in nsr_checks)
-            passed = [f"{label} {detail}" for label, flag, detail in nsr_checks if flag]
-            failed = [f"{label} {detail}" for label, flag, detail in nsr_checks if not flag]
-
-            arr_text = " | ".join(str(a) for a in (arrhythmias or []))
-            has_rbbb = "RBBB" in arr_text or "Right Bundle Branch Block" in arr_text
-            has_lbbb = "LBBB" in arr_text or "Left Bundle Branch Block" in arr_text
-            split_r = self._detect_split_r_pattern(signal, r_peaks)
-            notched_r = self._detect_notched_r_pattern(signal, r_peaks)
-            q_absent = len(q_peaks or []) == 0
-
-            if has_rbbb:
-                if self.lead_name == "V1":
-                    bbb_text = f"RBBB: QRS {qrs_ms} ms with split terminal R' pattern in V1."
-                elif self.lead_name in ("I", "V6"):
-                    bbb_text = f"RBBB: QRS {qrs_ms} ms; confirm wide terminal S in {self.lead_name} and rSR' in V1."
-                else:
-                    bbb_text = f"RBBB detected: QRS {qrs_ms} ms. Best morphology confirmation is from V1 and lateral leads I/V6."
-            elif has_lbbb:
-                if self.lead_name in ("I", "V6"):
-                    bbb_text = f"LBBB: QRS {qrs_ms} ms with broad/notched lateral R and absent septal q={q_absent}."
-                elif self.lead_name == "V1":
-                    bbb_text = f"LBBB: QRS {qrs_ms} ms; V1 should show QS/rS while I/V6 show broad R."
-                else:
-                    bbb_text = f"LBBB detected: QRS {qrs_ms} ms. Best confirmation is from V1 plus lateral leads I/V6."
-            elif qrs_ms >= 120:
-                hints = []
-                if self.lead_name == "V1" and split_r:
-                    hints.append("split R' seen in V1")
-                if self.lead_name in ("I", "V6") and notched_r:
-                    hints.append("broad/notched lateral R seen")
-                hint_text = f" Morphology hint: {', '.join(hints)}." if hints else ""
-                bbb_text = f"Wide QRS ({qrs_ms} ms), but full RBBB/LBBB confirmation needs V1 and I/V6 morphology.{hint_text}"
-            else:
-                bbb_text = f"BBB unlikely in this beat/window because QRS is not wide ({qrs_ms} ms)."
-
-            nsr_prefix = "NSR satisfied." if nsr_ok else "NSR not satisfied."
-            detail_parts = []
-            if passed:
-                detail_parts.append("Pass: " + ", ".join(passed[:4]))
-            if failed:
-                detail_parts.append("Fail: " + ", ".join(failed[:4]))
-
-            self.rhythm_reason_label.setText(
-                f"{nsr_prefix} {' | '.join(detail_parts)}\n{bbb_text}"
-            )
-        except Exception:
-            self.rhythm_reason_label.setText(
-                "Decision summary unavailable. NSR uses rate, P wave, PR, QRS, and RR regularity; BBB uses wide-QRS morphology."
-            )
+        self.arrhythmia_list.setStyleSheet(f"""
+            color: {'#2ecc71' if is_normal else '#e74c3c'};
+            font-weight: bold;
+            border: none;
+        """)
     
     def update_plot_with_markers(self, analysis):
         """Update the plot without PQRST labels/markers (as requested)"""
@@ -3434,26 +2713,17 @@ class ExpandedLeadView(QDialog):
 
         try:
             # Remove any previously drawn markers/labels and do not add new ones
-            # Matplotlib uses an ArtistList for these; it may not support pop().
-            for artist in list(getattr(self.ax, "collections", [])):
-                try:
-                    artist.remove()
-                except Exception:
-                    pass
-            for artist in list(getattr(self.ax, "texts", [])):
-                try:
-                    artist.remove()
-                except Exception:
-                    pass
+            while len(self.ax.collections) > 0:
+                self.ax.collections.pop()
+            while len(self.ax.texts) > 0:
+                self.ax.texts.pop()
 
             # Ensure no legend is shown
             leg = self.ax.get_legend()
             if leg is not None:
                 leg.remove()
 
-            # CRITICAL FIX: invalidate blit cache — artists changed, background is stale
-            self._blit_bg = None
-            # Do NOT call canvas.draw_idle() here — the next timer tick handles it
+            self.canvas.draw_idle()
 
         except Exception as e:
             print(f"Error updating plot markers: {e}")
@@ -3466,7 +2736,6 @@ class ExpandedLeadView(QDialog):
         colors = {
             "Normal Sinus Rhythm": "#2ecc71",
             "Atrial Fibrillation": "#e74c3c",
-            "Atrial Flutter": "#9b59b6",
             "Ventricular Tachycardia": "#8e44ad",
             "Premature Ventricular Contractions": "#f39c12",
             "Sinus Bradycardia": "#3498db",
@@ -3538,6 +2807,8 @@ class ExpandedLeadView(QDialog):
         max_offset = max(0.0, total_duration - self.view_window_duration)
         slider_max = int(max_offset * 1000)
         current_val = int(min(self.view_window_offset, max_offset) * 1000)
+        
+        print(f" Updating history slider: max={slider_max}, current={current_val}, duration={total_duration:.1f}s")
         
         self.history_slider.blockSignals(True)
         self.history_slider.setMaximum(slider_max)

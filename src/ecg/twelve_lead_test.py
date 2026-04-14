@@ -2474,6 +2474,13 @@ class ECGTestPage(QWidget):
             rr_interval=getattr(self, 'last_rr_interval', 0),
         )
 
+        # Keep the dashboard and any open detailed ECG window in sync with the
+        # same live arrhythmia interpretation, even when the expanded view is not open.
+        try:
+            self.update_latest_rhythm_interpretation()
+        except Exception:
+            pass
+
     def _get_reference_metrics_for_bpm(self, bpm):
         """
         DEPRECATED: This function is no longer used.
@@ -3786,6 +3793,48 @@ class ECGTestPage(QWidget):
             metrics['qtc_interval'] = str(int(round(self.last_qtc_interval)))
             
         return metrics
+
+    def update_latest_rhythm_interpretation(self):
+        """Compute and cache the live arrhythmia interpretation for all UI surfaces."""
+        try:
+            if not hasattr(self, 'data') or len(self.data) < 2:
+                self._latest_rhythm_interpretation = "Analyzing Rhythm..."
+                return self._latest_rhythm_interpretation
+
+            fs = 500.0
+            if hasattr(self, 'sampler') and hasattr(self.sampler, 'sampling_rate') and self.sampler.sampling_rate:
+                try:
+                    fs = float(self.sampler.sampling_rate)
+                except Exception:
+                    fs = 500.0
+
+            lead_signals = {}
+            for idx, lead_name in enumerate(getattr(self, 'leads', []) or []):
+                if idx < len(self.data):
+                    lead_signals[str(lead_name)] = self.data[idx]
+            if "II" not in lead_signals and len(self.data) > 1:
+                lead_signals["II"] = self.data[1]
+
+            if not lead_signals:
+                self._latest_rhythm_interpretation = "Analyzing Rhythm..."
+                return self._latest_rhythm_interpretation
+
+            from ecg.arrhythmia_detector import analyze_ecg, get_interpretation
+
+            gender = "M"
+            try:
+                gender = str(getattr(self, 'user_details', {}).get('gender', 'M') or 'M')
+            except Exception:
+                gender = "M"
+
+            results = analyze_ecg(lead_signals, fs=fs, patient_gender=gender)
+            summary_lines = [line for line in get_interpretation(results) if line]
+            interpretation_text = ", ".join(summary_lines) if summary_lines else "No specific arrhythmia detected."
+            self._latest_rhythm_interpretation = interpretation_text
+            return interpretation_text
+        except Exception as e:
+            print(f" Error updating live rhythm interpretation: {e}")
+            return getattr(self, '_latest_rhythm_interpretation', "Analyzing Rhythm...")
 
     def get_latest_rhythm_interpretation(self):
         """Expose latest arrhythmia interpretation string for the dashboard."""
