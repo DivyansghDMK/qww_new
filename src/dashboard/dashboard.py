@@ -1476,7 +1476,12 @@ class Dashboard(QWidget):
             self.schedule_calendar.setSelectedDate(max_qdate)
             self.schedule_calendar.setCurrentPage(max_qdate.year(), max_qdate.month())
             
-            print(f" Calendar restrictions applied for new user. Signup: {signup_date_str}, Max: {max_qdate.toString('yyyy-MM-dd')}")
+            # Use string representation of max_qdate (avoid undefined variable)
+            try:
+                max_date_str = max_qdate.toString("yyyy-MM-dd")
+            except Exception:
+                max_date_str = str(max_qdate)
+            print(f" Calendar restrictions applied for new user. Signup: {signup_date_str}, Max: {max_date_str}")
             
         except Exception as e:
             print(f"Error applying calendar restrictions: {e}")

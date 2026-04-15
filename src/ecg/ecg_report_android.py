@@ -917,6 +917,12 @@ def _prepare_report_waveform(samples, width_mm, target_samples=None):
     except Exception:
         pass
 
+    try:
+        from ecg.ecg_filters import stabilize_report_edges
+        work = stabilize_report_edges(work, float(ECG_FS), edge_ms=140.0)
+    except Exception:
+        pass
+
     # Demo-only: remove residual baseline slope so the strip starts at the baseline.
     # This keeps demo PDFs from showing an initial drifting baseline even when the
     # dummycsv segment begins mid-cycle.

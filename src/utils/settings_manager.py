@@ -14,7 +14,7 @@ class SettingsManager:
             "hardware_version": "",
 
             # Report Setup settings
-            "printer_average_wave": "on",
+            "report_format": "12_1",
             "lead_sequence": "Standard",
 
             # Filter settings

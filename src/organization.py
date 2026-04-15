@@ -12,8 +12,8 @@ from PyQt5.QtWidgets import (
     QDialog, QLabel, QPushButton, QVBoxLayout, QHBoxLayout, 
     QMessageBox, QInputDialog, QLineEdit, QWidget, QSizePolicy, QFrame
 )
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QFont, QPixmap, QIntValidator
+from PyQt5.QtCore import Qt, QRegularExpression
+from PyQt5.QtGui import QFont, QPixmap, QIntValidator, QRegularExpressionValidator
 from config.settings import resource_path
 
 
@@ -1116,51 +1116,116 @@ class LoginDialog(QDialog, BaseDialogMixin):
         # Create phone input dialog
         phone_dialog = QDialog(self)
         phone_dialog.setWindowTitle("Login with Phone Number")
-        phone_dialog.setMinimumSize(400, 200)
+        phone_dialog.setWindowFlags(phone_dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        phone_dialog.setFixedSize(620, 360)
+        phone_dialog.setModal(True)
         phone_dialog.setStyleSheet("""
             QDialog {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, 
-                    stop:0 #f8f9fa, stop:1 #e9ecef);
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #161a31, stop:0.55 #1d2444, stop:1 #101427);
             }
             QLabel {
-                color: #333;
+                color: #f5f1ea;
                 font-size: 14px;
+                font-weight: 600;
+                background: transparent;
+                border: none;
+            }
+            QLabel#titleLabel {
+                font-size: 30px;
                 font-weight: bold;
+                color: #fff8f2;
+            }
+            QLabel#subtitleLabel {
+                font-size: 15px;
+                font-weight: 600;
+                color: rgba(255,255,255,0.72);
             }
             QLineEdit {
-                background: white;
-                border: 2px solid #dee2e6;
-                border-radius: 8px;
-                padding: 10px 12px;
+                padding: 14px 16px;
+                border: 1px solid rgba(255,255,255,0.14);
+                border-radius: 14px;
                 font-size: 14px;
-                color: #333;
-                min-height: 35px;
+                background: rgba(255,255,255,0.08);
+                color: #fffaf5;
+                min-height: 22px;
+            }
+            QLineEdit:focus {
+                border: 1px solid #ff8d33;
+                background: rgba(255,255,255,0.12);
+            }
+            QLineEdit::placeholder {
+                color: rgba(255,255,255,0.45);
             }
             QPushButton {
-                background: #007bff;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #ff6a00, stop:1 #ff9533);
                 color: white;
-                border: none;
-                border-radius: 8px;
+                border: 1px solid rgba(255,255,255,0.12);
+                border-radius: 14px;
                 padding: 12px;
-                font-size: 16px;
+                font-size: 15px;
                 font-weight: bold;
+                min-height: 18px;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #ff7b14, stop:1 #ffa347);
+            }
+            QPushButton#cancelBtn {
+                background: rgba(0,0,0,0.40);
+                color: #fff7ef;
+            }
+            QPushButton#cancelBtn:hover {
+                background: rgba(0,0,0,0.55);
+            }
+            QFrame#phoneLoginCard {
+                background: rgba(12,16,30,0.62);
+                border: 1px solid rgba(255,255,255,0.10);
+                border-radius: 24px;
             }
         """)
-        
+
         layout = QVBoxLayout(phone_dialog)
-        layout.setSpacing(15)
-        layout.setContentsMargins(30, 30, 30, 30)
-        
-        label = QLabel("Enter your phone number:")
-        layout.addWidget(label)
-        
+        layout.setSpacing(0)
+        layout.setContentsMargins(24, 24, 24, 24)
+
+        card = QFrame()
+        card.setObjectName("phoneLoginCard")
+        card_layout = QVBoxLayout(card)
+        card_layout.setSpacing(18)
+        card_layout.setContentsMargins(32, 30, 32, 28)
+        layout.addWidget(card)
+
+        title = QLabel("Login to Continue")
+        title.setObjectName("titleLabel")
+        title.setAlignment(Qt.AlignCenter)
+        card_layout.addWidget(title)
+
+        subtitle = QLabel(f"{self.role} - {self.organization}")
+        subtitle.setObjectName("subtitleLabel")
+        subtitle.setAlignment(Qt.AlignCenter)
+        card_layout.addWidget(subtitle)
+
+        label = QLabel("Phone Number:")
+        card_layout.addWidget(label)
+
         phone_edit = QLineEdit()
-        phone_edit.setPlaceholderText("Enter phone number")
-        layout.addWidget(phone_edit)
-        
+        phone_edit.setPlaceholderText("Enter your phone number")
+        phone_edit.setValidator(QRegularExpressionValidator(QRegularExpression(r"\d{0,10}"), phone_dialog))
+        phone_edit.setMaxLength(10)
+        phone_edit.returnPressed.connect(lambda: do_phone_login())
+        card_layout.addWidget(phone_edit)
+
         button_layout = QHBoxLayout()
+        button_layout.setSpacing(14)
         login_btn = QPushButton("Login")
+        login_btn.setMinimumHeight(52)
+        login_btn.setAutoDefault(True)
+        login_btn.setDefault(True)
         cancel_btn = QPushButton("Cancel")
+        cancel_btn.setObjectName("cancelBtn")
+        cancel_btn.setMinimumHeight(52)
         
         def do_phone_login():
             phone = phone_edit.text().strip()
@@ -1204,7 +1269,8 @@ class LoginDialog(QDialog, BaseDialogMixin):
         
         button_layout.addWidget(login_btn)
         button_layout.addWidget(cancel_btn)
-        layout.addLayout(button_layout)
+        card_layout.addSpacing(6)
+        card_layout.addLayout(button_layout)
         
         if phone_dialog.exec_() == QDialog.Accepted:
             QMessageBox.information(self, "Success", "Login successful! Your dashboard will now open.")

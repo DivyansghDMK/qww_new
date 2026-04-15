@@ -1472,11 +1472,6 @@ class ECGMenu(QGroupBox):
                 'setting_key': 'report_format'
             },
             {
-                'title': 'Average Wave',
-                'options': [("On", "on"), ("Off", "off")],
-                'setting_key': 'printer_average_wave'
-            },
-            {
                 'title': 'Lead Sequence',
                 'options': [("Standard", "Standard"), ("Cabrera", "Cabrera")],
                 'setting_key': 'lead_sequence'
