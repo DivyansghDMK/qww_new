@@ -6922,7 +6922,7 @@ class ECGTestPage(QWidget):
 
     def _create_overlay_widget(self):
         
-        from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QFrame, QLabel
+        from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QFrame
         
         # Create overlay container
         self._overlay_widget = QWidget()
@@ -7027,10 +7027,6 @@ class ECGTestPage(QWidget):
         # Add widgets to top panel
         top_layout.addWidget(close_btn)
         top_layout.addStretch()
-        # Shows current 12:1 / 6:2 window length (seconds + samples) across Light/Dark/Graph
-        self._overlay_window_label = QLabel("")
-        self._overlay_window_label.setStyleSheet("color: #e0e0e0; font-weight: bold; font-size: 12px;")
-        top_layout.addWidget(self._overlay_window_label)
         top_layout.addWidget(self.light_mode_btn)
         top_layout.addWidget(self.dark_mode_btn)
         top_layout.addWidget(self.graph_mode_btn)
@@ -7172,11 +7168,6 @@ class ECGTestPage(QWidget):
             elif hasattr(self, 'sampling_rate') and self.sampling_rate > 10:
                 sampling_rate = float(self.sampling_rate)
             samples_to_show = int(sampling_rate * seconds_to_show)
-
-            try:
-                self._set_overlay_window_info(layout, seconds_to_show, samples_to_show, sampling_rate, wave_speed)
-            except Exception:
-                pass
             
             # Return the calculated samples (same as main plots - no buffer size limit)
             # The data selection will handle cases where data is smaller
@@ -7199,33 +7190,7 @@ class ECGTestPage(QWidget):
             sampling_rate = float(self.demo_manager.samples_per_second)
         
         samples_to_show = int(sampling_rate * seconds_to_show)
-        try:
-            self._set_overlay_window_info(layout, seconds_to_show, samples_to_show, sampling_rate, wave_speed)
-        except Exception:
-            pass
         return max(1, samples_to_show)
-
-    def _set_overlay_window_info(self, layout, seconds_to_show, samples_to_show, sampling_rate, wave_speed):
-        """
-        Keep a small UI indicator updated with the current overlay time window.
-        The window (samples) is identical for Light/Dark/Graph; only the theme changes.
-        """
-        state = (
-            str(layout),
-            float(seconds_to_show),
-            int(samples_to_show),
-            float(sampling_rate),
-            float(wave_speed),
-        )
-        if getattr(self, "_overlay_window_state", None) == state:
-            return
-        self._overlay_window_state = state
-
-        layout_label = "12:1" if str(layout) == "12x1" else ("6:2" if str(layout) == "6x2" else str(layout))
-        text = f"{layout_label} • {seconds_to_show:.1f}s • {int(samples_to_show)} samples"
-        lbl = getattr(self, "_overlay_window_label", None)
-        if lbl is not None:
-            lbl.setText(text)
 
     def _update_overlay_plots(self):
         
@@ -7485,12 +7450,6 @@ class ECGTestPage(QWidget):
             for line in self._overlay_lines:
                 line.set_color('#0066cc')
                 line.set_linewidth(0.7)
-
-            try:
-                if hasattr(self, "_overlay_window_label") and self._overlay_window_label:
-                    self._overlay_window_label.setStyleSheet("color: #333333; font-weight: bold; font-size: 12px;")
-            except Exception:
-                pass
         
         elif mode == "dark":
             self.dark_mode_btn.setStyleSheet(active_button_style)
@@ -7513,22 +7472,10 @@ class ECGTestPage(QWidget):
             for line in self._overlay_lines:
                 line.set_color('#00ff00')
                 line.set_linewidth(0.7)
-
-            try:
-                if hasattr(self, "_overlay_window_label") and self._overlay_window_label:
-                    self._overlay_window_label.setStyleSheet("color: #e0e0e0; font-weight: bold; font-size: 12px;")
-            except Exception:
-                pass
         
         elif mode == "graph":
             self.graph_mode_btn.setStyleSheet(active_button_style)
             self._apply_graph_mode()
-
-            try:
-                if hasattr(self, "_overlay_window_label") and self._overlay_window_label:
-                    self._overlay_window_label.setStyleSheet("color: #333333; font-weight: bold; font-size: 12px;")
-            except Exception:
-                pass
         
         if hasattr(self, '_overlay_canvas'):
             self._overlay_canvas.draw_idle()
@@ -7726,7 +7673,10 @@ class ECGTestPage(QWidget):
                         self._graph_mode_original_get_overlay_target_buffer_len = self._get_overlay_target_buffer_len
 
                         def _graph_mode_get_overlay_target_buffer_len(this, is_demo_mode):
-                            if getattr(this, "_current_overlay_mode", None) == "graph":
+                            # Use the computed graph-mode target buffer length not only for
+                            # explicit "graph" mode but also for the visual light/dark
+                            # overlay modes so they show the same sample window.
+                            if getattr(this, "_current_overlay_mode", None) in ("graph", "light", "dark"):
                                 v = getattr(this, "_graph_mode_target_buffer_len", None)
                                 if v:
                                     return int(v)
@@ -7882,7 +7832,7 @@ class ECGTestPage(QWidget):
             print("Demo mode active - overlay will show demo data")
 
     def _create_two_column_overlay_widget(self):
-        from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QFrame, QLabel
+        from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QFrame
         
         # Create overlay container
         self._overlay_widget = QWidget()
@@ -7987,10 +7937,6 @@ class ECGTestPage(QWidget):
         # Add widgets to top panel
         top_layout.addWidget(close_btn)
         top_layout.addStretch()
-        # Shows current 12:1 / 6:2 window length (seconds + samples) across Light/Dark/Graph
-        self._overlay_window_label = QLabel("")
-        self._overlay_window_label.setStyleSheet("color: #e0e0e0; font-weight: bold; font-size: 12px;")
-        top_layout.addWidget(self._overlay_window_label)
         top_layout.addWidget(self.light_mode_btn)
         top_layout.addWidget(self.dark_mode_btn)
         top_layout.addWidget(self.graph_mode_btn)

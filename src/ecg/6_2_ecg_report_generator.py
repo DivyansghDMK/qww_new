@@ -374,6 +374,23 @@ def apply_report_ecg_filters(signal, sampling_rate, settings_manager):
     # Keep natural morphology at strip edges; avoid forced flattening/tapering
     # that can create artificial terminal humps.
     filtered = stabilize_report_edges(filtered, fs)
+    try:
+        from ecg.ecg_filters import notch_filter_butterworth
+        try:
+            ac_setting = str(settings_manager.get_setting("filter_ac", "50")).strip() if settings_manager else "50"
+            notch_freq = float(ac_setting) if ac_setting and ac_setting not in ("off", "") else 50.0
+        except Exception:
+            notch_freq = 50.0
+        try:
+            from ecg.ecg_filters import apply_ac_filter
+            filtered = apply_ac_filter(filtered, fs, str(int(notch_freq)))
+        except Exception:
+            try:
+                filtered = notch_filter_butterworth(filtered, fs, freq=notch_freq, q=25.0)
+            except Exception:
+                pass
+    except Exception:
+        pass
     return filtered
 
 def create_ecg_grid_with_waveform(ecg_data, lead_name, width=6, height=2):
