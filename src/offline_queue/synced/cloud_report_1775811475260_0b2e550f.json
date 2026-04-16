@@ -1,0 +1,18 @@
+{
+  "id": "cloud_report_1775811475260_0b2e550f",
+  "type": "cloud_report",
+  "data": {
+    "file_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\ecg_data\\ecg_data_20260410_142744.json",
+    "metadata": {
+      "filename": "ecg_data_20260410_142744.json",
+      "uploaded_at": "2026-04-10T14:27:55.260769",
+      "file_size": 2271589,
+      "file_type": ".json"
+    },
+    "cloud_service": "s3"
+  },
+  "priority": 2,
+  "queued_at": "2026-04-10T08:57:55.260769Z",
+  "retry_count": 0,
+  "status": "pending"
+}

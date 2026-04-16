@@ -1,0 +1,48 @@
+{
+  "11": {
+    "phone": "11",
+    "contact": "11",
+    "signup_date": "2026-03-06"
+  },
+  "111": {
+    "phone": "111",
+    "contact": "111",
+    "signup_date": "2026-03-06"
+  },
+  "44": {
+    "phone": "44",
+    "contact": "44",
+    "signup_date": "2026-03-09"
+  },
+  "1": {
+    "phone": "1",
+    "contact": "1",
+    "signup_date": "2026-03-16"
+  },
+  "2": {
+    "phone": "2",
+    "contact": "2",
+    "signup_date": "2026-03-26"
+  },
+  "897654": {
+    "phone": "897654",
+    "contact": "897654",
+    "signup_date": "2026-03-27"
+  },
+  "9560350477": {
+    "signup_date": "2026-04-02",
+    "phone": "9560350477",
+    "contact": "9560350477",
+    "auth_provider": "ecg_otp_backend",
+    "jwt_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJtb2JpbGVfbm8iOiI5NTYwMzUwNDc3IiwiaWF0IjoxNzc1NzE4OTg1LCJleHAiOjE3NzYzMjM3ODV9.ahqidqj7sKy5ohrKR_AobRrI2hwCFszK4vAfkBX5As0",
+    "last_phone_login_at": "2026-04-09T12:46:27.116320"
+  },
+  "8851137196": {
+    "signup_date": "2026-04-04",
+    "phone": "8851137196",
+    "contact": "8851137196",
+    "auth_provider": "ecg_otp_backend",
+    "jwt_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJtb2JpbGVfbm8iOiI4ODUxMTM3MTk2IiwiaWF0IjoxNzc1MzAyNTU4LCJleHAiOjE3NzU5MDczNTh9.2U3TPOFYNoEbg_51aB64Xv6TeawMhtIVdlKncvarbmQ",
+    "last_phone_login_at": "2026-04-04T17:05:58.211616"
+  }
+}

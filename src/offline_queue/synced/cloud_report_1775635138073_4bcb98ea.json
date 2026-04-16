@@ -1,0 +1,18 @@
+{
+  "id": "cloud_report_1775635138073_4bcb98ea",
+  "type": "cloud_report",
+  "data": {
+    "file_path": "C:\\Users\\DELL\\Documents\\QW\\qww\\reports\\HRV_Report_20260408_132846.pdf",
+    "metadata": {
+      "filename": "HRV_Report_20260408_132846.pdf",
+      "uploaded_at": "2026-04-08T13:28:58.072390",
+      "file_size": 332270,
+      "file_type": ".pdf"
+    },
+    "cloud_service": "s3"
+  },
+  "priority": 2,
+  "queued_at": "2026-04-08T07:58:58.073895Z",
+  "retry_count": 0,
+  "status": "pending"
+}

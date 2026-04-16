@@ -1,0 +1,18 @@
+{
+  "id": "cloud_report_1773641036794_d0f489ed",
+  "type": "cloud_report",
+  "data": {
+    "file_path": "C:\\Users\\Divyansh srivastava\\Documents\\ecg\\merge\\reports\\ecg_data\\ecg_data_20260306_151736.json",
+    "metadata": {
+      "filename": "ecg_data_20260306_151736.json",
+      "uploaded_at": "2026-03-16T11:33:56.794276",
+      "file_size": 889301,
+      "file_type": ".json"
+    },
+    "cloud_service": "s3"
+  },
+  "priority": 2,
+  "queued_at": "2026-03-16T06:03:56.794276Z",
+  "retry_count": 0,
+  "status": "pending"
+}
