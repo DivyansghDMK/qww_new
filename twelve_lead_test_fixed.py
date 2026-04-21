@@ -1765,6 +1765,38 @@ class ECGTestPage(QWidget):
         # Check if data is all zeros or has no real signal variation
         if len(lead_ii_data) < 100 or np.all(lead_ii_data == 0) or np.std(lead_ii_data) < 0.1:
             return
+
+        # ── Flat-line / Asystole guard (ADC scale) ────────────────────────────────
+        # When the hardware sends raw ADC counts the mean is large (~2060) but a
+        # flat/disconnected lead has std < 50 counts.  Pan-Tompkins finds false
+        # peaks in this noise and produces BPM 240-260.  Detect this condition
+        # first and return all-zero metrics instead of running the full pipeline.
+        _raw_std_ii = float(np.std(lead_ii_data))
+        _raw_mean_ii = float(np.mean(np.abs(lead_ii_data)))
+        _is_flat_line_ii = (_raw_mean_ii > 100.0 and _raw_std_ii < 50.0)
+        if _is_flat_line_ii:
+            # Reset everything to 0 so the display shows zeros for all params
+            self.last_heart_rate   = 0
+            self.last_rr_interval  = 0
+            self.pr_interval       = 0
+            self.last_qrs_duration = 0
+            self.last_qt_interval  = 0
+            self.last_qtc_interval = 0
+            self.last_p_duration   = 0
+            self._last_displayed_hr  = 0
+            self._last_displayed_qrs = 0
+            self._last_displayed_qt  = 0
+            # Clear smoothing buffers so they don’t re-inject old values
+            for _buf in ('_pr_smooth_buffer_tl', '_qrs_smooth_buffer', '_qt_smooth_buffer'):
+                if hasattr(self, _buf):
+                    getattr(self, _buf).clear()
+            # Push zeros to the display
+            self.update_ecg_metrics_display(
+                0, 0, 0, 0, 0, 0, 0,
+                force_immediate=True,
+                rr_interval=0,
+            )
+            return
         
         # Get sampling rate
         # Hardware stream is fixed 500 Hz. Keep calculations locked to configured rate

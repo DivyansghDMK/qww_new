@@ -1706,8 +1706,37 @@ class ECGTestPage(QWidget):
         # This is the raw buffer - NOT display-processed data
         lead_ii_data = self.data[1]
         
-        # Check if data is all zeros or has no real signal variation
-        if len(lead_ii_data) < 100 or np.all(lead_ii_data == 0) or np.std(lead_ii_data) < 0.1:
+        # ── Flat-line / Asystole guard (ADC scale) ────────────────────────────────
+        # When the hardware sends raw ADC counts the mean is large (~2060) but a
+        # flat/disconnected lead has std < 50 counts. Detect this condition
+        # (or completely 0 signal) and return all-zero metrics instead of running the full pipeline.
+        _raw_std_ii = float(np.std(lead_ii_data)) if len(lead_ii_data) > 0 else 0.0
+        _raw_mean_ii = float(np.mean(np.abs(lead_ii_data))) if len(lead_ii_data) > 0 else 0.0
+        
+        _is_flat_line_ii = len(lead_ii_data) < 100 or np.all(lead_ii_data == 0) or _raw_std_ii < 0.1 or (_raw_mean_ii > 100.0 and _raw_std_ii < 50.0)
+        
+        if _is_flat_line_ii:
+            # Reset everything to 0 so the display shows zeros for all params
+            self.last_heart_rate   = 0
+            self.last_rr_interval  = 0
+            self.pr_interval       = 0
+            self.last_qrs_duration = 0
+            self.last_qt_interval  = 0
+            self.last_qtc_interval = 0
+            self.last_p_duration   = 0
+            self._last_displayed_hr  = 0
+            self._last_displayed_qrs = 0
+            self._last_displayed_qt  = 0
+            # Clear smoothing buffers so they don’t re-inject old values
+            for _buf in ('_pr_smooth_buffer_tl', '_qrs_smooth_buffer', '_qt_smooth_buffer'):
+                if hasattr(self, _buf):
+                    getattr(self, _buf).clear()
+            # Push zeros to the display
+            self.update_ecg_metrics_display(
+                0, 0, 0, 0, 0, 0, 0,
+                force_immediate=True,
+                rr_interval=0,
+            )
             return
         
         # Get sampling rate
@@ -3827,11 +3856,36 @@ class ECGTestPage(QWidget):
             except Exception:
                 gender = "M"
 
-            results = analyze_ecg(lead_signals, fs=fs, patient_gender=gender)
+            hr_val = getattr(self, 'last_heart_rate', 0) or 0
+            pr_val = getattr(self, 'pr_interval', 0) or 0
+            qrs_val = getattr(self, 'last_qrs_duration', 0) or 0
+            qtc_val = getattr(self, 'last_qtc_interval', 0) or 0
+            
+            external_metrics = {
+                'external_hr': hr_val,
+                'external_pr': pr_val,
+                'external_qrs': qrs_val
+            }
+
+            results = analyze_ecg(lead_signals, fs=fs, patient_gender=gender, external_metrics=external_metrics)
+            arrhythmias = results.get("arrhythmias", [])
             summary_lines = [line for line in get_interpretation(results) if line]
-            interpretation_text = ", ".join(summary_lines) if summary_lines else "No specific arrhythmia detected."
-            self._latest_rhythm_interpretation = interpretation_text
-            return interpretation_text
+            
+            if not hasattr(self, '_last_analysis') or self._last_analysis is None:
+                self._last_analysis = {}
+            self._last_analysis['arrhythmias'] = arrhythmias
+
+            # Ensure the UI string reflects clinical findings
+            bbb_dx = [d for d in arrhythmias if any(
+                kw in d for kw in ('Bundle Branch', 'Wide QRS', 'Pre-excitation'))]
+            if bbb_dx:
+                clean_lines = [line for line in summary_lines if 'Wide QRS' not in line]
+                clean_lines.extend(bbb_dx)
+                self._latest_rhythm_interpretation = ", ".join(clean_lines)
+            else:
+                self._latest_rhythm_interpretation = ", ".join(summary_lines) if summary_lines else "No specific arrhythmia detected."
+
+            return self._latest_rhythm_interpretation
         except Exception as e:
             print(f" Error updating live rhythm interpretation: {e}")
             return getattr(self, '_latest_rhythm_interpretation', "Analyzing Rhythm...")

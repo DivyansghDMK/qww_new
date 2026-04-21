@@ -716,10 +716,19 @@ class LeadExpandedPopup(QDialog):
         try:
             if ArrhythmiaDetector is not None:
                 det = ArrhythmiaDetector(self.sampling_rate, counts_per_mv=500.0)
+                parent_win = getattr(self, "parent", lambda: None)()
+                if parent_win is None:
+                    parent_win = getattr(self, "parent_window", None)
+                ls = {"II": self.raw_data}
+                if parent_win and hasattr(parent_win, "lead_data"):
+                    if "V1" in parent_win.lead_data and len(parent_win.lead_data["V1"]) >= len(self.raw_data):
+                        ls["V1"] = parent_win.lead_data["V1"][:len(self.raw_data)]
+                    if "V6" in parent_win.lead_data and len(parent_win.lead_data["V6"]) >= len(self.raw_data):
+                        ls["V6"] = parent_win.lead_data["V6"][:len(self.raw_data)]
                 arr = det.detect_arrhythmias(
                     self.raw_data,
                     analysis,
-                    lead_signals={"II": self.raw_data}
+                    lead_signals=ls
                 )
                 summary_lines = []
                 if get_interpretation is not None:
@@ -2025,7 +2034,11 @@ class ECGAnalysisWindow(QDialog):
             analyzer = PQRSTAnalyzer(self.sampling_rate)
             analysis = analyzer.analyze_signal(segment)
             detector = ArrhythmiaDetector(self.sampling_rate)
-            results  = detector.detect_arrhythmias(segment, analysis)
+            ls = {"II": segment}
+            for v_lead in ["V1", "V6"]:
+                if v_lead in self.lead_data and len(self.lead_data[v_lead]) >= en:
+                    ls[v_lead] = self.lead_data[v_lead][st:en]
+            results  = detector.detect_arrhythmias(segment, analysis, lead_signals=ls)
 
             if not results or (len(results) == 1 and "Insufficient data" in results[0]):
                 QMessageBox.information(self, "Detection",

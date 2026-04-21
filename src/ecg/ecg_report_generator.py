@@ -301,15 +301,27 @@ def _build_conservative_conclusions(metrics, settings_manager=None, sampling_rat
         except Exception:
             pass
 
-    # Rhythm classification (conservative)
-    rhythm = "Rhythm: not enough data"
-    if hr is not None:
+    # ------------------------------------------------------------------
+    # ArrhythmiaEngine – use pre-computed diagnoses if available
+    # ------------------------------------------------------------------
+    engine_diagnoses = metrics.get("arrhythmias") or []
+
+    # Rhythm classification
+    if engine_diagnoses:
+        diagnosis_str = ", ".join(engine_diagnoses)
+        if hr is not None:
+            rhythm = f"Rhythm: {diagnosis_str} (HR ≈ {hr:.0f} bpm)"
+        else:
+            rhythm = f"Rhythm: {diagnosis_str}"
+    elif hr is not None:
         if hr > 100:
             rhythm = f"Sinus tachycardia (HR ≈ {hr:.0f} bpm)"
         elif hr < 60:
             rhythm = f"Sinus bradycardia (HR ≈ {hr:.0f} bpm)"
         else:
             rhythm = f"Normal sinus rhythm (HR ≈ {hr:.0f} bpm)"
+    else:
+        rhythm = "Rhythm: not enough data"
 
     # QTc assessment (suppress Bazett when HR > 100)
     qtc_line = "QTc: not available"
@@ -379,6 +391,10 @@ def _build_conservative_conclusions(metrics, settings_manager=None, sampling_rat
     # Build conservative list (max 12 entries downstream)
     conclusions.append(measured)
     conclusions.append(rhythm)
+    # If engine produced extra diagnoses beyond the first, add them individually
+    if len(engine_diagnoses) > 1:
+        for dx in engine_diagnoses[1:]:
+            conclusions.append(f"  • {dx}")
     conclusions.append(qtc_line)
     if lvh_line:
         conclusions.append(lvh_line)
@@ -1299,7 +1315,7 @@ def get_dashboard_conclusions_from_image(dashboard_instance):
             print(f" Loaded JSON data: {conclusions_data}")
             
             # Extract findings from JSON
-            findings = conclusions_data.get('findings', [])
+            findings = _normalize_report_conclusions(conclusions_data.get('findings', []))
             
             if findings:
                 conclusions = findings[:12]  # Take up to 12 conclusions
@@ -1361,10 +1377,15 @@ def get_conclusions_from_ecg_test_page(ecg_test_page, data=None):
             arr = getattr(ecg_test_page, '_latest_rhythm_interpretation', None)
 
         if arr and arr not in ("", "Analyzing Rhythm...", "Detecting..."):
-            conclusions.append(arr)
+            conclusions.extend(_split_conclusion_text(arr))
 
         # 2) Use _last_analysis metrics if available to add interval conclusions
         la = getattr(ecg_test_page, '_last_analysis', None)
+        if isinstance(la, dict):
+            for label in la.get('arrhythmias', []) or []:
+                if label:
+                    conclusions.extend(_split_conclusion_text(str(label)))
+
         # If _last_analysis exists, also include numeric metric summaries (HR/PR/QRS/QTc)
         if la is not None:
             try:
@@ -1393,20 +1414,207 @@ def get_conclusions_from_ecg_test_page(ecg_test_page, data=None):
             if qtc and qtc > 0:
                 conclusions.append(f"QTc: {qtc} ms")
 
-        # Deduplicate while preserving order
-        seen = set()
-        out = []
-        for c in conclusions:
-            if not c:
-                continue
-            s = str(c).strip()
-            if s and s not in seen:
-                out.append(s)
-                seen.add(s)
+        has_abnormal = _has_abnormal_conclusion(conclusions)
+        if not has_abnormal:
+            for label in _build_metric_conclusions(data or {}):
+                conclusions.append(label)
 
-        return out
+        # Deduplicate while preserving order
+        return _normalize_report_conclusions(conclusions)
     except Exception:
         return []
+
+
+def _split_conclusion_text(text):
+    """Split combined rhythm text into report-safe individual findings."""
+    if not text:
+        return []
+    raw = str(text).replace("•", ",").replace("\n", ",").strip()
+    if raw.lower().startswith("rhythm:"):
+        raw = raw.split(":", 1)[1].strip()
+    if raw.lower().startswith("arrhythmia interpretation:"):
+        raw = raw.split(":", 1)[1].strip()
+
+    parts = []
+    for item in raw.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        # Strip metric suffixes from dashboard lines like "Wide QRS - 116 ms".
+        if " - " in item and any(key in item for key in ("Wide QRS", "Borderline Wide QRS", "Prolonged PR", "Short PR")):
+            item = item.split(" - ", 1)[0].strip()
+        parts.append(item)
+    return parts
+
+
+def _has_abnormal_conclusion(conclusions):
+    abnormal_keywords = (
+        "Block", "Fibrillation", "Flutter", "Tachycardia", "Bradycardia",
+        "PVC", "PAC", "Wide QRS", "LVH", "Prolonged", "Short", "Asystole",
+        "Ventricular"
+    )
+    return any(
+        any(keyword.lower() in str(item).lower() for keyword in abnormal_keywords)
+        for item in conclusions
+    )
+
+
+def _normalize_report_conclusions(conclusions):
+    """Normalize report conclusions so real arrhythmias beat metric fallbacks."""
+    expanded = []
+    for item in conclusions or []:
+        expanded.extend(_split_conclusion_text(item))
+
+    abnormal = _has_abnormal_conclusion(expanded)
+    drop_when_abnormal = {
+        "Normal Sinus Rhythm",
+        "Normal sinus rhythm",
+        "Normal heart rate",
+    }
+    metric_prefixes = (
+        "Heart Rate:",
+        "PR Interval:",
+        "QRS Duration:",
+        "QTc:",
+    )
+
+    priority = [
+        "Asystole",
+        "Ventricular Fibrillation",
+        "Ventricular Tachycardia",
+        "Atrial Fibrillation",
+        "Atrial Flutter",
+        "Third-degree AV Block",
+        "Second-degree AV Block (Mobitz II)",
+        "Second-degree AV Block (Mobitz I)",
+        "Complete Left Bundle Branch Block",
+        "Complete Right Bundle Branch Block",
+        "Left Bundle Branch Block",
+        "Right Bundle Branch Block",
+        "First-degree AV Block (Prolonged PR)",
+        "Wide QRS",
+        "Borderline Wide QRS",
+        "LVH (Sokolow-Lyon)",
+        "LVH (Cornell)",
+        "Prolonged QTc",
+        "Long QT Syndrome",
+        "Normal Sinus Rhythm",
+    ]
+
+    seen = set()
+    cleaned = []
+    canonical_expanded = []
+    for item in expanded:
+        s = str(item).strip()
+        if " (HR" in s:
+            s = s.split(" (HR", 1)[0].strip()
+        canonical_expanded.append(s)
+    has_atrial_rhythm = any(
+        str(item).lower() in {
+            "atrial fibrillation",
+            "atrial fibrillation detected",
+            "atrial flutter",
+            "possible atrial flutter",
+        }
+        for item in canonical_expanded
+    )
+    has_bundle_branch_block = any(
+        "bundle branch block" in str(item).lower()
+        for item in canonical_expanded
+    )
+    ignore_values = {
+        "No specific arrhythmia detected.",
+        "No specific arrhythmia detected",
+        "Analyzing Rhythm...",
+        "Detecting...",
+    }
+    for item in expanded:
+        s = str(item).strip()
+        if not s or s == "---" or s in ignore_values:
+            continue
+        if " (HR" in s:
+            s = s.split(" (HR", 1)[0].strip()
+        aliases = {
+            "possible atrial flutter": "Atrial Flutter",
+            "atrial flutter": "Atrial Flutter",
+            "atrial fibrillation": "Atrial Fibrillation",
+            "atrial fibrillation detected": "Atrial Fibrillation",
+            "1st-degree av block": "First-degree AV Block (Prolonged PR)",
+            "first-degree av block": "First-degree AV Block (Prolonged PR)",
+            "first-degree av block (prolonged pr)": "First-degree AV Block (Prolonged PR)",
+        }
+        s = aliases.get(s.lower(), s)
+        if has_atrial_rhythm and "av block" in s.lower():
+            continue
+        if abnormal and (s in drop_when_abnormal or s.startswith(metric_prefixes)):
+            continue
+        if has_bundle_branch_block and s in ("Wide QRS", "Borderline Wide QRS"):
+            continue
+        key = s.lower()
+        if key not in seen:
+            cleaned.append(s)
+            seen.add(key)
+
+    def _rank(label):
+        return priority.index(label) if label in priority else len(priority)
+
+    cleaned.sort(key=_rank)
+    return cleaned
+
+
+def _build_metric_conclusions(data):
+    """Create value-based report findings from measured HR/PR/QRS/QTc."""
+    if not isinstance(data, dict):
+        return []
+
+    def _num(*keys):
+        for key in keys:
+            try:
+                value = data.get(key)
+                if value is not None and value != "":
+                    return float(value)
+            except Exception:
+                continue
+        return 0.0
+
+    hr = _num("HR_bpm", "Heart_Rate", "HR", "beat")
+    pr = _num("PR", "PR_ms", "pr_ms")
+    qrs = _num("QRS", "QRS_ms", "qrs_ms")
+    qtc = _num("QTc", "QTc_ms", "qtc_bazett")
+
+    if all(v <= 0 for v in (hr, pr, qrs, qtc)):
+        return []
+
+    findings = []
+    if hr < 5:
+        findings.append("Asystole")
+    elif hr > 150 and qrs == 0:
+        findings.append("Ventricular Fibrillation")
+    elif 0 < hr < 40 and pr == 0:
+        findings.append("Third-degree AV Block")
+    elif 0 < hr < 60:
+        findings.append("Sinus Bradycardia")
+    elif hr > 100:
+        findings.append("Sinus Tachycardia")
+    elif hr:
+        findings.append("Normal Sinus Rhythm")
+
+    if pr > 200:
+        findings.append("First-degree AV Block (Prolonged PR)")
+    elif 0 < pr < 120:
+        findings.append("Short PR Interval")
+
+    if qrs >= 120:
+        findings.append("Wide QRS")
+    elif qrs >= 110:
+        findings.append("Borderline Wide QRS")
+
+    if qtc > 500:
+        findings.append("Long QT Syndrome")
+    elif qtc > 460:
+        findings.append("Prolonged QTc")
+
+    return findings
 
 
 def load_latest_metrics_entry(reports_dir):
@@ -1582,6 +1790,7 @@ def generate_ecg_report(
     ecg_test_page=None,
     patient=None,
     ecg_data_file=None,
+    conclusions=None,
     log_history=False,
     username=None,
 ):
@@ -1783,11 +1992,13 @@ def generate_ecg_report(
     if not saved_ecg_data:
         print(" Warning: No saved ECG data available - beats will not be calculation-based")
 
-    # Get conclusions from dashboard/JSON
+    # Get conclusions from frozen report request, dashboard/JSON, or expanded view.
+    # Background PDF generation runs in a child process, so live widgets are not
+    # available there; explicit conclusions keep the report aligned with the UI.
     # Prefer expanded-view / ECG test page conclusions when available (more detailed, updated form)
-    dashboard_conclusions = []
+    dashboard_conclusions = _normalize_report_conclusions(conclusions or [])
     try:
-        if ecg_test_page:
+        if not dashboard_conclusions and ecg_test_page:
             dashboard_conclusions = get_conclusions_from_ecg_test_page(ecg_test_page, data)
             if dashboard_conclusions:
                 print(f" Using conclusions from expanded ECG view: {len(dashboard_conclusions)} items")
@@ -1796,6 +2007,16 @@ def generate_ecg_report(
 
     if not dashboard_conclusions:
         dashboard_conclusions = get_dashboard_conclusions_from_image(dashboard_instance)
+
+    dashboard_conclusions = _normalize_report_conclusions(dashboard_conclusions)
+    try:
+        if not _has_abnormal_conclusion(dashboard_conclusions):
+            for metric_conclusion in _build_metric_conclusions(data):
+                if metric_conclusion not in dashboard_conclusions:
+                    dashboard_conclusions.append(metric_conclusion)
+    except Exception:
+        pass
+    dashboard_conclusions = _normalize_report_conclusions(dashboard_conclusions)
 
     # SAFEGUARD: If there is no real data (all core metrics are zero), ignore any
     # persisted conclusions and use the explicit "no data" conclusions instead.
@@ -1856,7 +2077,7 @@ def generate_ecg_report(
 
     filtered_conclusions = [
         c
-        for c in dashboard_conclusions
+        for c in _normalize_report_conclusions(dashboard_conclusions)
         if c and c != "---" and "Rhythm Analysis" not in c and not _is_hrv_line(c)
     ]
     # Ensure max 12

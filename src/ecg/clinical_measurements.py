@@ -93,7 +93,8 @@ def assess_beat_quality(beat, fs, r_idx_in_beat):
         return None
 
 
-def build_median_beat(raw_signal, r_peaks, fs, pre_r_ms=400, post_r_ms=900, min_beats=8):
+def build_median_beat(raw_signal, r_peaks, fs, pre_r_ms=400, post_r_ms=900,
+                      min_beats=8, already_filtered=False):
     """
     Build median beat from aligned beats with quality selection (GE Marquette style).
 
@@ -101,12 +102,14 @@ def build_median_beat(raw_signal, r_peaks, fs, pre_r_ms=400, post_r_ms=900, min_
     All interval and amplitude measurements MUST come from this median beat.
 
     Args:
-        raw_signal: Raw ADC ECG signal.
+        raw_signal: Raw ADC ECG signal or an already-filtered measurement signal.
         r_peaks:    R-peak indices (detected on display channel).
         fs:         Sampling rate (Hz).
         pre_r_ms:   Window before R-peak (ms).
         post_r_ms:  Window after R-peak (ms).
         min_beats:  Minimum clean beats required (default 8, GE/Philips standard).
+        already_filtered: True when raw_signal already passed through the
+                          0.05-150 Hz measurement filter.
 
     Returns:
         (time_axis, median_beat) or (None, None) if insufficient clean beats.
@@ -114,7 +117,7 @@ def build_median_beat(raw_signal, r_peaks, fs, pre_r_ms=400, post_r_ms=900, min_
     if len(r_peaks) < min_beats:
         return None, None
 
-    measurement_signal = measurement_filter(raw_signal, fs)
+    measurement_signal = raw_signal if already_filtered else measurement_filter(raw_signal, fs)
 
     pre_samples  = int(pre_r_ms  * fs / 1000)
     post_samples = int(post_r_ms * fs / 1000)
@@ -646,11 +649,14 @@ def measure_rv5_sv1_from_median_beat(v5_raw, v1_raw, r_peaks_v5, r_peaks_v1, fs,
     measure_rv5_sv1_from_median_beat._dbg += 1
     if measure_rv5_sv1_from_median_beat._dbg % 50 == 1:
         sokolow = (rv5_mv + abs(sv1_mv)) if rv5_mv is not None and sv1_mv is not None else None
+        rv5_text = f"{rv5_mv:.3f}" if rv5_mv is not None else "---"
+        sv1_text = f"{sv1_mv:.3f}" if sv1_mv is not None else "---"
+        sokolow_text = f"{sokolow:.3f}" if sokolow is not None else "---"
         print(
             f"╔═══════════════════════════════════════╗\n"
-            f"║  RV5 = {rv5_mv:.3f if rv5_mv is not None else '---'} mV  (R wave in V5)\n"
-            f"║  SV1 = {sv1_mv:.3f if sv1_mv is not None else '---'} mV  (S wave in V1)\n"
-            f"║  Sokolow-Lyon = {sokolow:.3f if sokolow is not None else '---'} mV\n"
+            f"║  RV5 = {rv5_text} mV  (R wave in V5)\n"
+            f"║  SV1 = {sv1_text} mV  (S wave in V1)\n"
+            f"║  Sokolow-Lyon = {sokolow_text} mV\n"
             f"║  {'⚠️ LVH POSSIBLE' if sokolow is not None and sokolow >= 3.5 else '✓ Normal range'}\n"
             f"╚═══════════════════════════════════════╝"
         )

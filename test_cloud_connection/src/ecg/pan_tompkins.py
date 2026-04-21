@@ -122,3 +122,11 @@ def pan_tompkins(ecg, fs=500):
             dedup.append(int(r))
 
     return np.array(dedup, dtype=int)
+
+
+def detectRPeaks(filtered_signal, fs=500):
+    """
+    Backward-compatible alias for older callers that still import
+    detectRPeaks from this module.
+    """
+    return pan_tompkins(filtered_signal, fs=fs)

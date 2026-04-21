@@ -335,20 +335,49 @@ def _apply_ecg_filters(sig: np.ndarray, fs: float = 500.0) -> np.ndarray:
 
 def _build_conclusions(summary: dict) -> list:
     """
-    Build conclusion lines for the conclusion box.
-    User request: Only show rhythm/arrhythmia findings, nothing extra.
+    Build conclusion lines exactly as the user specified.
+    - 1. Primary Rhythm
+    - 2. Morphology additions
     """
-    lines = []
-    arrhy = summary.get('arrhythmia_counts', {})
+    report_lines = []
 
-    if not arrhy:
-        lines.append("Normal sinus rhythm")
-    else:
-        # User said "if not then print that issue"
-        for label in arrhy.keys():
-            lines.append(label)
+    arrhythmias = list(summary.get('secondary_findings') or summary.get('arrhythmias') or [])
+    primary = summary.get('primary_rhythm') or summary.get('primary_diagnosis')
+    if primary and primary not in arrhythmias:
+        arrhythmias.insert(0, primary)
 
-    return lines
+    priority = [
+        "Ventricular Fibrillation",
+        "Atrial Fibrillation",
+        "Atrial Flutter",
+        "Supraventricular Tachycardia",
+        "AV Block"
+    ]
+
+    diagnosis = "Normal Sinus Rhythm"
+
+    for p in priority:
+        for a in arrhythmias:
+            if p in str(a):
+                diagnosis = str(a)
+                break
+        if diagnosis != "Normal Sinus Rhythm":
+            break
+
+    report_lines.append(diagnosis)
+    
+    for a in arrhythmias:
+        sanitized = str(a)
+        if sanitized and sanitized not in report_lines and sanitized != diagnosis:
+            # Fix 6 sub-patch: Strip possible
+            if "Possible" not in sanitized:
+                report_lines.append(sanitized)
+
+    # Fallback if somehow completely empty
+    if not report_lines:
+        report_lines.append("Unknown Rhythm")
+
+    return report_lines
 
 
 def _generate_text_report(session_dir, patient_info, summary, output_path) -> str:

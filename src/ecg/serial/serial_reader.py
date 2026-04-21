@@ -534,18 +534,11 @@ class SerialStreamReader:
             if bytes_to_read == 0:
                 return []
             
-            # Cap the read size to prevent massive reads if buffer piled up
-            # But ensure we read enough to drain the buffer if possible
-            # Logic: Read available bytes, but respect our "catch up" logic sizes if they are larger/smaller
-            target_read_size = 4096
-            if len(self.buf) > 50000:
-                target_read_size = 16384
-            elif len(self.buf) > 20000:
-                target_read_size = 8192
-                
-            # Read whichever is smaller: what's available or our max chunk size
-            # (Actually, we should read all available to clear hardware buffer, but in chunks)
-            read_size = min(bytes_to_read, target_read_size)
+            # Always read ALL available bytes to completely drain the OS/hardware UART buffer.
+            # Python's bytearray has virtually no memory limit, whereas the OS buffer is small (often 4KB).
+            # If we don't completely drain the OS buffer when the UI thread blocks (e.g. tab switching),
+            # the OS buffer will overflow and hardware packets will be permanently lost.
+            read_size = bytes_to_read
             
             if getattr(self.ser, 'timeout', None) in (None, 0):
                 self.ser.timeout = self._read_timeout
@@ -625,10 +618,18 @@ class SerialStreamReader:
                     
                     self._last_packet_counter = packet_counter
                     
-                    # Only log every 500th packet to reduce console spam
-                    if self.data_count % 500 == 0:
+                    # Log every 250th packet (2 times per second) with numeric values, time and duration
+                    if self.data_count % 250 == 0:
                         loss_info = f" (Lost: {self._total_sequence_lost})" if self._total_sequence_lost > 0 else ""
-                        print(f" 📡 Packet #{self.data_count}{loss_info}")
+                        elapsed = time.time() - self.start_time
+                        hr_time = time.strftime("%H:%M:%S")
+                        
+                        leads_str = []
+                        for lead_key in ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"]:
+                            val = parsed.get(lead_key, 0)
+                            leads_str.append(f"{lead_key}:{val}")
+                            
+                        print(f" 📡 [{hr_time} | {elapsed:.2f}s] Pkt #{self.data_count}{loss_info} | {' '.join(leads_str)}")
                         
                     # We append EVERYTHING we parse. The safety is the time budget (parse_deadline).
                     # Dropping packets here causes missed heartbeats and false arrhythmias in the backend.

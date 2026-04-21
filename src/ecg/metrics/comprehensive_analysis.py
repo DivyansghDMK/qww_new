@@ -1,7 +1,8 @@
 import numpy as np
 from scipy.signal import butter, filtfilt, find_peaks
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Sequence, Tuple
 from ..qrs_detection import qrs_duration_from_raw_signal
+from ..arrhythmia_engine.arrhythmia_engine import ArrhythmiaEngine
 
 # -----------------------------------------------------------------------------
 # Helper Classes & Functions (Translated from User Kotlin Code)
@@ -16,6 +17,38 @@ class AdaptiveWindows:
         self.qrsOffsetFromR = qrsOffsetFromR
         self.tSearchStart = tSearchStart
         self.tSearchEnd = tSearchEnd
+
+
+def analyze_terminal_qrs_direction(data: np.ndarray, r_peak: int, fs: float) -> int:
+    """
+    Legacy morphology helper used by the ECG test page.
+
+    Returns 1 when the terminal QRS segment is predominantly negative and 0
+    otherwise. The caller uses this as a coarse LBBB-style indicator only.
+    """
+    try:
+        sig = np.asarray(data, dtype=float)
+        if sig.size < 5 or fs <= 0:
+            return 0
+
+        r_peak = int(r_peak)
+        start = max(0, r_peak + int(0.02 * fs))
+        end = min(sig.size, r_peak + int(0.06 * fs))
+        if end - start < 3:
+            start = max(0, r_peak)
+            end = min(sig.size, r_peak + int(0.04 * fs))
+        if end - start < 3:
+            return 0
+
+        terminal = sig[start:end]
+        pos = float(np.max(terminal))
+        neg = float(abs(np.min(terminal)))
+        return 1 if neg > pos else 0
+    except Exception:
+        return 0
+
+
+from ..arrhythmia_detector import _atrial_flutter_features
 
 def calculate_adaptive_windows(heart_rate: int, rr_interval_sec: float, fs: float) -> AdaptiveWindows:
     rr_samples = int(rr_interval_sec * fs)
@@ -305,14 +338,37 @@ def calculate_comprehensive_metrics(lead_data: np.ndarray, fs: float = 500.0) ->
     results = {
         "heart_rate": None,
         "rr_interval": None,
+        "rr_intervals": [],       # all RR intervals in ms (for ArrhythmiaEngine)
         "pr_interval": None,
         "qrs_duration": None,
         "qt_interval": None,
-        "qtc_interval": None
+        "qtc_interval": None,
+        "p_detected": False,      # True if a plausible P-wave was found
+        "arrhythmias": [],        # output of ArrhythmiaEngine.detect()
     }
     
     sig = np.array(lead_data, float)
     if len(sig) < 2000:
+        return results
+
+    # ── Flat-line / Asystole detection (BEFORE DC removal) ─────────────────
+    # Raw ADC std dev < 50 counts = physiologically zero variation = flat line.
+    # This fires for signals like II≈2070 with tiny ~15-count noise.
+    # Threshold of 50 ADC counts is safely below any real cardiac signal
+    # while being well above digital quantisation noise (~1-3 counts).
+    _raw_std = float(np.std(sig))
+    _FLAT_LINE_THRESHOLD = 50  # ADC counts
+    if _raw_std < _FLAT_LINE_THRESHOLD:
+        results.update({
+            "heart_rate": 0,
+            "rr_interval": 0,
+            "pr_interval": 0,
+            "qrs_duration": 0,
+            "qt_interval": 0,
+            "qtc_interval": 0,
+            "p_detected": False,
+            "arrhythmias": ["Asystole"],
+        })
         return results
 
     # Remove DC
@@ -409,5 +465,81 @@ def calculate_comprehensive_metrics(lead_data: np.ndarray, fs: float = 500.0) ->
             
             pr_ms = (qrs_start - p_onset) / fs * 1000.0
             results["pr_interval"] = pr_ms
+
+    # ------------------------------------------------------------------
+    # RR-intervals array (all consecutive pairs of R-peaks)
+    # ------------------------------------------------------------------
+    if len(r_peaks) >= 2:
+        rr_all = np.diff(r_peaks) * 1000.0 / fs  # ms
+        results["rr_intervals"] = rr_all.tolist()
+
+    # ------------------------------------------------------------------
+    # P-wave detection flag (simple threshold on PR plausibility)
+    # ------------------------------------------------------------------
+    pr_val = results.get("pr_interval")
+    p_detected_flag = bool(pr_val is not None and 0 < pr_val < 220)
+    
+    flutter_features = _atrial_flutter_features(filt, fs, r_peaks)
+    if flutter_features["is_flutter"]:
+        p_detected_flag = False
+        
+    results["p_detected"] = p_detected_flag
+    
+    if not p_detected_flag:
+        results["pr_interval"] = None
+
+    # ------------------------------------------------------------------
+    # LBBB vs RBBB morphology indicator
+    # Uses terminal QRS direction in the provided lead.
+    # LBBB (Lead I): terminal QRS is positive (broad R, no S wave)
+    # RBBB (Lead I): terminal QRS is negative (wide S wave after R)
+    # We look at the mean of the last 40ms of the QRS complex.
+    # ------------------------------------------------------------------
+    lbbb_indicator = 0.0
+    try:
+        terminal_ms = 40  # inspect last 40ms of QRS
+        terminal_samp = int(terminal_ms / 1000.0 * fs)
+        if qrs_end > qrs_start + terminal_samp:
+            qrs_terminal_seg = filt[qrs_end - terminal_samp : qrs_end]
+            r_amp_at_curr = filt[r_curr_idx]
+            if abs(r_amp_at_curr) > 1e-9:
+                terminal_mean = float(np.mean(qrs_terminal_seg))
+                # Positive terminal force (same sign as R) = LBBB;
+                # Negative (opposite sign) = RBBB wide S-wave
+                lbbb_indicator = terminal_mean / abs(r_amp_at_curr)
+    except Exception:
+        lbbb_indicator = 0.0
+
+    # ------------------------------------------------------------------
+    # ArrhythmiaEngine
+    # ------------------------------------------------------------------
+    try:
+        rr_values = results["rr_intervals"]
+        dropped_beats = False
+        if len(rr_values) >= 3:
+            median_rr = float(np.median(rr_values))
+            dropped_beats = bool(median_rr > 0 and max(rr_values) > 2.0 * median_rr)
+
+        features = {
+            "hr":             results["heart_rate"] or 0,
+            "rr_intervals":   rr_values,
+            "pr":             results.get("pr_interval") or 0,
+            "qrs":            results.get("qrs_duration") or 0,
+            "qtc":            results.get("qtc_interval") or 0,
+            "p_detected":     results["p_detected"],
+            "qrs_width":      results.get("qrs_duration") or 0,
+            "lbbb_indicator": lbbb_indicator,  # + = LBBB-like, - = RBBB-like terminal QRS
+            "dropped_beats":  dropped_beats,
+            "atrial_flutter": flutter_features["is_flutter"],
+            "atrial_rate_bpm": flutter_features["atrial_rate_bpm"],
+            "flutter_score": flutter_features.get("score", 0.0),
+        }
+        engine = ArrhythmiaEngine(features)
+        results["arrhythmias"] = engine.detect()
+    except Exception as _ae:
+        results["arrhythmias"] = []
+
+    results["atrial_rate_bpm"] = flutter_features["atrial_rate_bpm"]
+    results["atrial_flutter_score"] = flutter_features["score"]
 
     return results

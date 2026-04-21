@@ -77,6 +77,65 @@ def _bandpass_filter(signal: np.ndarray, fs: float, low_hz: float = 5.0, high_hz
     return filtfilt(b, a, signal, padlen=padlen)
 
 
+def _atrial_flutter_features(
+    signal: Sequence[float],
+    fs: float = DEFAULT_FS,
+    r_peaks: Optional[Sequence[int]] = None,
+) -> Dict[str, float]:
+    """
+    Detect organised atrial flutter waves from baseline energy, independent of
+    P-peak detection. Typical flutter waves cluster around 240-360 bpm (4-6 Hz).
+    """
+    sig = _safe_array(signal)
+    if sig.size < int(float(fs) * MIN_SIGNAL_SECONDS) or not np.any(sig):
+        return {"is_flutter": False, "score": 0.0, "atrial_rate_bpm": 0.0, "peak_hz": 0.0}
+
+    working = sig.astype(float).copy()
+    if r_peaks is not None and len(r_peaks) > 0:
+        blank = _ms_to_samples(90, fs)
+        for peak in r_peaks:
+            center = int(peak)
+            left = max(0, center - blank)
+            right = min(working.size, center + blank + 1)
+            if right > left:
+                base_left = max(0, left - blank)
+                base_right = min(working.size, right + blank)
+                baseline = float(np.median(np.concatenate((working[base_left:left], working[right:base_right])))) if (left > base_left or base_right > right) else float(np.median(working))
+                working[left:right] = baseline
+
+    try:
+        atrial = _bandpass_filter(working - float(np.median(working)), fs, low_hz=3.0, high_hz=15.0, order=2)
+    except Exception:
+        atrial = working - float(np.median(working))
+
+    if atrial.size < 8:
+        return {"is_flutter": False, "score": 0.0, "atrial_rate_bpm": 0.0, "peak_hz": 0.0}
+
+    windowed = atrial * np.hanning(atrial.size)
+    spectrum = np.abs(np.fft.rfft(windowed))
+    freqs = np.fft.rfftfreq(atrial.size, d=1.0 / float(fs))
+    flutter_band = (freqs >= 3.5) & (freqs <= 8.0)
+    reference_band = (freqs >= 1.0) & (freqs <= 20.0)
+    if not np.any(flutter_band) or not np.any(reference_band):
+        return {"is_flutter": False, "score": 0.0, "atrial_rate_bpm": 0.0, "peak_hz": 0.0}
+
+    band_spectrum = spectrum[flutter_band]
+    band_freqs = freqs[flutter_band]
+    peak_idx = int(np.argmax(band_spectrum))
+    peak_hz = float(band_freqs[peak_idx])
+    flutter_energy = float(np.sum(band_spectrum ** 2))
+    total_energy = float(np.sum(spectrum[reference_band] ** 2)) + 1e-9
+    score = flutter_energy / total_energy
+    atrial_rate_bpm = peak_hz * 60.0
+    is_flutter = bool(0.18 <= score and 240.0 <= atrial_rate_bpm <= 360.0)
+    return {
+        "is_flutter": is_flutter,
+        "score": float(score),
+        "atrial_rate_bpm": float(atrial_rate_bpm),
+        "peak_hz": peak_hz,
+    }
+
+
 def _moving_average(signal: np.ndarray, window: int) -> np.ndarray:
     window = max(1, int(window))
     if signal.size == 0:
@@ -245,7 +304,7 @@ def _detect_p_wave(signal: np.ndarray, r_idx: int, baseline: float, fs: float) -
 
     p_peak = p_start + peak_rel
     amplitude = float(signal[p_peak] - baseline)
-    if amplitude < 0.05:
+    if amplitude < 0.08:
         return result
     boundary_threshold = max(0.02, 0.2 * abs(amplitude))
 
@@ -400,30 +459,33 @@ def _mean_or_none(values: Iterable[Optional[float]]) -> Optional[float]:
 
 
 def classify_heart_rate(hr_bpm: float, rr_intervals_ms: Sequence[float]) -> Dict[str, object]:
+    """Returns rate-only label (rhythm labels are determined by detect_primary_rhythm)."""
     rr = np.asarray(rr_intervals_ms, dtype=float)
     rr_last = rr[-5:] if rr.size else rr
     rr_mean_ms = float(np.mean(rr)) if rr.size else 0.0
     rr_variability = float(np.max(rr_last) - np.min(rr_last)) if rr_last.size else 0.0
     is_irregular = rr_variability > 120.0
 
+    # Rate-only labels — do NOT include sinus labels here.
+    # Rhythm classification is done by detect_primary_rhythm().
     if hr_bpm < 20:
-        label = "Severe bradycardia / possible asystole"
+        label = "Severe bradycardia"
     elif hr_bpm < 40:
         label = "Bradycardia - severe"
     elif hr_bpm < 60:
-        label = "Sinus bradycardia"
+        label = "Bradycardia"
     elif hr_bpm <= 100:
         label = "Normal rate"
     elif hr_bpm <= 110:
         label = "Borderline tachycardia"
     elif hr_bpm <= 150:
-        label = "Sinus tachycardia"
+        label = "Tachycardia"
     elif hr_bpm <= 220:
         label = "Supraventricular tachycardia (SVT) - suspect"
     elif hr_bpm <= 300:
-        label = "Ventricular tachycardia - suspect"
+        label = "Ventricular tachycardia rate"
     else:
-        label = "Ventricular fibrillation - suspect"
+        label = "Extreme tachycardia"
 
     return {
         "label": label,
@@ -435,6 +497,7 @@ def classify_heart_rate(hr_bpm: float, rr_intervals_ms: Sequence[float]) -> Dict
 
 
 def is_normal_sinus_rhythm(beat_metrics: Dict[str, object]) -> Tuple[bool, List[str]]:
+    """All criteria must pass: P wave, PR interval, narrow QRS, regular RR, HR 60-100."""
     failed: List[str] = []
     hr = float(beat_metrics.get("heart_rate_bpm") or 0.0)
     pr_ms = beat_metrics.get("pr_ms")
@@ -445,6 +508,7 @@ def is_normal_sinus_rhythm(beat_metrics: Dict[str, object]) -> Tuple[bool, List[
     q_onset = beat_metrics.get("q_onset")
     p_amplitude = float(beat_metrics.get("p_amplitude_lead_ii") or beat_metrics.get("p_amplitude") or 0.0)
 
+    # ALL of these must be true for Normal Sinus Rhythm
     if not (60.0 <= hr <= 100.0):
         failed.append("hr_ok")
     if not p_present:
@@ -456,6 +520,7 @@ def is_normal_sinus_rhythm(beat_metrics: Dict[str, object]) -> Tuple[bool, List[
     if qrs_ms is None or not (float(qrs_ms) < 120.0):
         failed.append("qrs_narrow")
     if rr_variability >= 120.0:
+        # Irregular RR = NOT sinus
         failed.append("rr_regular")
     if p_amplitude <= 0.05:
         failed.append("p_axis_ok")
@@ -557,6 +622,217 @@ CONTIGUOUS_LEAD_PAIRS = (
     + _contiguous_pairs(["V1", "V2", "V3", "V4", "V5", "V6"])
 )
 
+BBB_MIN_QRS_MS = 110.0
+
+
+def _median_qrs_polarity(
+    signal: np.ndarray,
+    beats: Sequence[Dict[str, object]],
+    fs: float,
+) -> Tuple[float, float]:
+    """Return median positive/negative QRS deflection within beat windows."""
+    sig = _safe_array(signal)
+    if sig.size == 0 or not beats:
+        return 0.0, 0.0
+
+    positives: List[float] = []
+    negatives: List[float] = []
+    for beat in beats[: min(len(beats), 8)]:
+        r_peak = beat.get("r_peak")
+        if r_peak is None:
+            continue
+        r_idx = int(r_peak)
+        start = max(0, r_idx - _ms_to_samples(120, fs))
+        stop = min(sig.size, r_idx + _ms_to_samples(180, fs))
+        if stop - start < 5:
+            continue
+
+        baseline = _median_baseline(sig, r_idx - _ms_to_samples(350, fs), _ms_to_samples(120, fs))
+        segment = sig[start:stop] - baseline
+        positives.append(float(np.max(segment)))
+        negatives.append(float(abs(np.min(segment))))
+
+    if not positives or not negatives:
+        return 0.0, 0.0
+    return float(np.median(positives)), float(np.median(negatives))
+
+
+def detect_bundle_branch_block_from_leads(
+    qrs_ms: Optional[float],
+    signal_dict: Dict[str, Sequence[float]],
+    beats: Sequence[Dict[str, object]],
+    fs: float = DEFAULT_FS,
+) -> Optional[str]:
+    """Classify BBB using V1 polarity plus lateral-lead polarity in QRS windows."""
+    if not qrs_ms or float(qrs_ms) < BBB_MIN_QRS_MS:
+        return None
+
+    lead_v1 = _safe_array(signal_dict.get("V1"))
+    if lead_v1.size == 0:
+        return None
+
+    v1_pos, v1_neg = _median_qrs_polarity(lead_v1, beats, fs)
+    lateral_scores = []
+    for lead_name in ("I", "aVL", "V5", "V6"):
+        lead = _safe_array(signal_dict.get(lead_name))
+        if lead.size == 0:
+            continue
+        pos, neg = _median_qrs_polarity(lead, beats, fs)
+        lateral_scores.append(pos - neg)
+
+    if not lateral_scores:
+        return None
+
+    lateral_positive = float(np.median(lateral_scores)) > 0.0
+    v1_negative = v1_neg > max(v1_pos * 1.05, 1e-9)
+    v1_positive = v1_pos > max(v1_neg * 1.05, 1e-9)
+
+    if v1_negative and lateral_positive:
+        return "Complete Left Bundle Branch Block" if float(qrs_ms) >= BBB_MIN_QRS_MS else "Left Bundle Branch Block"
+    if v1_positive and not lateral_positive:
+        return "Complete Right Bundle Branch Block" if float(qrs_ms) >= BBB_MIN_QRS_MS else "Right Bundle Branch Block"
+
+    return None
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# LETHAL / PRIMARY RHYTHM DETECTORS
+# ──────────────────────────────────────────────────────────────────────────────
+
+def is_asystole(signal: np.ndarray, fs: float = DEFAULT_FS) -> bool:
+    """
+    Asystole = absent or near-flat signal (amplitude < 0.05 mV equivalent).
+    We check: peak-to-peak < 0.05 AND std < 0.02.
+    """
+    sig = _safe_array(signal)
+    if sig.size == 0:
+        return True
+    ptp = float(np.ptp(sig))
+    std = float(np.std(sig))
+    return ptp < 0.05 and std < 0.02
+
+
+def is_ventricular_fibrillation(signal: np.ndarray, r_peaks: List[int], fs: float = DEFAULT_FS) -> bool:
+    """
+    VF criteria:
+      1. High-amplitude chaotic signal (variance > threshold)
+      2. No organised R-peaks detected (< 3 peaks) — or irregular at extreme rates
+    This is morphology-based, NOT rate-based.
+    """
+    sig = _safe_array(signal)
+    if sig.size < int(fs * 2.0):
+        return False
+    variance = float(np.var(sig))
+    # Normalise variance by signal amplitude to be scale-invariant
+    amplitude = float(np.ptp(sig))
+    if amplitude < 0.05:
+        return False  # Flat line => asystole, not VF
+    relative_variance = variance / max(amplitude ** 2, 1e-9)
+    # VF: chaotic (high relative variance) AND few/no organised R-peaks
+    if len(r_peaks) < 3 and relative_variance > 0.015:
+        return True
+    # VF: rate > 300 bpm is physiologically VF
+    if len(r_peaks) >= 2:
+        mean_rr_ms = float(np.mean(np.diff(np.array(r_peaks))) * 1000.0 / fs)
+        if mean_rr_ms < 200.0 and relative_variance > 0.015:
+            # Extremely fast + chaotic = VF
+            return True
+    return False
+
+
+def is_ventricular_tachycardia(hr_bpm: float, qrs_ms: Optional[float],
+                                p_present: bool, rr_variability: float) -> bool:
+    """
+    VT criteria (morphology-based, not just rate):
+      - HR >= 100 bpm (ventricular rate)
+      - Wide QRS >= 120 ms
+      - No P waves preceding QRS (AV dissociation)
+      - Relatively regular RR (not VF chaos)
+    """
+    if hr_bpm < 100:
+        return False
+    if qrs_ms is None or float(qrs_ms) < 120.0:
+        return False
+    if p_present:
+        # P waves present = supraventricular origin, not VT
+        return False
+    if rr_variability > 200.0:
+        # Highly irregular = more likely VF than VT
+        return False
+    return True
+
+
+def detect_primary_rhythm(
+    signal: np.ndarray,
+    r_peaks: List[int],
+    beats_list: Sequence[Dict[str, object]],
+    rate_info: Dict[str, object],
+    fs: float = DEFAULT_FS,
+) -> str:
+    """
+    Priority-ordered primary rhythm detection.
+    Returns the single most important rhythm label.
+
+    Priority order (highest to lowest):
+      1. Asystole          — amplitude-based
+      2. Ventricular Fibrillation — chaos + no organised peaks
+      3. Ventricular Tachycardia  — wide QRS + high rate + no P
+      4. Sinus Bradycardia        — P wave present + HR < 60
+      5. Sinus Tachycardia        — P wave present + HR > 100
+      6. Normal Sinus Rhythm      — full sinus criteria met
+      7. Rate-appropriate fallback
+    """
+    hr = float(rate_info.get("heart_rate_bpm") or 0.0)
+    rr_variability = float(rate_info.get("rr_variability") or 0.0)
+
+    # ─── 1. Asystole ────────────────────────────────────────────────────────
+    if is_asystole(signal, fs):
+        return "Asystole"
+
+    # ─── 2. VF ──────────────────────────────────────────────────────────────
+    if is_ventricular_fibrillation(signal, r_peaks, fs):
+        return "Ventricular Fibrillation"
+
+    # Gather beat-level stats for downstream checks
+    clean_beats = [b for b in beats_list if not b.get("noisy")]
+    ref_beats = clean_beats if clean_beats else list(beats_list)
+    qrs_ms_vals = [float(b.get("qrs_ms") or 0.0) for b in ref_beats if b.get("qrs_ms")]
+    mean_qrs_ms: Optional[float] = float(np.mean(qrs_ms_vals)) if qrs_ms_vals else None
+    p_present_ratio = float(np.mean([bool(b.get("p_present")) for b in ref_beats])) if ref_beats else 0.0
+    p_present_majority = p_present_ratio > 0.5
+
+    # ─── 3. VT ──────────────────────────────────────────────────────────────
+    if is_ventricular_tachycardia(hr, mean_qrs_ms, p_present_majority, rr_variability):
+        return "Ventricular Tachycardia"
+
+    # ─── 4–6. Sinus rhythms (require P wave present) ────────────────────────
+    pr_vals = [float(b.get("pr_ms") or 0.0) for b in ref_beats if b.get("pr_ms")]
+    pr_ok = bool(pr_vals) and 120.0 <= float(np.mean(pr_vals)) <= 200.0
+    rr_regular = rr_variability < 120.0
+    narrow_qrs = mean_qrs_ms is not None and mean_qrs_ms < 120.0
+
+    is_sinus_origin = p_present_majority and pr_ok and rr_regular and narrow_qrs
+
+    if is_sinus_origin:
+        if hr < 60:
+            return "Sinus Bradycardia"
+        elif hr <= 100:
+            return "Normal Sinus Rhythm"
+        else:
+            return "Sinus Tachycardia"
+
+    # ─── 7. Fallback based on rate ───────────────────────────────────────────
+    if hr < 60:
+        return "Bradycardia (non-sinus)"
+    elif hr <= 100:
+        return "Rhythm Undetermined"
+    else:
+        return "Tachycardia (non-sinus)"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# SECONDARY ARRHYTHMIA DETECTOR (PACS, PVCs, AF, Blocks, BBB, ST)
+# ──────────────────────────────────────────────────────────────────────────────
 
 def detect_arrhythmia(beats_list: Sequence[Dict[str, object]], signal_dict: Dict[str, Sequence[float]], fs: float = DEFAULT_FS) -> List[str]:
     if not beats_list:
@@ -571,24 +847,59 @@ def detect_arrhythmia(beats_list: Sequence[Dict[str, object]], signal_dict: Dict
     rr_variability = float(np.max(rr_ms[-5:]) - np.min(rr_ms[-5:])) if rr_ms.size else 0.0
 
     p_absent_ratio = float(np.mean([not bool(beat.get("p_present")) for beat in reference_beats])) if reference_beats else 0.0
-    if p_absent_ratio > 0.70 and rr_variability > 120.0:
-        arrhythmias.append("Atrial fibrillation")
+    signal_for_flutter = _safe_array(signal_dict.get("II"))
+    if signal_for_flutter.size == 0:
+        for value in signal_dict.values():
+            signal_for_flutter = _safe_array(value)
+            if signal_for_flutter.size:
+                break
+    r_peaks = signal_dict.get("r_peaks", [])
+    flutter_features = _atrial_flutter_features(signal_for_flutter, fs, r_peaks=r_peaks)
+    atrial_fib = p_absent_ratio > 0.70 and rr_variability > 120.0
+    atrial_flutter = bool(flutter_features.get("is_flutter"))
+
+    if atrial_fib:
+        arrhythmias.append("Atrial Fibrillation")
+    elif atrial_flutter:
+        arrhythmias.append("Atrial Flutter")
 
     pp_ms = _pp_intervals_from_beats(reference_beats, fs)
-    if pp_ms.size:
+    if not atrial_fib and not atrial_flutter and pp_ms.size:
         atrial_rate = 60000.0 / float(np.mean(pp_ms))
         ventricular_rate = hr
         if 250.0 <= atrial_rate <= 350.0 and rr_variability <= 120.0 and ventricular_rate > 0:
             ratio = atrial_rate / max(ventricular_rate, 1e-6)
             if abs(ratio - 2.0) < 0.4 or abs(ratio - 4.0) < 0.6:
-                arrhythmias.append("Atrial flutter")
+                arrhythmias.append("Atrial Flutter")
+                atrial_flutter = True
 
     p_present_ratio = float(np.mean([bool(beat.get("p_present")) for beat in reference_beats])) if reference_beats else 0.0
 
-    if p_present_ratio > 0.7 and any(beat.get("p_present") and beat.get("pr_ms") is not None and float(beat["pr_ms"]) > 200.0 for beat in reference_beats):
+    skip_av_block = atrial_fib or atrial_flutter or p_present_ratio <= 0.7
+
+    if not skip_av_block and any(beat.get("p_present") and beat.get("pr_ms") is not None and float(beat["pr_ms"]) > 200.0 for beat in reference_beats):
         arrhythmias.append("1st-degree AV block")
 
-    if len(pr_values) >= 3 and p_present_ratio > 0.7 and np.ptp(pr_values) > 40.0 and hr < 50.0 and any(beat.get("p_present") for beat in reference_beats):
+    # Bug 2: 2nd-degree AV Blocks (Mobitz I / II)
+    if not skip_av_block and len(pr_values) >= 3:
+        pr_trend = [pr_values[i+1] - pr_values[i] for i in range(len(pr_values)-1)]
+        if sum(1 for d in pr_trend if d > 0) >= len(pr_trend) * 0.7:
+            arrhythmias.append("2nd-degree AV block (Mobitz I / Wenckebach)")
+
+    p_beats = [b for b in beats_list if b.get("p_present")]
+    qrs_count = len(reference_beats)
+    if not skip_av_block and qrs_count < len(p_beats):
+        arrhythmias.append("2nd-degree AV block (Mobitz II)")
+
+    pp_regular = False
+    av_dissociation = False
+    if pp_ms.size >= 2:
+        pp_regular = float(np.std(pp_ms)) <= 120.0
+    pr_scatter = float(np.ptp(pr_values)) if len(pr_values) >= 2 else 0.0
+    if len(pr_values) >= 3 and pr_scatter >= 80.0:
+        av_dissociation = True
+
+    if not skip_av_block and hr < 60.0 and pp_regular and av_dissociation:
         arrhythmias.append("3rd-degree AV block")
 
     lead_i = _safe_array(signal_dict.get("I"))
@@ -607,22 +918,26 @@ def detect_arrhythmia(beats_list: Sequence[Dict[str, object]], signal_dict: Dict
         broad_r = _broad_monophasic_r(lead_i, beat, fs) and _broad_monophasic_r(lead_v6, beat, fs)
         no_septal_q = (not _has_septal_q(lead_i, beat)) and (not _has_septal_q(lead_v6, beat))
 
-        if qrs_ms >= 120.0 and secondary_r and terminal_s:
+        if qrs_ms >= BBB_MIN_QRS_MS and secondary_r and terminal_s:
             has_rbbb = True
-        elif 110.0 <= qrs_ms < 120.0 and secondary_r and terminal_s:
+        elif 100.0 <= qrs_ms < BBB_MIN_QRS_MS and secondary_r and terminal_s:
             incomplete_rbbb = True
 
-        if qrs_ms >= 120.0 and v1_negative and broad_r and no_septal_q:
+        if qrs_ms >= BBB_MIN_QRS_MS and v1_negative and broad_r and no_septal_q:
             has_lbbb = True
-        elif 110.0 <= qrs_ms < 120.0 and v1_negative and broad_r and no_septal_q:
+        elif 100.0 <= qrs_ms < BBB_MIN_QRS_MS and v1_negative and broad_r and no_septal_q:
             incomplete_lbbb = True
 
-    if has_rbbb:
+    if has_rbbb and has_lbbb:
+        arrhythmias.append("Inconclusive bundle branch block")
+    elif has_rbbb:
         arrhythmias.append("Right bundle branch block (RBBB)")
     elif incomplete_rbbb:
         arrhythmias.append("Incomplete RBBB")
 
-    if has_lbbb:
+    if has_rbbb and has_lbbb:
+        pass
+    elif has_lbbb:
         arrhythmias.append("Left bundle branch block (LBBB)")
     elif incomplete_lbbb:
         arrhythmias.append("Incomplete LBBB")
@@ -776,7 +1091,7 @@ def _cornell_index(signal_dict: Dict[str, Sequence[float]], beats: Sequence[Dict
     return float(np.median(ravl_values)) + float(np.median(sv3_values)) if ravl_values and sv3_values else 0.0
 
 
-def analyze_ecg(leads_dict: Dict[str, Sequence[float]], fs: float = DEFAULT_FS, patient_gender: str = "M") -> Dict[str, object]:
+def analyze_ecg(leads_dict: Dict[str, Sequence[float]], fs: float = DEFAULT_FS, patient_gender: str = "M", external_metrics: Optional[Dict[str, float]] = None) -> Dict[str, object]:
     fs = float(fs or DEFAULT_FS)
     cleaned_leads = {lead: _safe_array(sig) for lead, sig in (leads_dict or {}).items()}
     if not cleaned_leads:
@@ -793,8 +1108,46 @@ def analyze_ecg(leads_dict: Dict[str, Sequence[float]], fs: float = DEFAULT_FS, 
     if detection_signal.size == 0:
         return {"arrhythmias": [], "reason": "No usable detection lead", "confidence": 0.0}
 
+    # ── Flat-line / Asystole check (ADC-scale signals) ──────────────────────
+    # When the device sends raw ADC counts the signal mean is large (~2000)
+    # but a flat/no-signal trace has near-zero std.  The mV-scale is_asystole()
+    # uses a 0.05 threshold which is irrelevant at ADC scale.
+    # Heuristic: if mean > 100 (raw ADC) AND std < 50  → flat line → Asystole.
+    _det_std  = float(np.std(detection_signal))
+    _det_mean = float(np.mean(np.abs(detection_signal)))
+    _is_flat_line = (_det_mean > 100.0 and _det_std < 50.0)
+    if _is_flat_line:
+        _asystole_result = {
+            "heart_rate_bpm": 0.0, "rr_ms": 0.0, "pr_ms": 0.0,
+            "qrs_ms": 0.0, "qt_ms": 0.0, "qtc_bazett": 0.0,
+            "qtc_fridericia": 0.0, "rv5_mv": 0.0, "sv1_mv": 0.0,
+            "sokolow_mv": 0.0, "p_axis_deg": 0.0, "qrs_axis_deg": 0.0,
+            "t_axis_deg": 0.0, "is_nsr": False,
+            "nsr_failed_criteria": ["flat_line"],
+            "primary_rhythm": "Asystole",
+            "Primary Diagnosis": "Asystole",
+            "arrhythmias": ["Asystole"],
+            "st_levels": {}, "confidence": 0.0,
+            "reason": "Flat-line signal (ADC std < 50)",
+            "r_peaks": [], "beats": [],
+            "Conduction Abnormalities": [],
+            "Rhythm Analysis": ["Flat line", "No P waves"],
+            "Intervals": {"PR": 0, "QRS": 0, "QT/QTc": "0/0"},
+            "Signal Quality": "Poor",
+        }
+        return _asystole_result
+
     r_peaks = detect_r_peaks_pan_tompkins(detection_signal, fs)
     if len(r_peaks) == 0:
+        if is_asystole(detection_signal, fs):
+            primary_rhythm = "Asystole"
+            arrhythmias = [primary_rhythm]
+        elif is_ventricular_fibrillation(detection_signal, [], fs):
+            primary_rhythm = "Ventricular Fibrillation"
+            arrhythmias = [primary_rhythm]
+        else:
+            primary_rhythm = "Rhythm Undetermined"
+            arrhythmias = []
         return {
             "heart_rate_bpm": 0.0,
             "rr_ms": 0.0,
@@ -811,7 +1164,8 @@ def analyze_ecg(leads_dict: Dict[str, Sequence[float]], fs: float = DEFAULT_FS, 
             "t_axis_deg": 0.0,
             "is_nsr": False,
             "nsr_failed_criteria": ["no_r_peaks"],
-            "arrhythmias": [],
+            "primary_rhythm": primary_rhythm,
+            "arrhythmias": arrhythmias,
             "st_levels": {},
             "confidence": max(0.0, detection_quality * 0.5),
             "reason": "No R peaks found",
@@ -827,7 +1181,11 @@ def analyze_ecg(leads_dict: Dict[str, Sequence[float]], fs: float = DEFAULT_FS, 
             beats.append(beat)
 
     rr_intervals_ms = np.diff(np.asarray(r_peaks, dtype=float)) * 1000.0 / fs if len(r_peaks) >= 2 else np.array([], dtype=float)
-    heart_rate = 60000.0 / float(np.mean(rr_intervals_ms)) if rr_intervals_ms.size else 0.0
+    
+    if external_metrics and external_metrics.get("external_hr"):
+        heart_rate = float(external_metrics.get("external_hr"))
+    else:
+        heart_rate = 60000.0 / float(np.mean(rr_intervals_ms)) if rr_intervals_ms.size else 0.0
     rate_info = classify_heart_rate(heart_rate, rr_intervals_ms)
 
     for idx, beat in enumerate(beats):
@@ -837,9 +1195,17 @@ def analyze_ecg(leads_dict: Dict[str, Sequence[float]], fs: float = DEFAULT_FS, 
 
     clean_beats = [beat for beat in beats if not beat.get("noisy")]
     averaging_beats = clean_beats[:10] if len(clean_beats) >= 3 else beats[:10]
+    beats_for_pr = [beat for beat in beats if beat.get("pr_ms") is not None]
 
-    pr_ms = _mean_or_none(beat.get("pr_ms") for beat in averaging_beats)
-    qrs_ms = _mean_or_none(beat.get("qrs_ms") for beat in averaging_beats)
+    if external_metrics and external_metrics.get("external_pr"):
+        pr_ms = float(external_metrics.get("external_pr"))
+    else:
+        pr_ms = _median_or_none(beat.get("pr_ms") for beat in beats_for_pr) or _mean_or_none(beat.get("pr_ms") for beat in averaging_beats)
+        
+    if external_metrics and external_metrics.get("external_qrs"):
+        qrs_ms = float(external_metrics.get("external_qrs"))
+    else:
+        qrs_ms = _median_or_none(beat.get("qrs_ms") for beat in averaging_beats) or _mean_or_none(beat.get("qrs_ms") for beat in averaging_beats)
     qt_candidates = [float(beat["qt_ms"]) for beat in averaging_beats if beat.get("qt_ms") is not None and 200.0 <= float(beat["qt_ms"]) <= 700.0]
     qt_for_average = qt_candidates[: min(5, len(qt_candidates))]
     qt_ms = float(np.mean(qt_for_average)) if qt_for_average else 0.0
@@ -870,9 +1236,243 @@ def analyze_ecg(leads_dict: Dict[str, Sequence[float]], fs: float = DEFAULT_FS, 
     }
     is_nsr, nsr_failed = is_normal_sinus_rhythm(nsr_input)
 
-    arrhythmias = detect_arrhythmia(beats, cleaned_leads, fs=fs)
-    if rr_intervals_ms.size >= 2 and rate_info["label"] != "Normal rate" and rate_info["label"] not in arrhythmias:
-        arrhythmias.insert(0, rate_info["label"])
+    # ── PRIMARY RHYTHM vs MORPHOLOGY ──────────────────────────────
+    primary = None
+    secondary = []
+    
+    hr = heart_rate
+
+    # Fix 3: P-wave consistency threshold (ratio > 0.5)
+    qrs_count = len(r_peaks)
+    p_count = sum(1 for b in beats if b.get("p_present"))
+    p_ratio = p_count / qrs_count if qrs_count > 0 else 0.0
+    p_detection_uncertain = False
+    pp_ms_all = _pp_intervals_from_beats(beats, fs)
+    pp_cv = float(np.std(pp_ms_all) / max(np.mean(pp_ms_all), 1e-9)) if pp_ms_all.size >= 2 else 0.0
+
+    if p_ratio < 0.5 or pp_cv > 0.25:
+        p_present = False
+        p_detection_uncertain = True
+    else:
+        p_present = True
+
+    rr_std_ms = float(np.std(rr_intervals_ms)) if rr_intervals_ms.size >= 2 else 0.0
+    rr_regular = rr_std_ms < 80.0
+    rr_irregular = rr_std_ms > 80.0
+    flutter_features = _atrial_flutter_features(detection_signal, fs, r_peaks=r_peaks)
+    spectral_flutter = bool(flutter_features.get("is_flutter"))
+    atrial_fib = (not p_present) and rr_irregular
+    atrial_flutter = spectral_flutter
+    effective_pr_ms = None if (atrial_fib or atrial_flutter) else pr_ms
+
+    # Fix 2: PR Series for Mobitz I
+    pr_series = [float(b.get("pr_ms")) for b in beats if b.get("pr_ms")]
+    mobitz_1 = False
+    if len(pr_series) >= 3:
+        pr_trend = [pr_series[i + 1] - pr_series[i] for i in range(len(pr_series) - 1)]
+        if sum(1 for d in pr_trend if d > 0) >= len(pr_trend) * 0.7:
+            mobitz_1 = True
+    dropped_beats = False
+    if rr_intervals_ms.size >= 2:
+        median_rr = float(np.median(rr_intervals_ms))
+        dropped_beats = bool(median_rr > 0.0 and float(np.max(rr_intervals_ms)) > 1.8 * median_rr)
+    pp_ms = pp_ms_all
+    pp_regular = bool(pp_ms.size >= 2 and float(np.std(pp_ms)) <= 120.0)
+    av_dissociation = False
+    if len(pr_series) >= 3:
+        av_dissociation = float(np.ptp(pr_series)) >= 80.0
+
+    # Fix 8: SNR Signal Quality
+    if detection_signal.size > 0:
+        signal_var = float(np.var(detection_signal))
+        signal_snr = float(np.mean(detection_signal**2) / (signal_var + 1e-9))
+    else:
+        signal_var = 0.0
+        signal_snr = 0.0
+
+    # Fix 6: Spectral VF extraction to feed into Engine Feature Dict
+    signal_amplitude = float(np.mean(np.abs(detection_signal))) if detection_signal.size else 0.0
+    vf_score = 0.0
+    if signal_var > 0.02 and signal_amplitude > 0.1 and (qrs_count < 3 or rr_std_ms > 300.0):
+        import scipy.fft
+        spectrum = np.abs(scipy.fft.fft(detection_signal))
+        if spectrum.size >= 30:
+            vf_band_energy = float(np.sum(spectrum[2:30]))
+            total_energy = float(np.sum(spectrum[1:len(spectrum)//2])) + 1e-9
+            vf_score = vf_band_energy / total_energy
+
+    lbbb_indicator = 0.0
+    if qrs_ms and qrs_ms >= 110.0:
+        v1_full = cleaned_leads.get("V1", np.array([]))
+        v6_full = cleaned_leads.get("V6", np.array([]))
+        if v1_full.size and v6_full.size:
+            lbbb_votes: List[float] = []
+            for beat in beats:
+                # If the globally injected QRS from the UI is wide, process the morphology regardless of crude beat estimate.
+                beat_qrs = float(beat.get("qrs_ms") or qrs_ms)
+                if beat_qrs < 110.0 and qrs_ms < 110.0:
+                    continue
+                r_idx = int(beat.get("r_peak", 0))
+                start = max(0, r_idx - _ms_to_samples(120, fs))
+                stop_v1 = min(v1_full.size, r_idx + _ms_to_samples(180, fs))
+                stop_v6 = min(v6_full.size, r_idx + _ms_to_samples(180, fs))
+                if stop_v1 - start < 5 or stop_v6 - start < 5:
+                    continue
+                v1 = v1_full[start:stop_v1] - np.median(v1_full[start:stop_v1])
+                v6 = v6_full[start:stop_v6] - np.median(v6_full[start:stop_v6])
+                v1_neg = abs(float(np.min(v1)))
+                v1_pos = float(np.max(v1))
+                v6_neg = abs(float(np.min(v6)))
+                v6_pos = float(np.max(v6))
+                if v1_neg > 1.05 * v1_pos and v6_pos > v6_neg:
+                    lbbb_votes.append(1.0)
+                elif v1_pos > 1.05 * v1_neg:
+                    lbbb_votes.append(-1.0)
+            if 'v1_pos' in locals() and 'v1_neg' in locals():
+                print(f"DEBUG BBB: v1_pos={v1_pos}, v1_neg={v1_neg}, v6_pos={v6_pos}, v6_neg={v6_neg}, lbbb_votes={lbbb_votes}", flush=True)
+            if lbbb_votes:
+                lbbb_indicator = float(np.median(lbbb_votes))
+
+    morphology_summary = {
+        "cluster_count": 0.0,
+        "dominant_ratio": 0.0,
+        "ectopic_ratio": 0.0,
+    }
+    try:
+        from ecg.template_matcher import cluster_beats, extract_beat_templates, morphology_features
+        templates = extract_beat_templates(detection_signal, r_peaks, fs)
+        beat_clusters = cluster_beats(templates)
+        morphology_summary = morphology_features(beat_clusters)
+    except Exception:
+        pass
+
+    features = {
+        "hr": hr,
+        "rr_intervals": rr_intervals_ms.tolist() if hasattr(rr_intervals_ms, "tolist") else rr_intervals_ms,
+        "rr_std": rr_std_ms,
+        "pr": effective_pr_ms or 0.0,
+        "qrs": qrs_ms or 0.0,
+        "qtc": qtc_bazett or 0.0,
+        "p_detected": p_present,
+        "qrs_width": qrs_ms or 0.0,
+        "lbbb_indicator": lbbb_indicator,
+        "dropped_beats": dropped_beats,
+        "pr_progression": mobitz_1,
+        "pp_regular": pp_regular,
+        "av_dissociation": av_dissociation,
+        "atrial_flutter": spectral_flutter,
+        "atrial_rate_bpm": float(flutter_features.get("atrial_rate_bpm") or 0.0),
+        "flutter_score": float(flutter_features.get("score") or 0.0),
+        "vf_score": float(vf_score),
+        "cluster_count": morphology_summary["cluster_count"],
+        "dominant_ratio": morphology_summary["dominant_ratio"],
+        "ectopic_ratio": morphology_summary["ectopic_ratio"],
+        "lead_V1": cleaned_leads.get("V1", np.array([])),
+        "lead_V6": cleaned_leads.get("V6", np.array([])),
+        # Signal quality features used by _is_asystole()
+        "signal_amplitude": signal_amplitude,
+        "signal_std": _det_std,
+    }
+
+    try:
+        from ecg.arrhythmia_engine.arrhythmia_engine import ArrhythmiaEngine
+        engine = ArrhythmiaEngine(features)
+        engine_diagnoses = engine.detect()
+    except Exception:
+        engine_diagnoses = []
+
+    if signal_snr < 0.2: 
+        primary = "Poor Signal"
+    else:
+        primary = engine_diagnoses[0] if engine_diagnoses else ("Normal Sinus Rhythm" if p_present else "Unknown Rhythm")
+
+    if primary not in ("Third-degree AV Block", "Ventricular Fibrillation", "Asystole") and av_dissociation and hr < 50:
+        primary = "Third-degree AV Block"
+        
+    for d in engine_diagnoses[1:]:
+        if d not in secondary and d not in ["Ventricular Tachycardia", "Ventricular Fibrillation", "Atrial Fibrillation", "Atrial Flutter", "VT", "VF", "AF", "Flutter", "Poor Signal"]:
+            secondary.append(d)
+
+    # 3. Morphology (SEPARATE) - Stable Multi-Lead Multi-Beat BBB Detection
+    if qrs_ms and qrs_ms > 120:
+        v1_full = cleaned_leads.get("V1", np.array([]))
+        v6_full = cleaned_leads.get("V6", np.array([]))
+        
+        lead_i_full = cleaned_leads.get("I", np.array([]))
+        if v1_full.size and v6_full.size:
+            bbb_votes = []
+            pre_win = int(0.200 * fs)
+            post_win = int(0.400 * fs)
+            
+            for beat in beats:
+                r_idx = int(beat.get("r_peak", 0))
+                start = max(0, r_idx - pre_win)
+                end = min(v1_full.size, r_idx + post_win)
+                
+                if end > start:
+                    v1 = v1_full[start:end]
+                    v6 = v6_full[start:end]
+                    
+                    if v1.size > 0 and v6.size > 0:
+                        min_v1 = float(np.min(v1 - np.median(v1)))
+                        max_v1 = float(np.max(v1 - np.median(v1)))
+                        min_v6 = float(np.min(v6 - np.median(v6)))
+                        max_v6 = float(np.max(v6 - np.median(v6)))
+                        
+                        # Use either the global injected QRS or the individual beat QRS
+                        beat_qrs = float(beat.get("qrs_ms") or qrs_ms)
+                        if beat_qrs > 120 or (qrs_ms and qrs_ms > 120):
+                            # Bug 3: Loosen 1.2x -> 1.05x
+                            if abs(min_v1) > 1.05 * max_v1 and max_v6 > abs(min_v6):
+                                bbb_votes.append("Left Bundle Branch Block")
+                            elif max_v1 > 1.05 * abs(min_v1):
+                                bbb_votes.append("Right Bundle Branch Block")
+            
+            if bbb_votes:
+                final_bbb = max(set(bbb_votes), key=bbb_votes.count)
+                # Bug 3: Loosen ratio 0.6 -> 0.4
+                ratio = bbb_votes.count(final_bbb) / max(1, len(beats))
+                
+                if ratio > 0.4:
+                    secondary.append(final_bbb)
+                else:
+                    secondary.append("Inconclusive Bundle Branch Morphology")
+        elif lead_i_full.size:
+            has_lead_i_lbbb = False
+            for beat in beats:
+                beat_qrs = float(beat.get("qrs_ms") or qrs_ms)
+                if beat_qrs <= 120.0 and (qrs_ms and qrs_ms <= 120.0):
+                    continue
+                if _broad_monophasic_r(lead_i_full, beat, fs) and not _has_septal_q(lead_i_full, beat):
+                    has_lead_i_lbbb = True
+                    break
+            if has_lead_i_lbbb and "Left Bundle Branch Block" not in secondary:
+                secondary.append("Left Bundle Branch Block")
+
+    # BONUS: Clustering + Template matching
+    try:
+        from ecg.template_matcher import (
+            classify_ectopics,
+            cluster_templates_crosscorr,
+        )
+        templates = extract_beat_templates(detection_signal, r_peaks, fs)
+        cluster_ids = cluster_templates_crosscorr(templates)
+        ectopics = classify_ectopics(cluster_ids, rr_intervals_ms)
+        if morphology_summary["ectopic_ratio"] > 0.2 and "Frequent PVCs" not in secondary:
+            secondary.append("Frequent PVCs")
+        if morphology_summary["cluster_count"] > 2 and "Multifocal PVCs" not in secondary:
+            secondary.append("Multifocal PVCs")
+        for ect in ectopics:
+            if ect not in secondary:
+                secondary.append(ect)
+    except Exception:
+        pass
+
+    # Combine for old report logic backward compat, but report_generator uses them correctly now
+    combined: List[str] = [primary] + [s for s in secondary if s not in (primary, "")]
+    primary_rhythm = primary
+    is_nsr = primary_rhythm == "Normal Sinus Rhythm"
+    nsr_failed_out = [] if is_nsr else nsr_failed
 
     rv5_mv, sv1_mv, sokolow_mv = _sokolow_lyon(cleaned_leads, averaging_beats, fs)
     cornell_mv = _cornell_index(cleaned_leads, averaging_beats, fs)
@@ -882,12 +1482,48 @@ def analyze_ecg(leads_dict: Dict[str, Sequence[float]], fs: float = DEFAULT_FS, 
     t_axis = _compute_axis(cleaned_leads, averaging_beats, "T")
 
     lead_scores = [_signal_quality_score(signal, fs) for signal in cleaned_leads.values() if signal.size]
-    confidence = float(np.mean(lead_scores)) if lead_scores else 0.0
+    confidence = float(np.mean(lead_scores)) if lead_scores else 1.0
+    
+    # Fix 7: Confidence score penalizer & averaging
+    # Real average of basic elements: p_consistency, rr_stability, etc.
+    p_consistency_score = 1.0 if not p_detection_uncertain else 0.5
+    rr_stability_score = 1.0 if rate_info["rr_variability"] < 300.0 else 0.6
+    base_confidence = float(np.mean(lead_scores)) if lead_scores else 1.0
+    
+    confidence = (base_confidence + p_consistency_score + rr_stability_score) / 3.0
+
+    # Fix 8: Edge Validation <60 or >220 QRS
+    if qrs_ms and (qrs_ms < 60 or qrs_ms > 220):
+        confidence -= 0.3
+
     confidence *= 0.9 if len(clean_beats) < max(1, min(3, len(beats))) else 1.0
     confidence = max(0.0, min(1.0, confidence))
 
+    gender = str(patient_gender or "M").strip().upper()
+    # LVH by Sokolow-Lyon or Cornell — add as finding, NOT as Normal Sinus Rhythm
+    if sokolow_mv > 3.5 and "LVH (Sokolow-Lyon)" not in combined:
+        combined.append("LVH (Sokolow-Lyon)")
+    if (gender.startswith("M") and cornell_mv > 2.8) or (gender.startswith("F") and cornell_mv > 2.0):
+        if "LVH (Cornell)" not in combined:
+            combined.append("LVH (Cornell)")
+
+    # Fix 10: Final Device-Level JSON Dictionary Formatting
     results = {
         "heart_rate_bpm": float(heart_rate),
+        "Primary Diagnosis": primary_rhythm,
+        "Conduction Abnormalities": [s for s in combined if "Block" in s or "PVC" in s],
+        "Rhythm Analysis": [
+            "Stable RR" if rr_regular else "Irregular RR",
+            "P waves present" if p_present else "No P waves"
+        ],
+        "Intervals": {
+            "PR": round(float(pr_ms or 0.0)),
+            "QRS": round(float(qrs_ms or 0.0)),
+            "QT/QTc": f"{int(qt_ms)}/{int(qtc_bazett)}"
+        },
+        "Signal Quality": "Good" if signal_snr >= 0.5 and confidence >= 0.7 else ("Poor" if signal_snr < 0.2 else "Fair"),
+        "Confidence": round(float(confidence), 2),
+        # Legacy/Extra bindings
         "rr_ms": float(rate_info["rr_mean_ms"]),
         "pr_ms": float(pr_ms or 0.0),
         "qrs_ms": float(qrs_ms or 0.0),
@@ -902,10 +1538,15 @@ def analyze_ecg(leads_dict: Dict[str, Sequence[float]], fs: float = DEFAULT_FS, 
         "qrs_axis_deg": float(qrs_axis),
         "t_axis_deg": float(t_axis),
         "is_nsr": bool(is_nsr),
-        "nsr_failed_criteria": nsr_failed,
-        "arrhythmias": arrhythmias,
+        "nsr_failed_criteria": nsr_failed_out,
+        "primary_rhythm": primary_rhythm,
+        "arrhythmias": combined,
+        "atrial_rate_bpm": float(flutter_features.get("atrial_rate_bpm") or 0.0),
+        "atrial_flutter_score": float(flutter_features.get("score") or 0.0),
+        "morphology": morphology_summary,
         "st_levels": st_levels,
         "confidence": confidence,
+        "QRS Classification": "Wide QRS" if qrs_ms and qrs_ms >= 120 else "Normal QRS",
         "r_peaks": [int(idx) for idx in r_peaks],
         "beats": beats,
         "detection_lead": detection_lead_name,
@@ -913,53 +1554,60 @@ def analyze_ecg(leads_dict: Dict[str, Sequence[float]], fs: float = DEFAULT_FS, 
         "patient_gender": patient_gender,
     }
 
-    gender = str(patient_gender or "M").strip().upper()
-    if sokolow_mv > 3.5 and "Normal sinus rhythm" not in results["arrhythmias"]:
-        results["arrhythmias"].append("Normal sinus rhythm")
-    if (gender.startswith("M") and cornell_mv > 2.8) or (gender.startswith("F") and cornell_mv > 2.0):
-        if "Normal sinus rhythm" not in results["arrhythmias"]:
-            results["arrhythmias"].append("Normal sinus rhythm")
-
     return results
 
 
 def get_interpretation(results_dict: Dict[str, object]) -> List[str]:
+    """
+    Build a priority-ordered interpretation list.
+    The PRIMARY RHYTHM is always the first item.
+    Additional findings (BBB, QTc, ST) are appended after.
+    Contradictory labels (e.g. sinus + VF) are suppressed.
+    """
     if not results_dict:
         return ["No ECG analysis available"]
 
-    interpretations: List[str] = []
-    hr = float(results_dict.get("heart_rate_bpm") or 0.0)
     qrs_ms = float(results_dict.get("qrs_ms") or 0.0)
     qtc = float(results_dict.get("qtc_bazett") or 0.0)
     arrhythmias = list(results_dict.get("arrhythmias") or [])
     st_levels = dict(results_dict.get("st_levels") or {})
 
-    rate_label = classify_heart_rate(hr, [float(results_dict.get("rr_ms") or 0.0)] if results_dict.get("rr_ms") else []).get("label")
-    if rate_label == "Normal rate":
-        interpretations.append("Normal heart rate")
-    else:
-        interpretations.append(rate_label)
+    # ── Primary rhythm always first ──────────────────────────────────────────
+    primary = results_dict.get("primary_rhythm") or (arrhythmias[0] if arrhythmias else "Rhythm Undetermined")
+    interpretations: List[str] = [primary]
 
-    if results_dict.get("is_nsr") or "Normal sinus rhythm" in arrhythmias:
-        interpretations.append("Normal sinus rhythm")
-    elif results_dict.get("nsr_failed_criteria"):
-        interpretations.append("Sinus rhythm criteria not fully satisfied")
+    LETHAL = {"Asystole", "Ventricular Fibrillation", "Ventricular Tachycardia"}
 
-    if qtc > 460.0:
-        interpretations.append("Prolonged QTc interval")
-    if qrs_ms >= 120.0:
-        interpretations.append("Wide QRS complex")
-
+    # ── Secondary findings — only those compatible with primary ─────────────
     for label in arrhythmias:
-        if label not in interpretations:
-            interpretations.append(label)
+        if label in interpretations:
+            continue
+        # Suppress sinus/normal labels when a lethal primary is set
+        if primary in LETHAL and any(
+            kw in label for kw in ("inus", "bradycardia", "Normal rate", "Borderline", "Normal Sinus")
+        ):
+            continue
+        interpretations.append(label)
 
+    # ── Additional interval / morphology findings ────────────────────────────
+    if qtc > 460.0 and "Prolonged QTc interval" not in interpretations:
+        interpretations.append("Prolonged QTc interval")
+    has_bbb = any("bundle branch" in str(item).lower() or str(item) in ("RBBB", "LBBB") for item in interpretations)
+    if qrs_ms >= 120.0 and not has_bbb:
+        if "Wide QRS complex" not in interpretations:
+            interpretations.append("Wide QRS complex")
+
+    # ── ST changes ───────────────────────────────────────────────────────────
     elevated = [lead for lead, value in st_levels.items() if float(value) > 0.1]
     depressed = [lead for lead, value in st_levels.items() if float(value) < -0.05]
     if len(elevated) >= 2:
-        interpretations.append(f"ST elevation in {'-'.join(sorted(elevated))}")
+        label = f"ST elevation in {'-'.join(sorted(elevated))}"
+        if label not in interpretations:
+            interpretations.append(label)
     if len(depressed) >= 2:
-        interpretations.append(f"ST depression in {'-'.join(sorted(depressed))}")
+        label = f"ST depression in {'-'.join(sorted(depressed))}"
+        if label not in interpretations:
+            interpretations.append(label)
 
     return interpretations
 
@@ -974,6 +1622,9 @@ class ArrhythmiaDetector:
     def __init__(self, sampling_rate: float = DEFAULT_FS, counts_per_mv: float = 1.0):
         self.fs = float(sampling_rate or DEFAULT_FS)
         self.counts_per_mv = float(counts_per_mv or 1.0)
+        import collections
+        self.diagnosis_buffer = collections.deque(maxlen=5)
+        self.bbb_history = collections.deque(maxlen=5)
 
     def _normalize_signal(self, signal: Sequence[float]) -> np.ndarray:
         signal_arr = _safe_array(signal)
@@ -998,23 +1649,81 @@ class ArrhythmiaDetector:
         if "II" not in lead_signals and primary_signal.size:
             lead_signals["II"] = primary_signal
 
-        results = analyze_ecg(lead_signals, fs=self.fs)
+        results = analyze_ecg(lead_signals, fs=self.fs, external_metrics=analysis)
+
+        import collections
+
+        # ── Temporal smoothing layer ──────────────────────────────────────────
+        # LETHAL rhythms (Asystole / VF / VT) bypass the majority-vote buffer
+        # and are reported immediately — a one-frame delay is clinically
+        # unacceptable for cardiac arrest.
+        _LETHAL_PRIMARY = {"Asystole", "Ventricular Fibrillation", "Ventricular Tachycardia"}
+        raw_primary = results.get("Primary Diagnosis", "Rhythm Undetermined")
+
+        if raw_primary in _LETHAL_PRIMARY:
+            # Bypass smoothing — use raw detection immediately.
+            # Also flush buffer so coming-back-to-normal isn't delayed.
+            self.diagnosis_buffer.clear()
+            self.diagnosis_buffer.append(raw_primary)
+            smoothed_primary = raw_primary
+        else:
+            self.diagnosis_buffer.append(raw_primary)
+            counter = collections.Counter(self.diagnosis_buffer)
+            smoothed_primary = counter.most_common(1)[0][0]
+
+        # Mutate the result so downstream report layers use smoothed version
+        results["Primary Diagnosis"] = smoothed_primary
+        results["primary_rhythm"] = smoothed_primary
+        if smoothed_primary not in results.get("arrhythmias", []):
+            if results.get("arrhythmias"):
+                results["arrhythmias"][0] = smoothed_primary
+
         arrhythmias = list(results.get("arrhythmias") or [])
 
-        if not arrhythmias:
-            if results.get("is_nsr"):
-                return ["Normal Sinus Rhythm"]
-            hr = float(results.get("heart_rate_bpm") or 0.0)
-            rr_ms = float(results.get("rr_ms") or 0.0)
-            rate_label = classify_heart_rate(hr, [rr_ms] if rr_ms else []).get("label")
-            return [rate_label] if rate_label else ["Unspecified Irregular Rhythm"]
+        # ── Asystole short-circuit ────────────────────────────────────────────
+        # When Asystole is primary, return immediately with ONLY ["Asystole"].
+        # No secondary findings (Wide QRS, LVH, etc.) should accompany it.
+        if smoothed_primary == "Asystole":
+            return ["Asystole"]
 
-        return arrhythmias
+        # Fix 6: Smooth BBB across time
+        current_bbb = "None"
+        for label in arrhythmias:
+            if "Bundle Branch block" in str(label).lower() or "bbb" in str(label).lower() or "inconclusive bundle" in str(label).lower():
+                current_bbb = label
+                break
+        
+        # Fix 6 sub-patch: Mark 'Possible Atrial Flutter' as low confidence instead of confirmed
+        arrhythmias = [a if str(a) != "Possible Atrial Flutter" else "Atrial Flutter (low confidence)" for a in arrhythmias]
+        
+        self.bbb_history.append(current_bbb)
+        non_none_history = [label for label in self.bbb_history if label != "None"]
+        smoothed_bbb = non_none_history[-1] if non_none_history else "None"
+        
+        # Rewrite the array wiping out any instantaneous BBB and injecting the smoothed BBB
+        arrhythmias = [a for a in arrhythmias if not ("Bundle Branch" in str(a) or "bbb" in str(a).lower() or "Inconclusive Bundle" in str(a))]
+        if smoothed_bbb != "None":
+            arrhythmias.append(smoothed_bbb)
+
+        # Update dicts
+        results["arrhythmias"] = arrhythmias
+        if results.get("Conduction Abnormalities") is not None:
+            results["Conduction Abnormalities"] = [smoothed_bbb] if smoothed_bbb != "None" else []
+
+        # Always return primary rhythm first (already in arrhythmias[0] by design)
+        return arrhythmias if arrhythmias else [results.get("primary_rhythm") or "Rhythm Undetermined"]
 
     def detect_arrhythmias_with_probabilities(self, signal, analysis, window_size: float = 2.0, step_size: Optional[float] = None) -> Dict[str, List[Tuple[float, float]]]:
         signal_arr = self._normalize_signal(signal)
-        analysis = analysis or {}
-        r_peaks = np.asarray(analysis.get("r_peaks") or detect_r_peaks_pan_tompkins(signal_arr, self.fs), dtype=int)
+        if analysis is None:
+            analysis = {}
+        if isinstance(analysis, dict):
+            r_peak_source = analysis.get("r_peaks")
+        else:
+            r_peak_source = analysis
+        if r_peak_source is None or len(r_peak_source) == 0:
+            r_peak_source = detect_r_peaks_pan_tompkins(signal_arr, self.fs)
+        r_peaks = np.asarray(r_peak_source, dtype=int)
         if r_peaks.size < 2:
             return {
                 "Normal Sinus Rhythm": [],
@@ -1044,8 +1753,8 @@ class ArrhythmiaDetector:
             window_signal = signal_arr[left:right]
             results = analyze_ecg({"II": window_signal}, fs=self.fs)
             arrhythmias = set(results.get("arrhythmias") or [])
-            output["Atrial Fibrillation"].append((float(center), 0.9 if "Atrial fibrillation" in arrhythmias else 0.1))
-            output["Atrial Flutter"].append((float(center), 0.85 if "Atrial flutter" in arrhythmias else 0.1))
+            output["Atrial Fibrillation"].append((float(center), 0.9 if "Atrial Fibrillation" in arrhythmias else 0.1))
+            output["Atrial Flutter"].append((float(center), 0.85 if "Atrial Flutter" in arrhythmias else 0.1))
             output["Normal Sinus Rhythm"].append((float(center), 0.8 if results.get("is_nsr") else 0.2))
 
         return output
@@ -1056,8 +1765,13 @@ __all__ = [
     "analyze_ecg",
     "classify_heart_rate",
     "detect_arrhythmia",
+    "detect_bundle_branch_block_from_leads",
+    "detect_primary_rhythm",
     "detect_r_peaks_pan_tompkins",
     "get_interpretation",
+    "is_asystole",
     "is_normal_sinus_rhythm",
+    "is_ventricular_fibrillation",
+    "is_ventricular_tachycardia",
     "measure_beat",
 ]

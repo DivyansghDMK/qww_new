@@ -327,7 +327,8 @@ class MetricsCard(QFrame):
             elif self.value < 120: return "SHORT"
             else: return "PROLONGED"
         elif self.title == "QRS Duration":
-            if 80 <= self.value <= 120: return "NORMAL"
+            if 80 <= self.value < 110: return "NORMAL"
+            elif 110 <= self.value < 120: return "BORDERLINE"
             elif self.value < 80: return "NARROW"
             else: return "WIDE"
         elif self.title == "QTc Interval":
@@ -342,6 +343,7 @@ class MetricsCard(QFrame):
         status = self.get_status()
         if status == "NORMAL": return "#2ecc71"  # Green
         if status in ["BRADYCARDIA", "TACHYCARDIA", "PROLONGED", "WIDE"]: return "#e74c3c"  # Red
+        if status == "BORDERLINE": return "#f39c12"
         if status in ["SHORT", "NARROW"]: return "#f39c12" # Orange
         return "#3498db" # Blue
     
@@ -1536,16 +1538,43 @@ class ExpandedLeadView(QDialog):
 
             rr_intervals = np.diff(r_peaks) / self.sampling_rate * 1000 if len(r_peaks) > 1 else np.array([])
             
-            # Fix call to detect_arrhythmias: it expects (signal, analysis_dict)
+            # Fix call to detect_arrhythmias: point it to the UI's unified metrics
+            # These were pulled from the parent and are the source of truth
+            try:
+                _hr_val = float(self.metrics_labels.get("heart_rate", {}).get("value", "0").replace("BPM", "").strip())
+            except Exception:
+                _hr_val = 0.0
+            try:
+                _qrs_val = float(self.metrics_labels.get("qrs_duration", {}).get("value", "0").replace("ms", "").strip())
+            except Exception:
+                _qrs_val = 0.0
+            try:
+                _pr_val = float(self.metrics_labels.get("pr_interval", {}).get("value", "0").replace("ms", "").strip())
+            except Exception:
+                _pr_val = 0.0
+
             analysis_dict = {
                 'r_peaks': r_peaks,
                 'p_peaks': p_peaks,
                 'q_peaks': q_peaks,
                 's_peaks': s_peaks,
-                't_peaks': t_peaks
+                't_peaks': t_peaks,
+                'external_hr': _hr_val,
+                'external_qrs': _qrs_val,
+                'external_pr': _pr_val
             }
-            arrhythmias = self.arrhythmia_detector.detect_arrhythmias(filtered_signal, analysis_dict)
+            arrhythmias = self.arrhythmia_detector.detect_arrhythmias(
+                filtered_signal,
+                analysis_dict,
+                lead_signals=self._collect_parent_lead_signals(parent),
+            )
             self.update_arrhythmia_display(arrhythmias)
+
+            # Store to parent for dashboard report generation
+            if parent:
+                if not hasattr(parent, '_last_analysis') or parent._last_analysis is None:
+                    parent._last_analysis = {}
+                parent._last_analysis['arrhythmias'] = arrhythmias
 
         except Exception as e:
             print(f" Error during ECG analysis: {e}")
@@ -1557,6 +1586,24 @@ class ExpandedLeadView(QDialog):
             'V1': 6, 'V2': 7, 'V3': 8, 'V4': 9, 'V5': 10, 'V6': 11
         }
         return lead_mapping.get(self.lead_name)
+
+    def _collect_parent_lead_signals(self, parent):
+        """Collect all available raw lead buffers so BBB morphology can be reported."""
+        lead_mapping = {
+            'I': 0, 'II': 1, 'III': 2, 'aVR': 3, 'aVL': 4, 'aVF': 5,
+            'V1': 6, 'V2': 7, 'V3': 8, 'V4': 9, 'V5': 10, 'V6': 11
+        }
+        if parent is None or not hasattr(parent, 'data'):
+            return {}
+        try:
+            data = parent.data
+            return {
+                lead: np.asarray(data[idx], dtype=float)
+                for lead, idx in lead_mapping.items()
+                if idx < len(data) and len(data[idx]) > 0
+            }
+        except Exception:
+            return {}
     
     def _apply_display_bandpass(self, signal, fs=500.0, low=0.05, high=40.0, order=2):
         """Display-only bandpass to remove DC drift (<0.05 Hz) and very high freq noise."""
@@ -2340,11 +2387,25 @@ class ExpandedLeadView(QDialog):
             
             # Detect arrhythmias using raw ECG data
             print(f" Analyzing arrhythmias for {self.lead_name}: {len(self.ecg_data)} samples, {len(analysis.get('r_peaks', []))} R-peaks detected")
+            
+            # Inject external metrics from the parent window so the detector uses the accurate UI calculations
+            try:
+                p = self._parent if hasattr(self, '_parent') else (self.parent() if hasattr(self, 'parent') else None)
+                if p and hasattr(p, 'get_current_metrics'):
+                    m = p.get_current_metrics()
+                    if m:
+                        analysis['external_hr'] = float(str(m.get('heart_rate', 0)).replace('--', '0'))
+                        analysis['external_pr'] = float(str(m.get('pr_interval', 0)).replace('--', '0'))
+                        analysis['external_qrs'] = float(str(m.get('qrs_duration', 0)).replace('--', '0'))
+            except Exception as e:
+                pass
+
             arrhythmias = self.arrhythmia_detector.detect_arrhythmias(
                 self.ecg_data, 
                 analysis,
                 has_received_serial_data=has_received_serial_data,
-                min_serial_data_packets=min_serial_data_packets
+                min_serial_data_packets=min_serial_data_packets,
+                lead_signals=self._collect_parent_lead_signals(self._parent or self.parent()),
             )
             print(f" Arrhythmia detection result for {self.lead_name}: {arrhythmias}")
             self.update_arrhythmia_display(arrhythmias)
@@ -2368,7 +2429,9 @@ class ExpandedLeadView(QDialog):
                     self.heatmap_time_axis = None
             except Exception as heatmap_error:
                 # Heatmap is optional - don't break arrhythmia display
+                import traceback
                 print(f" Heatmap generation error (non-critical): {heatmap_error}")
+                traceback.print_exc()
                 self.heatmap_overlay = None
                 self.heatmap_time_axis = None
             
@@ -2681,6 +2744,7 @@ class ExpandedLeadView(QDialog):
         """Update the arrhythmia display"""
         arrhythmia_text = ", ".join(arrhythmias) if arrhythmias else "No specific arrhythmia detected."
         self.arrhythmia_list.setText(arrhythmia_text)
+        self._save_arrhythmia_findings_for_report(arrhythmias)
         
         # Keep parent ECG page's rhythm interpretation in sync for dashboard conclusions
         if hasattr(self, '_parent') and self._parent is not None:
@@ -2699,12 +2763,71 @@ class ExpandedLeadView(QDialog):
                 pass
         
         # Color code based on severity
-        is_normal = "Normal Sinus Rhythm" in arrhythmia_text
+        abnormal_keywords = (
+            "Block", "Fibrillation", "Flutter", "Tachycardia", "Bradycardia",
+            "PVC", "PAC", "Wide QRS", "LVH", "Prolonged", "Short"
+        )
+        is_normal = (
+            "Normal Sinus Rhythm" in arrhythmia_text
+            and not any(keyword in arrhythmia_text for keyword in abnormal_keywords)
+        )
         self.arrhythmia_list.setStyleSheet(f"""
             color: {'#2ecc71' if is_normal else '#e74c3c'};
             font-weight: bold;
             border: none;
         """)
+
+    def _save_arrhythmia_findings_for_report(self, arrhythmias):
+        """Persist expanded-view findings so the PDF report uses the same diagnosis."""
+        try:
+            import json
+            import os
+            from datetime import datetime
+
+            findings = []
+            for item in arrhythmias or []:
+                for part in str(item).split(","):
+                    label = part.strip()
+                    if label and label not in findings:
+                        findings.append(label)
+
+            # ── Lethal rhythm short-circuit ──────────────────────────────────
+            # When Asystole / VF / VT is the primary diagnosis, save ONLY that
+            # label.  No secondary findings (Wide QRS, LVH, etc.) should be
+            # stored alongside — they are meaningless on a flat/absent signal.
+            _LETHAL = {"Asystole", "Ventricular Fibrillation", "Ventricular Tachycardia"}
+            if findings and findings[0] in _LETHAL:
+                findings = [findings[0]]
+
+            abnormal_keywords = (
+                "Block", "Fibrillation", "Flutter", "Tachycardia", "Bradycardia",
+                "PVC", "PAC", "Wide QRS", "LVH", "Prolonged", "Short", "Asystole"
+            )
+            has_abnormal = any(
+                any(keyword.lower() in label.lower() for keyword in abnormal_keywords)
+                for label in findings
+            )
+            if has_abnormal:
+                findings = [label for label in findings if label != "Normal Sinus Rhythm"]
+
+            if not findings:
+                return
+
+            base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+            conclusions_file = os.path.join(base_dir, "last_conclusions.json")
+            with open(conclusions_file, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "source": "expanded_lead_view",
+                        "findings": findings,
+                        "recommendations": [],
+                    },
+                    f,
+                    indent=2,
+                )
+        except Exception as exc:
+            print(f" Error saving expanded arrhythmia findings: {exc}")
     
     def update_plot_with_markers(self, analysis):
         """Update the plot without PQRST labels/markers (as requested)"""
@@ -2713,10 +2836,10 @@ class ExpandedLeadView(QDialog):
 
         try:
             # Remove any previously drawn markers/labels and do not add new ones
-            while len(self.ax.collections) > 0:
-                self.ax.collections.pop()
-            while len(self.ax.texts) > 0:
-                self.ax.texts.pop()
+            for artist in list(self.ax.collections):
+                artist.remove()
+            for artist in list(self.ax.texts):
+                artist.remove()
 
             # Ensure no legend is shown
             leg = self.ax.get_legend()
@@ -2807,8 +2930,6 @@ class ExpandedLeadView(QDialog):
         max_offset = max(0.0, total_duration - self.view_window_duration)
         slider_max = int(max_offset * 1000)
         current_val = int(min(self.view_window_offset, max_offset) * 1000)
-        
-        print(f" Updating history slider: max={slider_max}, current={current_val}, duration={total_duration:.1f}s")
         
         self.history_slider.blockSignals(True)
         self.history_slider.setMaximum(slider_max)

@@ -113,6 +113,7 @@ class PDFProcessRunner:
             ecg_test_page=None,
             patient=patient,
             ecg_data_file=frozen_data.get("ecg_data_file"),
+            conclusions=frozen_data.get("conclusions"),
             log_history=bool(frozen_data.get("log_history", False)),
             username=frozen_data.get("username", ""),
             demo_mode=bool(frozen_data.get("demo_mode", False)),

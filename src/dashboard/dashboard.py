@@ -2657,14 +2657,9 @@ class Dashboard(QWidget):
                         if qrs_val is None or qrs_val <= 0:
                             qrs_val = 0
                         
-                        # Apply EMA smoothing for QRS duration stability
-                        if not hasattr(self, '_dashboard_qrs_ema'):
-                            self._dashboard_qrs_ema = qrs_val
-                            self._dashboard_qrs_alpha = 0.2
-                        else:
-                            self._dashboard_qrs_ema = self._dashboard_qrs_alpha * qrs_val + (1 - self._dashboard_qrs_alpha) * self._dashboard_qrs_ema
-                        
-                        metrics['qrs_duration'] = int(round(self._dashboard_qrs_ema))
+                        # Do not smooth QRS: BBB detection depends on the true
+                        # measured width, and EMA can keep LBBB stuck near 117 ms.
+                        metrics['qrs_duration'] = int(round(qrs_val))
                         
                         # Calculate P Duration from median beat (real formula)
                         p_duration = measure_p_duration_from_median_beat(median_beat, time_axis, fs, tp_baseline)
@@ -3405,7 +3400,7 @@ class Dashboard(QWidget):
             except Exception:
                 sampling_rate = 500.0
 
-        from ecg.ecg_report_generator import save_ecg_data_to_file
+        from ecg.ecg_report_generator import save_ecg_data_to_file, _normalize_report_conclusions
         from dashboard.history_window import append_history_entry
         from utils.pdf_process_runner import PDFProcessRunner
 
@@ -3454,6 +3449,43 @@ class Dashboard(QWidget):
             "machine_serial": getattr(self, "user_details", {}).get("serial_id", "") or os.getenv("MACHINE_SERIAL_ID", ""),
         }
 
+        frozen_conclusions = []
+        try:
+            if ecg_page:
+                rhythm_text = None
+                try:
+                    if hasattr(ecg_page, "get_latest_rhythm_interpretation"):
+                        rhythm_text = ecg_page.get_latest_rhythm_interpretation()
+                except Exception:
+                    rhythm_text = getattr(ecg_page, "_latest_rhythm_interpretation", None)
+                if rhythm_text:
+                    frozen_conclusions.append(rhythm_text)
+
+                last_analysis = getattr(ecg_page, "_last_analysis", None) or {}
+                if isinstance(last_analysis, dict):
+                    frozen_conclusions.extend(last_analysis.get("arrhythmias", []) or [])
+
+            frozen_conclusions = _normalize_report_conclusions(frozen_conclusions)
+            if frozen_conclusions:
+                import json
+                conclusions_file = os.path.abspath(
+                    os.path.join(os.path.dirname(__file__), "..", "..", "last_conclusions.json")
+                )
+                with open(conclusions_file, "w", encoding="utf-8") as f:
+                    json.dump(
+                        {
+                            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "source": "dashboard_report_freeze",
+                            "findings": frozen_conclusions,
+                            "recommendations": [],
+                        },
+                        f,
+                        indent=2,
+                    )
+                print(f" Frozen report conclusions: {frozen_conclusions}")
+        except Exception as conclusion_err:
+            print(f" Could not freeze report conclusions: {conclusion_err}")
+
         def _on_finished(fname):
             try:
                 append_history_entry(
@@ -3480,6 +3512,7 @@ class Dashboard(QWidget):
             frozen_data={
                 "data": frozen_ecg_data,
                 "ecg_data_file": saved_ecg_data_file,
+                "conclusions": frozen_conclusions,
                 "log_history": False,
                 "username": getattr(self, "username", "") or "",
                 "demo_mode": False,
@@ -3820,10 +3853,14 @@ class Dashboard(QWidget):
             if rhythm_text:
                 rhythm_clean = rhythm_text.strip()
                 if rhythm_clean not in ignore_values:
+                    abnormal_rhythm_keywords = (
+                        "block", "fibrillation", "flutter", "tachycardia", "bradycardia",
+                        "pvc", "pac", "wide qrs", "lvh", "prolonged", "short", "asystole"
+                    )
                     is_normal_rhythm = any(
                         keyword in rhythm_clean.lower()
                         for keyword in ["normal sinus", "none detected", "sinus rhythm"]
-                    )
+                    ) and not any(keyword in rhythm_clean.lower() for keyword in abnormal_rhythm_keywords)
                     if not is_normal_rhythm:
                         rhythm_issue = rhythm_clean
 
@@ -3844,13 +3881,13 @@ class Dashboard(QWidget):
             qrs_status  = None  # None = normal / not measured
             qrs_label   = ""
             if qrs > 0:
-                if qrs > 120:
+                if qrs >= 120:
                     qrs_status = "wide"
                     qrs_label  = f"QRS Duration: <b>{qrs} ms</b> — <span style='color:#e74c3c;'>Wide (Normal: 60–120 ms)</span>"
                 elif qrs < 60:
                     qrs_status = "narrow"
                     qrs_label  = f"QRS Duration: <b>{qrs} ms</b> — <span style='color:#e67e22;'>Narrow (Normal: 60–120 ms)</span>"
-                elif qrs > 100:
+                elif qrs >= 110:
                     qrs_status = "borderline"
                     qrs_label  = f"QRS Duration: <b>{qrs} ms</b> — <span style='color:#f39c12;'>Borderline Wide (Normal: 60–120 ms)</span>"
                 else:
@@ -3939,19 +3976,51 @@ class Dashboard(QWidget):
                 # ── CASE 2: Abnormal rhythm OR any metric abnormal → show everything
                 conclusion_html = "<div style='padding:4px;'>"
 
-                # 2a. Rhythm (heart-based analysis)
-                if rhythm_issue:
+                # ── Asystole / lethal rhythm short-circuit ──────────────────────────
+                # Do NOT append any metric labels (QRS/PR/QTc) alongside a lethal
+                # primary — they are meaningless on a flat line and pollute findings.
+                _LETHAL_LABELS = {"Asystole", "Ventricular Fibrillation",
+                                   "Ventricular Tachycardia"}
+                _primary_is_lethal = rhythm_issue and any(
+                    lbl.lower() in rhythm_issue.lower() for lbl in _LETHAL_LABELS
+                )
+                if _primary_is_lethal:
+                    _lethal_name = next(
+                        (lbl for lbl in _LETHAL_LABELS
+                         if lbl.lower() in rhythm_issue.lower()),
+                        rhythm_issue,
+                    )
                     conclusion_html += (
-                        "<b style='color:#ff6600; font-size:14px;'>♥ Heart-Based Rhythm Analysis:</b><br>"
-                        f"<span style='color:#e74c3c; font-weight:bold;'>⚠ {rhythm_issue}</span><br><br>"
+                        "<b style='color:#cc0000; font-size:15px;'>"
+                        f"\u26a0 {_lethal_name}</b><br><br>"
+                        "<span style='color:#888; font-size:11px;'>"
+                        "All interval calculations: 0 ms (no cardiac activity)<br>"
+                        "Immediate clinical attention required."
+                        "</span>"
+                    )
+                    conclusion_html += (
+                        "<br><p style='font-size:10px; color:#999; font-style:italic;'>"
+                        "<b>NOTE:</b> This is an automated analysis for educational purposes only. "
+                        "Not a substitute for professional medical advice."
+                        "</p></div>"
+                    )
+                    findings.append(_lethal_name)
+                    # Do NOT append HR / QRS / PR / QTc findings for lethal rhythms
+                    # (skip the rest of CASE 2 block)
+                else:
+                 # 2a. Rhythm (heart-based analysis)
+                 if rhythm_issue:
+                    conclusion_html += (
+                        "<b style='color:#ff6600; font-size:14px;'>\u2665 Heart-Based Rhythm Analysis:</b><br>"
+                        f"<span style='color:#e74c3c; font-weight:bold;'>\u26a0 {rhythm_issue}</span><br><br>"
                     )
                     findings.append(f"Rhythm: {rhythm_issue}")
                     recommendations.append("Review detected arrhythmia pattern, consult physician if persistent")
-                elif is_normal_rhythm:
+                 elif is_normal_rhythm:
                     # Rhythm is normal but some interval is abnormal
                     conclusion_html += (
-                        "<b style='color:#ff6600; font-size:14px;'>♥ Heart-Based Rhythm Analysis:</b><br>"
-                        "<span style='color:#27ae60; font-weight:bold;'>✔ Normal Sinus Rhythm</span><br><br>"
+                        "<b style='color:#ff6600; font-size:14px;'>\u2665 Heart-Based Rhythm Analysis:</b><br>"
+                        "<span style='color:#27ae60; font-weight:bold;'>\u2714 Normal Sinus Rhythm</span><br><br>"
                     )
                     findings.append("Normal Sinus Rhythm")
 
@@ -3970,13 +4039,14 @@ class Dashboard(QWidget):
                         label_str = "Prolonged PR" if pr_status == "prolonged" else "Short PR"
                         findings.append(f"{label_str} - {pr} ms")
 
-                # 2d. QRS Duration
+                # 2d. QRS duration / bundle-branch compatible finding
                 if qrs_label:
                     conclusion_html += "<br><b style='color:#ff6600; font-size:14px;'>QRS Duration:</b><br>"
                     conclusion_html += f"{qrs_label}<br>"
-                    if qrs_status:
-                        label_str = {"wide": "Wide QRS", "narrow": "Narrow QRS", "borderline": "Borderline Wide QRS"}[qrs_status]
-                        findings.append(f"{label_str} - {qrs} ms")
+                    if qrs_status == "wide":
+                        findings.append(f"Wide QRS - {qrs} ms")
+                    elif qrs_status == "borderline":
+                        findings.append(f"Borderline Wide QRS - {qrs} ms")
 
                 # 2e. QTc
                 if qtc_label:
@@ -3985,8 +4055,41 @@ class Dashboard(QWidget):
                     if qtc_abnormal:
                         findings.append(f"Prolonged QTc - {qtc} ms")
 
-                
-                # Recommendations
+                # ── ArrhythmiaEngine Priority Sorting ──
+                try:
+                    engine_dx = []
+                    if hasattr(self, 'ecg_test_page') and self.ecg_test_page:
+                        last = getattr(self.ecg_test_page, '_last_analysis', None) or {}
+                        engine_dx = last.get('arrhythmias', [])
+                    
+                    priority = [
+                        "Asystole",
+                        "Ventricular Fibrillation",
+                        "Ventricular Tachycardia",
+                        "Second-degree AV Block (Mobitz II)",
+                        "Second-degree AV Block (Mobitz I)",
+                        "Third-degree AV Block",
+                        "First-degree AV Block (Prolonged PR)",
+                        "Atrial Fibrillation",
+                        "Complete Left Bundle Branch Block",
+                        "Complete Right Bundle Branch Block",
+                        "Left Bundle Branch Block",
+                        "Right Bundle Branch Block",
+                        "Wide QRS",
+                        "Sinus Tachycardia",
+                        "Sinus Bradycardia",
+                        "Normal Sinus Rhythm"
+                    ]
+                    
+                    sorted_arrhythmias = sorted(engine_dx, key=lambda x: priority.index(x) if x in priority else 999)
+                    display_text = "<br>".join([f"• {x}" for x in sorted_arrhythmias[:6]])
+                    
+                    if sorted_arrhythmias:
+                        conclusion_html += f"<b style='color:#ff6600;'>Primary Findings:</b><br>{display_text}<br>"
+                        findings.extend(sorted_arrhythmias)
+                except Exception as e:
+                    print("Error sorting clinical priority:", e)
+
                 if recommendations:
                     conclusion_html += "<br><b style='color:#ff6600; font-size:14px;'>Recommendations:</b><br>"
                     for r in recommendations:
@@ -4015,7 +4118,22 @@ class Dashboard(QWidget):
                     for f in findings:
                         text = re.sub(r'<[^>]+>', '', f).strip()
                         text = re.sub(r'^\[.*?\]\s*', '', text).strip()
-                        clean_findings.append(text)
+                        if text.lower().startswith("rhythm:"):
+                            text = text.split(":", 1)[1].strip()
+                        for part in text.split(","):
+                            label = part.strip()
+                            if " - " in label and any(k in label for k in ("Wide QRS", "Borderline Wide QRS", "Prolonged PR", "Short PR")):
+                                label = label.split(" - ", 1)[0].strip()
+                            if label and label not in clean_findings:
+                                clean_findings.append(label)
+
+                    abnormal_keywords = (
+                        "Block", "Fibrillation", "Flutter", "Tachycardia", "Bradycardia",
+                        "PVC", "PAC", "Wide QRS", "LVH", "Prolonged", "Short", "Asystole",
+                        "Ventricular"
+                    )
+                    if any(any(k.lower() in f.lower() for k in abnormal_keywords) for f in clean_findings):
+                        clean_findings = [f for f in clean_findings if f != "Normal Sinus Rhythm"]
 
                     clean_recommendations = []
                     for r in recommendations:

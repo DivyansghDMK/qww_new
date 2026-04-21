@@ -78,6 +78,46 @@ QRS_DURATION_MIN_MS: float = 40.0
 QRS_DURATION_MAX_MS: float = 300.0
 
 
+def _amplitude_qrs_width(signal: np.ndarray,
+                         peak_idx: int,
+                         fs: float,
+                         threshold_ratio: float = 0.10,
+                         pre_ms: float = 250.0,
+                         post_ms: float = 400.0) -> Tuple[float, Optional[int], Optional[int]]:
+    """Amplitude-based QRS borders for broad/slurred BBB complexes."""
+    sig = np.asarray(signal, dtype=float)
+    if sig.size < 3 or fs <= 0:
+        return 0.0, None, None
+
+    peak_idx = int(max(0, min(sig.size - 1, peak_idx)))
+    start = max(0, peak_idx - int(pre_ms * fs / 1000.0))
+    end = min(sig.size, peak_idx + int(post_ms * fs / 1000.0) + 1)
+    segment = sig[start:end]
+    if segment.size < 3:
+        return 0.0, None, None
+
+    baseline = float(np.median(segment))
+    centered = segment - baseline
+    peak_rel = int(np.argmax(np.abs(centered)))
+    amp = float(np.max(np.abs(centered)))
+    if amp <= 1e-9:
+        return 0.0, None, None
+
+    threshold = max(1e-9, float(threshold_ratio) * amp)
+    left = peak_rel
+    while left > 0 and abs(centered[left]) > threshold:
+        left -= 1
+
+    right = peak_rel
+    while right < centered.size - 1 and abs(centered[right]) > threshold:
+        right += 1
+
+    qrs_ms = float((right - left) * 1000.0 / fs)
+    if not (QRS_DURATION_MIN_MS <= qrs_ms <= QRS_DURATION_MAX_MS):
+        return 0.0, None, None
+    return qrs_ms, start + left, start + right
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # STAGE 1 – CHANNEL GROUPING AND AVERAGING
 # ══════════════════════════════════════════════════════════════════════════════
@@ -823,8 +863,8 @@ def measure_qrs_duration_paper(median_beat: np.ndarray,
         if len(signal) < 30:
             return 0
 
-        win_pre_samp  = int(0.12 * fs)
-        win_post_samp = int(0.12 * fs)
+        win_pre_samp  = int(0.16 * fs)   # 160ms pre-R (was 120ms) — captures deep Q in LBBB
+        win_post_samp = int(0.17 * fs)   # 170ms post-R (was 120ms) — captures terminal S in RBBB/LBBB
         qrs_win_start = max(0, r_idx - win_pre_samp)
         qrs_win_end   = min(len(signal), r_idx + win_post_samp)
 
@@ -841,23 +881,14 @@ def measure_qrs_duration_paper(median_beat: np.ndarray,
             return 0
 
         # FIX: adapt slope threshold to actual R-peak amplitude in the median beat.
-        # build_median_beat averages raw ADC samples; the resulting R-peak can be
-        # much smaller than a live-signal peak (225 vs 1172 ADC in practice).
-        # Using a fixed adc_per_mv=1200 with slope_mul=2.20 makes the threshold
-        # far too high for a small-amplitude median beat (→ QRS detects too wide).
-        # Instead, derive an effective scale from the observed R-peak so the slope
-        # threshold scales proportionally: effective_adc = R_peak_adc / 1.0 mV
-        # (assuming a typical adult R-wave ≈ 1 mV as reference).
         r_peak_amp = abs(signal[ref_idx])
-        # Clamp: never go below nominal 1200/5 = 240 (prevents runaway on tiny signals)
         effective_adc = max(r_peak_amp, adc_per_mv / 5.0)
-        # slope_mul=0.85 → corrects QRS width 91-107ms → 84-88ms target
         onset, offset = delineate_channel_borders(
             signal, sig_peaks, ref_idx, qrs_win_start, qrs_win_end, fs, effective_adc * 0.85)
         if onset is None or offset is None:
-            # Retry with wider 130ms QRS window — captures S-nadir for SV1 at 140-160 bpm
-            win_pre_samp2  = int(0.13 * fs)
-            win_post_samp2 = int(0.13 * fs)
+            # Retry with even wider 180ms QRS window for very wide BBB complexes
+            win_pre_samp2  = int(0.18 * fs)
+            win_post_samp2 = int(0.18 * fs)
             qrs_win_start2 = max(0, r_idx - win_pre_samp2)
             qrs_win_end2   = min(len(signal), r_idx + win_post_samp2)
             sig_peaks2 = find_significant_peaks(signal, ref_idx, qrs_win_start2, qrs_win_end2, fs)
@@ -874,8 +905,22 @@ def measure_qrs_duration_paper(median_beat: np.ndarray,
             return 0
 
         # FIX: Use sample difference / fs * 1000 instead of time_axis[off] - time_axis[on]
-        # because time_axis may not be zero-centered at R (build_median_beat offsets it)
+        # because time_axis may not be zero-centered at R (build_median_beat offsets it).
+        # Also take amplitude-based borders to avoid clipping broad/slurred LBBB.
         qrs_ms = (global_offset - global_onset) / fs * 1000.0
+        amp_qrs_ms, amp_onset, amp_offset = _amplitude_qrs_width(
+            signal,
+            ref_idx,
+            fs,
+            threshold_ratio=0.10,
+            pre_ms=250.0,
+            post_ms=400.0,
+        )
+        if amp_qrs_ms > qrs_ms:
+            qrs_ms = amp_qrs_ms
+            global_onset = amp_onset if amp_onset is not None else global_onset
+            global_offset = amp_offset if amp_offset is not None else global_offset
+
         return int(round(qrs_ms)) if QRS_DURATION_MIN_MS <= qrs_ms <= QRS_DURATION_MAX_MS else 0
 
     except Exception as e:
@@ -950,37 +995,66 @@ def qrs_duration_from_raw_signal(lead_data: np.ndarray,
                                   heart_rate: int = 75
                                   ) -> float:
     """Per-beat QRS duration from raw signal around known R-peak. HR-adaptive."""
-    if heart_rate >= 180:   pre_ms, post_ms, slope_mul = 60.0,  80.0, 1.42
-    elif heart_rate >= 150: pre_ms, post_ms, slope_mul = 70.0,  75.0, 1.30
-    elif heart_rate >= 120: pre_ms, post_ms, slope_mul = 80.0,  70.0, 1.08
-    elif heart_rate >= 75:  pre_ms, post_ms, slope_mul = 90.0,  65.0, 1.10
-    else:                   pre_ms, post_ms, slope_mul = 100.0, 60.0, 2.20  # FIX: was 0.675, caused ~94ms; 2.20 → 86ms (target 84-87ms)
+    # ── Two-pass adaptive QRS border search ─────────────────────────────
+    # Pass 1: narrow window (±80ms) — correct for normal QRS (< 120ms).
+    # Pass 2: wider window — only triggered when the QRS offset reaches the
+    # edge of the narrow segment, indicating the complex extends further.
+    # Normal beats stop well inside; BBB beats hit the boundary.
 
-    win_start = max(0, r_curr_idx - int(pre_ms / 1000.0 * fs))
-    win_end   = min(len(lead_data), r_curr_idx + int(post_ms / 1000.0 * fs))
-    segment   = np.array(lead_data[win_start:win_end], dtype=float)
-    if len(segment) < 20:
-        return 0.0
+    if heart_rate >= 150: slope_mul = 1.30
+    elif heart_rate >= 120: slope_mul = 1.08
+    elif heart_rate >= 75:  slope_mul = 1.10
+    else:                   slope_mul = 2.20
 
-    bl_end   = min(len(segment), int(0.03 * fs))
-    segment -= float(np.mean(segment[:max(1, bl_end)]))
+    def _measure(pre_ms_loc, post_ms_loc):
+        ws = max(0, r_curr_idx - int(pre_ms_loc / 1000.0 * fs))
+        we = min(len(lead_data), r_curr_idx + int(post_ms_loc / 1000.0 * fs))
+        seg = np.array(lead_data[ws:we], dtype=float)
+        if len(seg) < 20:
+            return 0.0, seg, None
+        bl = min(len(seg), int(0.03 * fs))
+        seg -= float(np.mean(seg[:max(1, bl)]))
+        rp = find_reference_peak(seg, 0, len(seg))
+        if abs(seg[rp]) < 1e-9:
+            return 0.0, seg, None
+        sp_loc = find_significant_peaks(seg, rp, 0, len(seg), fs)
+        sp_loc = remove_peak_outliers_by_spacing(sp_loc, fs)
+        if not sp_loc:
+            return 0.0, seg, None
+        on, off = delineate_channel_borders(seg, sp_loc, rp, 0, len(seg), fs, adc_per_mv * slope_mul)
+        if on is None or off is None:
+            return 0.0, seg, None
+        ms = (off - on) / fs * 1000.0
+        amp_ms, _, _ = _amplitude_qrs_width(seg, rp, fs, threshold_ratio=0.10, pre_ms=250.0, post_ms=400.0)
+        ms = max(ms, amp_ms)
+        result = round(ms, 1) if QRS_DURATION_MIN_MS <= ms <= QRS_DURATION_MAX_MS else 0.0
+        return result, seg, off
 
-    ref_idx = find_reference_peak(segment, 0, len(segment))
-    if abs(segment[ref_idx]) < 1e-9:
-        return 0.0
+    # Pass 1 — narrow (±80ms)
+    qrs_ms, seg1, off1 = _measure(80.0, 80.0)
 
-    sp = find_significant_peaks(segment, ref_idx, 0, len(segment), fs)
-    sp = remove_peak_outliers_by_spacing(sp, fs)
-    if not sp:
-        return 0.0
+    # BBB discriminator: offset clips the segment edge → complex continues beyond window
+    # Normal beats stop well inside (off1 <= len-4); BBB beats hit the last samples.
+    hits_boundary = off1 is not None and len(seg1) > 0 and off1 >= len(seg1) - 3
 
-    onset, offset = delineate_channel_borders(
-        segment, sp, ref_idx, 0, len(segment), fs, adc_per_mv * slope_mul)
-    if onset is None or offset is None:
-        return 0.0
+    # Pass 2 — wide (120ms pre / 160ms post), only when complex extends beyond narrow window
+    if hits_boundary:
+        qrs_ms_wide, _, _ = _measure(120.0, 160.0)
+        if qrs_ms_wide > 0:
+            qrs_ms = qrs_ms_wide
 
-    qrs_ms = (offset - onset) / fs * 1000.0
-    return round(qrs_ms, 1) if QRS_DURATION_MIN_MS <= qrs_ms <= QRS_DURATION_MAX_MS else 0.0
+    qrs_ms_amp, _, _ = _amplitude_qrs_width(
+        np.asarray(lead_data, dtype=float),
+        r_curr_idx,
+        fs,
+        threshold_ratio=0.10,
+        pre_ms=250.0,
+        post_ms=400.0,
+    )
+    if qrs_ms_amp > qrs_ms:
+        qrs_ms = qrs_ms_amp
+
+    return qrs_ms
 
 
 # ══════════════════════════════════════════════════════════════════════════════

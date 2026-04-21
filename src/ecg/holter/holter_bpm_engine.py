@@ -236,8 +236,10 @@ class HolterBPMWorker(threading.Thread):
         self.jsonl_path    = jsonl_path
         self.on_arrhythmia = on_arrhythmia
 
-        # ── Ring buffer for Lead II only (saves memory vs. storing all 12 leads) ──
-        self._ring         = np.zeros(self.window_size, dtype=np.float32)
+        # ── Ring buffers for II, V1, V6 to support robust arrhythmia detection ──
+        self._ring_ii      = np.zeros(self.window_size, dtype=np.float32)
+        self._ring_v1      = np.zeros(self.window_size, dtype=np.float32)
+        self._ring_v6      = np.zeros(self.window_size, dtype=np.float32)
         self._ring_ptr     = 0       # next write position
         self._ring_count   = 0       # samples written so far (capped at window_size)
         self._ring_lock    = threading.Lock()
@@ -260,9 +262,13 @@ class HolterBPMWorker(threading.Thread):
         Extracts Lead II and writes into the ring buffer.
         This is the hot path — must stay O(1) with no allocation.
         """
-        val = float(packet.get("II", packet.get(LEAD_NAMES[LEAD_II_IDX], 2048)))
+        val_ii = float(packet.get("II", packet.get(LEAD_NAMES[LEAD_II_IDX], 2048)))
+        val_v1 = float(packet.get("V1", packet.get(LEAD_NAMES[6], 2048)))
+        val_v6 = float(packet.get("V6", packet.get(LEAD_NAMES[11], 2048)))
         with self._ring_lock:
-            self._ring[self._ring_ptr] = val
+            self._ring_ii[self._ring_ptr] = val_ii
+            self._ring_v1[self._ring_ptr] = val_v1
+            self._ring_v6[self._ring_ptr] = val_v6
             self._ring_ptr = (self._ring_ptr + 1) % self.window_size
             if self._ring_count < self.window_size:
                 self._ring_count += 1
@@ -291,14 +297,16 @@ class HolterBPMWorker(threading.Thread):
                 if count >= self.window_size:
                     # Buffer is full — rearrange so oldest sample is first
                     ptr = self._ring_ptr
-                    lead_ii = np.concatenate(
-                        [self._ring[ptr:], self._ring[:ptr]]
-                    ).copy()
+                    lead_ii = np.concatenate([self._ring_ii[ptr:], self._ring_ii[:ptr]]).copy()
+                    lead_v1 = np.concatenate([self._ring_v1[ptr:], self._ring_v1[:ptr]]).copy()
+                    lead_v6 = np.concatenate([self._ring_v6[ptr:], self._ring_v6[:ptr]]).copy()
                 else:
                     # Buffer not yet full — just take first `count` samples
-                    lead_ii = self._ring[:count].copy()
+                    lead_ii = self._ring_ii[:count].copy()
+                    lead_v1 = self._ring_v1[:count].copy()
+                    lead_v6 = self._ring_v6[:count].copy()
 
-            self._process(lead_ii)
+            self._process(lead_ii, lead_v1, lead_v6)
 
         print("[HolterBPMWorker] Stopped")
 
@@ -306,7 +314,7 @@ class HolterBPMWorker(threading.Thread):
         self._stop_evt.set()
 
     # ── Core processing (runs in background thread) ───────────────────────
-    def _process(self, lead_ii: np.ndarray):
+    def _process(self, lead_ii: np.ndarray, lead_v1: np.ndarray = None, lead_v6: np.ndarray = None):
         start_sec = self._total_frames / self.fs
 
         # ── Calculate BPM ─────────────────────────────────────────────────
@@ -330,8 +338,14 @@ class HolterBPMWorker(threading.Thread):
                 if len(r_peaks) >= 3:
                     ad = {'r_peaks': r_peaks, 'p_peaks': [],
                           'q_peaks': [], 's_peaks': [], 't_peaks': []}
+                    lead_dict = {"II": lead_ii}
+                    if lead_v1 is not None and lead_v1.size == lead_ii.size:
+                        lead_dict["V1"] = lead_v1
+                    if lead_v6 is not None and lead_v6.size == lead_ii.size:
+                        lead_dict["V6"] = lead_v6
                     arrhythmias = self._arrhy_detector.detect_arrhythmias(
                         lead_ii, ad,
+                        lead_signals=lead_dict,
                         has_received_serial_data=True,
                         min_serial_data_packets=50
                     )

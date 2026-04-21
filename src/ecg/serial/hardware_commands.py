@@ -652,6 +652,11 @@ class HardwareCommandHandler:
         print("="*70)
         
         try:
+            if not self.ser or not getattr(self.ser, "is_open", False):
+                print("ℹ️ CLOSE COMMAND: Serial port already closed; skipping hardware close")
+                print("="*70 + "\n")
+                return True, None
+
             # Build and send command
             cmd_packet = self._build_command_packet(OPCODE_CLOSE)
             
@@ -704,4 +709,3 @@ class HardwareCommandHandler:
             print(f"   Traceback: {traceback.format_exc()}")
             print("="*70 + "\n")
             return False, None
-
