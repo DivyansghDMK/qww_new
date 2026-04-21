@@ -3826,6 +3826,8 @@ class ECGTestPage(QWidget):
     def update_latest_rhythm_interpretation(self):
         """Compute and cache the live arrhythmia interpretation for all UI surfaces."""
         try:
+            from ecg.arrhythmia_detector import analyze_ecg, get_interpretation
+
             if not hasattr(self, 'data') or len(self.data) < 2:
                 self._latest_rhythm_interpretation = "Analyzing Rhythm..."
                 return self._latest_rhythm_interpretation
@@ -3875,15 +3877,19 @@ class ECGTestPage(QWidget):
             except Exception:
                 pass
 
-            from ecg.arrhythmia_detector import ArrhythmiaDetector
+            lead_names = ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"]
+            lead_signals = {}
+            for idx, lead_name in enumerate(lead_names):
+                try:
+                    if idx < len(self.data) and len(self.data[idx]) > 0:
+                        lead_arr = np.asarray(self.data[idx], dtype=float)
+                        lead_signals[lead_name] = lead_arr[-window_n:] if lead_arr.size > window_n else lead_arr
+                except Exception:
+                    continue
 
-            detector = ArrhythmiaDetector(sampling_rate=fs)
-            arrhythmias = detector.detect_arrhythmias(sig, analysis={}, lead_signals=None) or []
-            interpretation_text = (
-                ", ".join([str(a).strip() for a in arrhythmias if str(a).strip()])
-                if arrhythmias
-                else "No specific arrhythmia detected."
-            )
+            if "II" not in lead_signals or lead_signals["II"].size < int(fs * 2.0):
+                self._latest_rhythm_interpretation = "Analyzing Rhythm..."
+                return self._latest_rhythm_interpretation
 
             hr_val = getattr(self, 'last_heart_rate', 0) or 0
             pr_val = getattr(self, 'pr_interval', 0) or 0
@@ -3895,6 +3901,25 @@ class ECGTestPage(QWidget):
                 'external_pr': pr_val,
                 'external_qrs': qrs_val
             }
+
+            gender = "M"
+            try:
+                username = ""
+                if hasattr(self, 'dashboard_instance') and self.dashboard_instance:
+                    username = getattr(self.dashboard_instance, 'username', '') or ''
+                patient = resolve_patient_profile(
+                    explicit_patient=getattr(getattr(self, 'dashboard_instance', None), 'patient_details', None),
+                    username=username,
+                    user_details=getattr(getattr(self, 'dashboard_instance', None), 'user_details', {}) or {},
+                )
+                gender = str(
+                    patient.get('gender')
+                    or patient.get('sex')
+                    or patient.get('Gender')
+                    or "M"
+                ).strip() or "M"
+            except Exception:
+                gender = "M"
 
             results = analyze_ecg(lead_signals, fs=fs, patient_gender=gender, external_metrics=external_metrics)
             arrhythmias = results.get("arrhythmias", [])

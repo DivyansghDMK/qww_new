@@ -118,6 +118,40 @@ def _amplitude_qrs_width(signal: np.ndarray,
     return qrs_ms, start + left, start + right
 
 
+def _adaptive_amplitude_qrs_width(signal: np.ndarray,
+                                  peak_idx: int,
+                                  fs: float,
+                                  baseline_ratio: float = 0.10,
+                                  wide_ratio: float = 0.05,
+                                  pre_ms: float = 250.0,
+                                  post_ms: float = 400.0) -> Tuple[float, Optional[int], Optional[int]]:
+    """Use a looser threshold only when the complex already looks broad/slurred."""
+    base_ms, base_on, base_off = _amplitude_qrs_width(
+        signal, peak_idx, fs,
+        threshold_ratio=baseline_ratio,
+        pre_ms=pre_ms,
+        post_ms=post_ms,
+    )
+    wide_ms, wide_on, wide_off = _amplitude_qrs_width(
+        signal, peak_idx, fs,
+        threshold_ratio=wide_ratio,
+        pre_ms=pre_ms,
+        post_ms=post_ms,
+    )
+
+    if wide_ms <= 0:
+        return base_ms, base_on, base_off
+    if base_ms <= 0:
+        return wide_ms, wide_on, wide_off
+
+    # BBB/slurred terminal forces are often missed at a 10% cutoff.
+    # Only widen the borders when the baseline width is already near-broad
+    # or the looser threshold adds a clearly meaningful tail.
+    if base_ms >= 105.0 or (wide_ms - base_ms) >= 10.0:
+        return wide_ms, wide_on, wide_off
+    return base_ms, base_on, base_off
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # STAGE 1 – CHANNEL GROUPING AND AVERAGING
 # ══════════════════════════════════════════════════════════════════════════════
@@ -908,11 +942,12 @@ def measure_qrs_duration_paper(median_beat: np.ndarray,
         # because time_axis may not be zero-centered at R (build_median_beat offsets it).
         # Also take amplitude-based borders to avoid clipping broad/slurred LBBB.
         qrs_ms = (global_offset - global_onset) / fs * 1000.0
-        amp_qrs_ms, amp_onset, amp_offset = _amplitude_qrs_width(
+        amp_qrs_ms, amp_onset, amp_offset = _adaptive_amplitude_qrs_width(
             signal,
             ref_idx,
             fs,
-            threshold_ratio=0.10,
+            baseline_ratio=0.10,
+            wide_ratio=0.05,
             pre_ms=250.0,
             post_ms=400.0,
         )
@@ -1025,7 +1060,15 @@ def qrs_duration_from_raw_signal(lead_data: np.ndarray,
         if on is None or off is None:
             return 0.0, seg, None
         ms = (off - on) / fs * 1000.0
-        amp_ms, _, _ = _amplitude_qrs_width(seg, rp, fs, threshold_ratio=0.10, pre_ms=250.0, post_ms=400.0)
+        amp_ms, _, _ = _adaptive_amplitude_qrs_width(
+            seg,
+            rp,
+            fs,
+            baseline_ratio=0.10,
+            wide_ratio=0.05,
+            pre_ms=250.0,
+            post_ms=400.0,
+        )
         ms = max(ms, amp_ms)
         result = round(ms, 1) if QRS_DURATION_MIN_MS <= ms <= QRS_DURATION_MAX_MS else 0.0
         return result, seg, off

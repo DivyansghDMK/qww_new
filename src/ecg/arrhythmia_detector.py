@@ -663,34 +663,54 @@ def detect_bundle_branch_block_from_leads(
     beats: Sequence[Dict[str, object]],
     fs: float = DEFAULT_FS,
 ) -> Optional[str]:
-    """Classify BBB using V1 polarity plus lateral-lead polarity in QRS windows."""
+    """Classify BBB from beat morphology using V1 plus lateral leads."""
     if not qrs_ms or float(qrs_ms) < BBB_MIN_QRS_MS:
         return None
 
+    lead_i = _safe_array(signal_dict.get("I"))
     lead_v1 = _safe_array(signal_dict.get("V1"))
+    lead_v6 = _safe_array(signal_dict.get("V6"))
     if lead_v1.size == 0:
         return None
 
-    v1_pos, v1_neg = _median_qrs_polarity(lead_v1, beats, fs)
-    lateral_scores = []
-    for lead_name in ("I", "aVL", "V5", "V6"):
-        lead = _safe_array(signal_dict.get(lead_name))
-        if lead.size == 0:
-            continue
-        pos, neg = _median_qrs_polarity(lead, beats, fs)
-        lateral_scores.append(pos - neg)
-
-    if not lateral_scores:
+    usable_beats = [beat for beat in beats if float(beat.get("qrs_ms") or qrs_ms or 0.0) >= 100.0]
+    if not usable_beats:
         return None
 
-    lateral_positive = float(np.median(lateral_scores)) > 0.0
-    v1_negative = v1_neg > max(v1_pos * 1.05, 1e-9)
-    v1_positive = v1_pos > max(v1_neg * 1.05, 1e-9)
+    rbbb_votes = 0
+    lbbb_votes = 0
+    scored_beats = 0
 
-    if v1_negative and lateral_positive:
+    for beat in usable_beats[: min(len(usable_beats), 10)]:
+        secondary_r = _detect_secondary_r(lead_v1, beat, fs)
+        terminal_s_i = _terminal_s_present(lead_i, beat, fs) if lead_i.size else False
+        terminal_s_v6 = _terminal_s_present(lead_v6, beat, fs) if lead_v6.size else False
+        lateral_terminal_s = terminal_s_i or terminal_s_v6
+
+        v1_negative = _dominant_negative_qrs(lead_v1, beat)
+        broad_r_i = _broad_monophasic_r(lead_i, beat, fs) if lead_i.size else False
+        broad_r_v6 = _broad_monophasic_r(lead_v6, beat, fs) if lead_v6.size else False
+        lateral_broad_r = broad_r_i or broad_r_v6
+        no_septal_q_i = (not _has_septal_q(lead_i, beat)) if lead_i.size else True
+        no_septal_q_v6 = (not _has_septal_q(lead_v6, beat)) if lead_v6.size else True
+
+        beat_rbbb = secondary_r and lateral_terminal_s
+        beat_lbbb = v1_negative and lateral_broad_r and no_septal_q_i and no_septal_q_v6
+
+        if beat_rbbb or beat_lbbb:
+            scored_beats += 1
+        if beat_rbbb and not beat_lbbb:
+            rbbb_votes += 1
+        elif beat_lbbb and not beat_rbbb:
+            lbbb_votes += 1
+
+    if scored_beats == 0:
+        return None
+
+    if rbbb_votes > lbbb_votes and rbbb_votes >= max(2, int(np.ceil(scored_beats * 0.5))):
+        return "Complete Right Bundle Branch Block" if float(qrs_ms) >= 120.0 else "Right Bundle Branch Block"
+    if lbbb_votes > rbbb_votes and lbbb_votes >= max(2, int(np.ceil(scored_beats * 0.5))):
         return "Complete Left Bundle Branch Block" if float(qrs_ms) >= BBB_MIN_QRS_MS else "Left Bundle Branch Block"
-    if v1_positive and not lateral_positive:
-        return "Complete Right Bundle Branch Block" if float(qrs_ms) >= BBB_MIN_QRS_MS else "Right Bundle Branch Block"
 
     return None
 
@@ -1301,37 +1321,13 @@ def analyze_ecg(leads_dict: Dict[str, Sequence[float]], fs: float = DEFAULT_FS, 
             total_energy = float(np.sum(spectrum[1:len(spectrum)//2])) + 1e-9
             vf_score = vf_band_energy / total_energy
 
+    bundle_branch_block = detect_bundle_branch_block_from_leads(qrs_ms, cleaned_leads, beats, fs)
     lbbb_indicator = 0.0
-    if qrs_ms and qrs_ms >= 110.0:
-        v1_full = cleaned_leads.get("V1", np.array([]))
-        v6_full = cleaned_leads.get("V6", np.array([]))
-        if v1_full.size and v6_full.size:
-            lbbb_votes: List[float] = []
-            for beat in beats:
-                # If the globally injected QRS from the UI is wide, process the morphology regardless of crude beat estimate.
-                beat_qrs = float(beat.get("qrs_ms") or qrs_ms)
-                if beat_qrs < 110.0 and qrs_ms < 110.0:
-                    continue
-                r_idx = int(beat.get("r_peak", 0))
-                start = max(0, r_idx - _ms_to_samples(120, fs))
-                stop_v1 = min(v1_full.size, r_idx + _ms_to_samples(180, fs))
-                stop_v6 = min(v6_full.size, r_idx + _ms_to_samples(180, fs))
-                if stop_v1 - start < 5 or stop_v6 - start < 5:
-                    continue
-                v1 = v1_full[start:stop_v1] - np.median(v1_full[start:stop_v1])
-                v6 = v6_full[start:stop_v6] - np.median(v6_full[start:stop_v6])
-                v1_neg = abs(float(np.min(v1)))
-                v1_pos = float(np.max(v1))
-                v6_neg = abs(float(np.min(v6)))
-                v6_pos = float(np.max(v6))
-                if v1_neg > 1.05 * v1_pos and v6_pos > v6_neg:
-                    lbbb_votes.append(1.0)
-                elif v1_pos > 1.05 * v1_neg:
-                    lbbb_votes.append(-1.0)
-            if 'v1_pos' in locals() and 'v1_neg' in locals():
-                print(f"DEBUG BBB: v1_pos={v1_pos}, v1_neg={v1_neg}, v6_pos={v6_pos}, v6_neg={v6_neg}, lbbb_votes={lbbb_votes}", flush=True)
-            if lbbb_votes:
-                lbbb_indicator = float(np.median(lbbb_votes))
+    if bundle_branch_block:
+        if "left bundle" in bundle_branch_block.lower():
+            lbbb_indicator = 1.0
+        elif "right bundle" in bundle_branch_block.lower():
+            lbbb_indicator = -1.0
 
     morphology_summary = {
         "cluster_count": 0.0,
@@ -1394,60 +1390,8 @@ def analyze_ecg(leads_dict: Dict[str, Sequence[float]], fs: float = DEFAULT_FS, 
             secondary.append(d)
 
     # 3. Morphology (SEPARATE) - Stable Multi-Lead Multi-Beat BBB Detection
-    if qrs_ms and qrs_ms > 120:
-        v1_full = cleaned_leads.get("V1", np.array([]))
-        v6_full = cleaned_leads.get("V6", np.array([]))
-        
-        lead_i_full = cleaned_leads.get("I", np.array([]))
-        if v1_full.size and v6_full.size:
-            bbb_votes = []
-            pre_win = int(0.200 * fs)
-            post_win = int(0.400 * fs)
-            
-            for beat in beats:
-                r_idx = int(beat.get("r_peak", 0))
-                start = max(0, r_idx - pre_win)
-                end = min(v1_full.size, r_idx + post_win)
-                
-                if end > start:
-                    v1 = v1_full[start:end]
-                    v6 = v6_full[start:end]
-                    
-                    if v1.size > 0 and v6.size > 0:
-                        min_v1 = float(np.min(v1 - np.median(v1)))
-                        max_v1 = float(np.max(v1 - np.median(v1)))
-                        min_v6 = float(np.min(v6 - np.median(v6)))
-                        max_v6 = float(np.max(v6 - np.median(v6)))
-                        
-                        # Use either the global injected QRS or the individual beat QRS
-                        beat_qrs = float(beat.get("qrs_ms") or qrs_ms)
-                        if beat_qrs > 120 or (qrs_ms and qrs_ms > 120):
-                            # Bug 3: Loosen 1.2x -> 1.05x
-                            if abs(min_v1) > 1.05 * max_v1 and max_v6 > abs(min_v6):
-                                bbb_votes.append("Left Bundle Branch Block")
-                            elif max_v1 > 1.05 * abs(min_v1):
-                                bbb_votes.append("Right Bundle Branch Block")
-            
-            if bbb_votes:
-                final_bbb = max(set(bbb_votes), key=bbb_votes.count)
-                # Bug 3: Loosen ratio 0.6 -> 0.4
-                ratio = bbb_votes.count(final_bbb) / max(1, len(beats))
-                
-                if ratio > 0.4:
-                    secondary.append(final_bbb)
-                else:
-                    secondary.append("Inconclusive Bundle Branch Morphology")
-        elif lead_i_full.size:
-            has_lead_i_lbbb = False
-            for beat in beats:
-                beat_qrs = float(beat.get("qrs_ms") or qrs_ms)
-                if beat_qrs <= 120.0 and (qrs_ms and qrs_ms <= 120.0):
-                    continue
-                if _broad_monophasic_r(lead_i_full, beat, fs) and not _has_septal_q(lead_i_full, beat):
-                    has_lead_i_lbbb = True
-                    break
-            if has_lead_i_lbbb and "Left Bundle Branch Block" not in secondary:
-                secondary.append("Left Bundle Branch Block")
+    if bundle_branch_block and bundle_branch_block not in secondary:
+        secondary.append(bundle_branch_block)
 
     # BONUS: Clustering + Template matching
     try:
