@@ -3837,24 +3837,53 @@ class ECGTestPage(QWidget):
                 except Exception:
                     fs = 500.0
 
-            lead_signals = {}
-            for idx, lead_name in enumerate(getattr(self, 'leads', []) or []):
-                if idx < len(self.data):
-                    lead_signals[str(lead_name)] = self.data[idx]
-            if "II" not in lead_signals and len(self.data) > 1:
-                lead_signals["II"] = self.data[1]
+            # Compute the exact same arrhythmia label text as ExpandedLeadView does,
+            # without requiring the user to open the expanded view.
+            try:
+                lead_ii = self.data[1] if len(self.data) > 1 else None
+            except Exception:
+                lead_ii = None
 
-            if not lead_signals:
+            if lead_ii is None:
                 self._latest_rhythm_interpretation = "Analyzing Rhythm..."
                 return self._latest_rhythm_interpretation
 
-            from ecg.arrhythmia_detector import analyze_ecg, get_interpretation
-
-            gender = "M"
+            # Expanded view effectively operates on the visible window; use a recent slice.
             try:
-                gender = str(getattr(self, 'user_details', {}).get('gender', 'M') or 'M')
+                window_sec = float(getattr(self, "_rhythm_window_sec", 10.0) or 10.0)
             except Exception:
-                gender = "M"
+                window_sec = 10.0
+            window_n = int(max(fs * 2.5, min(fs * window_sec, len(lead_ii))))
+
+            try:
+                sig = np.asarray(lead_ii[-window_n:], dtype=float)
+            except Exception:
+                sig = np.asarray([], dtype=float)
+
+            if sig.size < int(fs * 2.0):
+                self._latest_rhythm_interpretation = "Analyzing Rhythm..."
+                return self._latest_rhythm_interpretation
+
+            # Same bandpass as ExpandedLeadView._apply_display_bandpass().
+            try:
+                from scipy.signal import butter, filtfilt
+                nyq = 0.5 * float(fs)
+                low_n = max(0.05 / nyq, 1e-5)
+                high_n = min(40.0 / nyq, 0.999)
+                b, a = butter(2, [low_n, high_n], btype="bandpass")
+                sig = filtfilt(b, a, sig)
+            except Exception:
+                pass
+
+            from ecg.arrhythmia_detector import ArrhythmiaDetector
+
+            detector = ArrhythmiaDetector(sampling_rate=fs)
+            arrhythmias = detector.detect_arrhythmias(sig, analysis={}, lead_signals=None) or []
+            interpretation_text = (
+                ", ".join([str(a).strip() for a in arrhythmias if str(a).strip()])
+                if arrhythmias
+                else "No specific arrhythmia detected."
+            )
 
             hr_val = getattr(self, 'last_heart_rate', 0) or 0
             pr_val = getattr(self, 'pr_interval', 0) or 0

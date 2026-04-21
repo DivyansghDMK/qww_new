@@ -92,7 +92,7 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
         pagesize=A4,
         rightMargin=15*mm, leftMargin=15*mm,
         topMargin=15*mm, bottomMargin=15*mm,
-        title="Comphrensive ECG Analysis Report",
+        title="Comprehensive ECG Analysis Report",
     )
 
     styles = getSampleStyleSheet()
@@ -114,7 +114,7 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
     story = []
 
     # ── Cover / Header ─────────────────────────────────────────────────────────
-    story.append(Paragraph("COMPHRENSIVE ECG ANALYSIS REPORT", title_style))
+    story.append(Paragraph("COMPREHENSIVE ECG ANALYSIS REPORT", title_style))
     story.append(HRFlowable(width="100%", thickness=2, color=ORANGE, spaceAfter=4*mm))
 
     # Patient info table
@@ -184,7 +184,7 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
     top_events = ", ".join(f"{label} ({count})" for label, count in sorted(arrhy_counts.items(), key=lambda item: -item[1])[:4]) or "No significant arrhythmias detected"
     avg_quality = summary.get('avg_quality', 0) * 100
     impression_text = (
-        f"This Comphrensive ECG Analysis study for <b>{pname}</b> covers <b>{dur_h}h {dur_m}m</b> with an average heart rate of "
+        f"This Comprehensive ECG Analysis study for <b>{pname}</b> covers <b>{dur_h}h {dur_m}m</b> with an average heart rate of "
         f"<b>{avg_hr:.0f} bpm</b> (minimum <b>{min_hr:.0f} bpm</b>, maximum <b>{max_hr:.0f} bpm</b>). "
         f"Overall signal quality was <b>{avg_quality:.1f}%</b>. The automated event summary shows: <b>{top_events}</b>."
     )
@@ -405,7 +405,7 @@ def _generate_text_report(session_dir, patient_info, summary, output_path) -> st
     """Fallback plain-text report when reportlab is unavailable."""
     lines = [
         "=" * 60,
-        "COMPHRENSIVE ECG ANALYSIS REPORT",
+        "COMPREHENSIVE ECG ANALYSIS REPORT",
         "=" * 60,
         f"Patient: {patient_info.get('name', 'Unknown')}",
         f"Doctor: {patient_info.get('doctor', '—')}",

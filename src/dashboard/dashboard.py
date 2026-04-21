@@ -2,7 +2,7 @@ from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton, QFrame, QGridLayout, QCalendarWidget, QTextEdit,
     QDialog, QLineEdit, QComboBox, QFormLayout, QMessageBox, QSizePolicy, QStackedWidget, QScrollArea, QSpacerItem, QSlider
 )
-from PyQt5.QtGui import QFont, QPixmap, QMovie
+from PyQt5.QtGui import QFont, QPixmap, QMovie, QPainter, QColor, QPen, QImage
 from PyQt5.QtCore import Qt, QTimer, QSize, QThread, pyqtSignal, QDate
 try:
     from PyQt5.QtMultimedia import QSound
@@ -389,11 +389,32 @@ class Dashboard(QWidget):
         header.addWidget(logo)
         
         self.status_dot = QLabel()
-        self.status_dot.setFixedSize(18, 18)
-        self.status_dot.setStyleSheet("border-radius: 9px; background: gray; border: 2px solid #fff;")
+        self.status_dot.setFixedSize(26, 26)
+        self.status_dot.setAlignment(Qt.AlignCenter)
+        self.status_dot.setScaledContents(True)
+        self.status_dot.setStyleSheet("background: transparent;")
+        self.status_dot.setToolTip("Checking connection…")
         header.addWidget(self.status_dot)
+
+        # Wi‑Fi / Internet indicator icons (falls back to dot if icons missing)
+        # Support both naming styles: `wi-fi-*.png` and `wifi_*.png`
+        self._wifi_pixmap_connected = self._load_status_pixmap_any(
+            ["wi-fi-connected.png", "wifi_connected.png"],
+            target_px=22,
+        )
+        self._wifi_pixmap_disconnected = self._load_status_pixmap_any(
+            ["wi-fi-disconnected.png", "wifi_disconnected.png"],
+            target_px=22,
+        )
+        if self._wifi_pixmap_disconnected.isNull() and not self._wifi_pixmap_connected.isNull():
+            self._wifi_pixmap_disconnected = self._make_wifi_disconnected_pixmap(self._wifi_pixmap_connected, target_px=22)
+        if not self._wifi_pixmap_disconnected.isNull():
+            # Default to "disconnected" until first check runs (no gray dot)
+            self.status_dot.setPixmap(self._wifi_pixmap_disconnected)
         
-        self.update_internet_status()
+        # Kick the first check shortly after the event loop starts. Doing it immediately at startup
+        # can occasionally give false negatives on some machines during network initialization.
+        QTimer.singleShot(250, self.update_internet_status)
         self.status_timer = QTimer(self)
         self.status_timer.timeout.connect(self.update_internet_status)
         self.status_timer.start(3000)
@@ -592,9 +613,6 @@ class Dashboard(QWidget):
         self.holter_btn.setStyleSheet("background: #ff7a26; color: white; border-radius: 16px; padding: 8px 24px; font-weight: bold;")
         self.holter_btn.clicked.connect(self.open_holter_from_dashboard)
         self.holter_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        # Disabled per request
-        self.holter_btn.setEnabled(False)
-        self.holter_btn.setVisible(False)
         greet_row.addWidget(self.holter_btn)
 
         dashboard_layout.addLayout(greet_row)
@@ -1651,11 +1669,11 @@ class Dashboard(QWidget):
             dialog.reject()
 
     def open_holter_from_dashboard(self):
-        """Navigate to ECG page and open Comphrensive ECG Analysis menu with options"""
+        """Navigate to ECG page and open Comprehensive ECG Analysis menu with options"""
         try:
             # Check if ECG test page is available
             if not hasattr(self, 'ecg_test_page'):
-                QMessageBox.warning(self, "Comphrensive ECG Analysis Monitor", "ECG Test Page not initialized.")
+                QMessageBox.warning(self, "Comprehensive ECG Analysis Monitor", "ECG Test Page not initialized.")
                 return
 
             # Ask user for choice: Live ECG or Previous Recording
@@ -1693,8 +1711,8 @@ class Dashboard(QWidget):
                     self.ecg_test_page._show_holter_ui(is_recording=False, ecgh_path=None, show_record_mgmt=True)
 
         except Exception as e:
-            print(f"Error opening Comphrensive ECG Analysis from dashboard: {e}")
-            QMessageBox.critical(self, "Error", f"Failed to open Comphrensive ECG Analysis Monitor: {str(e)}")
+            print(f"Error opening Comprehensive ECG Analysis from dashboard: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to open Comprehensive ECG Analysis Monitor: {str(e)}")
 
     def open_analysis_window(self):
         """Open the ECG Analysis Window"""
@@ -3297,6 +3315,13 @@ class Dashboard(QWidget):
                     else:
                         self.metric_labels['qtc_interval'].setText(qtc_clean if qtc_clean else "0")
                 self._last_metrics_update_ts = _time.time()
+                # Ensure dashboard interpretation updates as soon as live metrics arrive.
+                # Previously this only refreshed after visiting the expanded lead view.
+                try:
+                    if hasattr(self, 'update_live_conclusion'):
+                        self.update_live_conclusion()
+                except Exception:
+                    pass
                 # This Prevents Jittering of BPM values in inner dashboard
                 # try:
                 #     self.sync_dashboard_metrics_to_ecg_page()
@@ -3792,9 +3817,35 @@ class Dashboard(QWidget):
             additional_info = []
             
             rhythm_text = None
+            ecg_page = getattr(self, 'ecg_test_page', None)
+            # Keep rhythm interpretation updated even when the expanded lead view is never opened.
+            # (Previously the cache often stayed at "Analyzing Rhythm..." until navigating away/back.)
             try:
-                if hasattr(self, 'ecg_test_page') and self.ecg_test_page and hasattr(self.ecg_test_page, 'get_latest_rhythm_interpretation'):
-                    rhythm_text = self.ecg_test_page.get_latest_rhythm_interpretation()
+                import time as _time
+                now = _time.time()
+                last_refresh = getattr(self, "_last_dashboard_rhythm_refresh_ts", 0.0) or 0.0
+                cached = getattr(ecg_page, "_latest_rhythm_interpretation", None) if ecg_page else None
+                needs_refresh = cached in (None, "", "Analyzing Rhythm...", "Detecting...")
+                refresh_due = (now - last_refresh) >= 6.0  # keep dashboard interpretation live without overloading CPU
+
+                ecg_active = True
+                try:
+                    if hasattr(self, "is_ecg_active") and callable(self.is_ecg_active):
+                        ecg_active = bool(self.is_ecg_active())
+                except Exception:
+                    ecg_active = True
+
+                if ecg_page and ecg_active and (needs_refresh or refresh_due) and (now - last_refresh) >= 2.5 and hasattr(ecg_page, "update_latest_rhythm_interpretation"):
+                    self._last_dashboard_rhythm_refresh_ts = now
+                    ecg_page.update_latest_rhythm_interpretation()
+            except Exception:
+                pass
+
+            try:
+                if ecg_page and hasattr(ecg_page, 'get_latest_rhythm_interpretation'):
+                    rhythm_text = ecg_page.get_latest_rhythm_interpretation()
+                elif ecg_page:
+                    rhythm_text = getattr(ecg_page, '_latest_rhythm_interpretation', None)
             except Exception:
                 rhythm_text = None
 
@@ -4532,27 +4583,137 @@ class Dashboard(QWidget):
         def _check():
             import socket
             try:
-                socket.create_connection(("8.8.8.8", 53), timeout=0.5)
-                online = True
+                online = False
+                source = "none"
+
+                # Prefer OS-connected state on Windows (works even if DNS/53 to 8.8.8.8 is blocked).
+                try:
+                    import sys
+                    if sys.platform.startswith("win"):
+                        import ctypes
+                        flags = ctypes.c_ulong()
+                        online = bool(ctypes.windll.wininet.InternetGetConnectedState(ctypes.byref(flags), 0))
+                        if online:
+                            source = "wininet"
+                except Exception:
+                    online = False
+
+                # Windows fallback: treat "has a non-loopback IP" as connected (Wi‑Fi can be up even if ping/DNS blocked).
+                if not online:
+                    try:
+                        import sys
+                        if sys.platform.startswith("win"):
+                            import subprocess
+
+                            # `ipconfig` is fast and doesn't require extra deps; run in background thread.
+                            p = subprocess.run(
+                                ["ipconfig"],
+                                capture_output=True,
+                                text=True,
+                                timeout=2,
+                            )
+                            text = (p.stdout or "") + "\n" + (p.stderr or "")
+                            # Heuristic: if any *non-loopback* adapter block has an IP and is not media-disconnected,
+                            # assume connected. (Avoid false negatives when some other adapter is disconnected.)
+                            import re
+                            blocks = [b.strip() for b in re.split(r"\r?\n\r?\n+", text) if b.strip()]
+                            for block in blocks:
+                                lb = block.lower()
+                                if "loopback" in lb:
+                                    continue
+                                if "media disconnected" in lb:
+                                    continue
+                                if ("ipv4 address" in lb) or ("ipv6 address" in lb):
+                                    online = True
+                                    source = "ipconfig"
+                                    break
+                    except Exception:
+                        online = False
+
+                # Fallback 1: quick HTTPS connect (more likely allowed than DNS/53 in some networks)
+                if not online:
+                    try:
+                        socket.create_connection(("www.google.com", 443), timeout=1.0)
+                        online = True
+                        source = "tcp443"
+                    except Exception:
+                        online = False
+
+                # Fallback 2: try quick socket connects (best-effort "internet reachable")
+                if not online:
+                    for host, port in (("1.1.1.1", 53), ("8.8.8.8", 53)):
+                        try:
+                            socket.create_connection((host, port), timeout=0.6)
+                            online = True
+                            source = f"tcp{port}"
+                            break
+                        except Exception:
+                            continue
             except Exception:
                 online = False
+                source = "error"
             # Update UI back on main thread via QTimer
             from PyQt5.QtCore import QTimer
             def _update():
                 try:
                     if online:
-                        self.status_dot.setStyleSheet(
-                            "border-radius: 9px; background: #00e676; border: 2px solid #fff;")
-                        self.status_dot.setToolTip("Connected to Internet")
+                        if hasattr(self, "_wifi_pixmap_connected") and not self._wifi_pixmap_connected.isNull():
+                            self.status_dot.setPixmap(self._wifi_pixmap_connected)
+                            self.status_dot.setStyleSheet("background: transparent;")
+                        else:
+                            self.status_dot.setPixmap(QPixmap())
+                            self.status_dot.setStyleSheet(
+                                "border-radius: 9px; background: #00e676; border: 2px solid #fff;")
+                        self.status_dot.setToolTip(f"Wi‑Fi/Internet connected ({source})")
                     else:
-                        self.status_dot.setStyleSheet(
-                            "border-radius: 9px; background: #e74c3c; border: 2px solid #fff;")
-                        self.status_dot.setToolTip("No Internet Connection")
+                        if hasattr(self, "_wifi_pixmap_disconnected") and not self._wifi_pixmap_disconnected.isNull():
+                            self.status_dot.setPixmap(self._wifi_pixmap_disconnected)
+                            self.status_dot.setStyleSheet("background: transparent;")
+                        else:
+                            self.status_dot.setPixmap(QPixmap())
+                            self.status_dot.setStyleSheet(
+                                "border-radius: 9px; background: #e74c3c; border: 2px solid #fff;")
+                        self.status_dot.setToolTip(f"Wi‑Fi/Internet disconnected ({source})")
                 except Exception:
                     pass
             QTimer.singleShot(0, _update)
         import threading
         threading.Thread(target=_check, daemon=True, name="InetStatus").start()
+
+    def _load_status_pixmap(self, filename: str, target_px: int = 18) -> QPixmap:
+        try:
+            path = get_asset_path(filename)
+            pm = QPixmap(path)
+            if pm.isNull():
+                return QPixmap()
+            return pm.scaled(target_px, target_px, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        except Exception:
+            return QPixmap()
+
+    def _load_status_pixmap_any(self, filenames: list[str], target_px: int = 18) -> QPixmap:
+        for name in filenames:
+            pm = self._load_status_pixmap(name, target_px=target_px)
+            if not pm.isNull():
+                return pm
+        return QPixmap()
+
+    def _make_wifi_disconnected_pixmap(self, base: QPixmap, target_px: int = 18) -> QPixmap:
+        try:
+            if base.isNull():
+                return QPixmap()
+            pm = base.scaled(target_px, target_px, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            img = pm.toImage().convertToFormat(QImage.Format_Grayscale8).convertToFormat(QImage.Format_ARGB32)
+            pm = QPixmap.fromImage(img)
+            painter = QPainter(pm)
+            painter.setRenderHint(QPainter.Antialiasing)
+            pen = QPen(QColor("#e74c3c"), 2)
+            pen.setCapStyle(Qt.RoundCap)
+            painter.setPen(pen)
+            painter.drawLine(2, pm.height() - 3, pm.width() - 3, 2)
+            painter.end()
+            return pm
+        except Exception:
+            return QPixmap()
     def toggle_medical_mode(self):
         self.medical_mode = not self.medical_mode
         if self.medical_mode:

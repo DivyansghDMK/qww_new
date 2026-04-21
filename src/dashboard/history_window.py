@@ -1359,7 +1359,7 @@ class HistoryWindow(QDialog):
             return
 
         rt = "ECG"
-        if "holter" in fn: rt = "Comphrensive ECG Analysis"
+        if "holter" in fn: rt = "Comprehensive ECG Analysis"
         elif "hyper" in fn: rt = "Hyperkalemia"
         elif "hrv" in fn: rt = "HRV"
         elif "analysis" in fn: rt = "Analysis"
@@ -1376,7 +1376,7 @@ class HistoryWindow(QDialog):
                                  .replace("ECG_Report_", "")
                                  .replace("HRV_Report_", "")
                                  .replace("ECG_Analysis_", "")
-                                 .replace("holter_report", "Comphrensive_ECG_Analysis_")
+                                 .replace("holter_report", "Comprehensive_ECG_Analysis_")
                                  .replace("_", " "),
                 "report_file": full_path
             })
@@ -1394,7 +1394,7 @@ class HistoryWindow(QDialog):
         if "hrv" in fl:
             return "HRV"
         if "holter" in fl:
-            return "Comphrensive ECG Analysis"
+            return "Comprehensive ECG Analysis"
         if "analysis" in fl:
             return "Analysis"
         return "ECG"
@@ -1466,7 +1466,7 @@ class HistoryWindow(QDialog):
                         fn = entry.get("filename", "").lower()
                         # Better detection logic for report types
                         if "holter" in fn:
-                            rt = "Comphrensive ECG Analysis"
+                            rt = "Comprehensive ECG Analysis"
                         elif "hyper" in fn:
                             rt = "Hyperkalemia"
                         elif "hrv" in fn:
@@ -1569,7 +1569,7 @@ class HistoryWindow(QDialog):
             rt = entry.get("report_type", "")
             if not rt:
                 fl = rf.lower()
-                if "holter" in fl: rt = "Comphrensive ECG Analysis"
+                if "holter" in fl: rt = "Comprehensive ECG Analysis"
                 elif "hyper" in fl: rt = "Hyperkalemia"
                 elif "hrv" in fl: rt = "HRV"
                 elif "analysis" in fl: rt = "Analysis"
