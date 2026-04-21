@@ -2017,7 +2017,7 @@ class HolterWaveGridPanel(QFrame):
         header = QHBoxLayout()
         title = QLabel("12‑Lead Live Workspace")
         title.setStyleSheet(f"color:{COL_GREEN};font-size:16px;font-weight:bold;border:none;")
-        subtitle = QLabel("Professional Comphrensive ECG Analysis view with synchronized moving strips.")
+        subtitle = QLabel("Professional Comprehensive ECG Analysis view with synchronized moving strips.")
         subtitle.setStyleSheet(f"color:{COL_GREEN_DRK};font-size:11px;font-weight:bold;border:none;")
         hcol = QVBoxLayout()
         hcol.addWidget(title)
@@ -2193,7 +2193,7 @@ class HolterInsightPanel(QFrame):
             f"Interpretation:\n"
             f"The recording demonstrates a {rhythm}. Key events: {top}\n\n"
             f"Suggested final report wording:\n"
-            f'"Comphrensive ECG Analysis monitoring for {name} shows {rhythm} with an average heart rate of '
+            f'"Comprehensive ECG Analysis monitoring for {name} shows {rhythm} with an average heart rate of '
             f'{avg_hr:.0f} bpm. The minimum recorded rate was {min_hr:.0f} bpm and the '
             f'maximum recorded rate was {max_hr:.0f} bpm. Overall signal quality was '
             f'{quality:.1f}%, enabling comprehensive review of the 12-lead trends and event strips."'
@@ -3002,7 +3002,7 @@ class HolterMainWindow(QDialog):
                  live_source=None,
                  duration_hours: int = 24):
         super().__init__(parent)
-        self.setWindowTitle("Comphrensive ECG Analysis Monitor & Analysis")
+        self.setWindowTitle("Comprehensive ECG Analysis Monitor & Analysis")
         self.setMinimumSize(900, 620)
 
         screen = QApplication.primaryScreen()
@@ -3522,7 +3522,7 @@ class HolterMainWindow(QDialog):
             
             # Show dialog to collect patient info AFTER recording
             dialog = HolterStartDialog(self, patient_info=self.patient_info or {}, output_dir=self.session_dir)
-            dialog.setWindowTitle("Save Comphrensive ECG Analysis Recording Details")
+            dialog.setWindowTitle("Save Comprehensive ECG Analysis Recording Details")
             if dialog.exec_() == QDialog.Accepted:
                 patient_info, dur, out_dir = dialog.get_result()
                 summary['patient_info'] = patient_info
@@ -3535,7 +3535,7 @@ class HolterMainWindow(QDialog):
                     print(f"Failed to save patient.json: {e}")
 
             QMessageBox.information(self, "Recording Complete",
-                                    f"Comphrensive ECG Analysis recording saved to:\n{summary.get('session_dir', '')}")
+                                    f"Comprehensive ECG Analysis recording saved to:\n{summary.get('session_dir', '')}")
             self.load_completed_session(summary.get('session_dir', ''), summary.get('patient_info', {}))
             
             # Auto-generate report when recording is stopped
@@ -3543,7 +3543,7 @@ class HolterMainWindow(QDialog):
 
     def _generate_report(self):
         from PyQt5.QtWidgets import QProgressDialog
-        progress = QProgressDialog("Generating Comphrensive ECG Analysis Report...", None, 0, 0, self)
+        progress = QProgressDialog("Generating Comprehensive ECG Analysis Report...", None, 0, 0, self)
         progress.setWindowModality(Qt.WindowModal)
         progress.setStyleSheet(f"QProgressDialog{{background:{COL_DARK};color:{COL_GREEN};}}")
         progress.show()
@@ -3568,7 +3568,7 @@ class HolterMainWindow(QDialog):
                 append_history_entry(
                     h_pat,
                     path,
-                    report_type="Comphrensive ECG Analysis",
+                    report_type="Comprehensive ECG Analysis",
                     username=_uname,
                     owner_full_name=_full,
                 )
@@ -3576,7 +3576,7 @@ class HolterMainWindow(QDialog):
                 print(f"Failed to append Holter history: {h_err}")
                 
             progress.close()
-            QMessageBox.information(self, "Report Generated", f"Comphrensive ECG Analysis report saved:\n{path}")
+            QMessageBox.information(self, "Report Generated", f"Comprehensive ECG Analysis report saved:\n{path}")
         except Exception as e:
             progress.close()
             QMessageBox.warning(self, "Report Error", f"Could not generate report:\n{e}")

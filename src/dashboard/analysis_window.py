@@ -18,7 +18,7 @@ import numpy as np
 from datetime import datetime
 from pathlib import Path
 
-from PyQt5.QtCore import Qt, QTimer, QPoint, QPointF, QRect, QRectF, pyqtSignal
+from PyQt5.QtCore import Qt, QTimer, QPoint, QPointF, QRect, QRectF, pyqtSignal, QDate
 from PyQt5.QtGui import (QFont, QPixmap, QCursor, QPainter, QPen,
                          QColor, QBrush, QRadialGradient, QFontMetrics, QImage)
 from PyQt5.QtWidgets import (
@@ -26,7 +26,7 @@ from PyQt5.QtWidgets import (
     QTableWidget, QTableWidgetItem, QFrame, QMessageBox,
     QSizePolicy, QComboBox, QFileDialog, QTextEdit, QSlider,
     QLineEdit, QAction, QMenu, QApplication, QButtonGroup,
-    QToolButton, QWidget, QSplitter
+    QToolButton, QWidget, QSplitter, QHeaderView, QDateEdit
 )
 
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -800,6 +800,234 @@ class LeadExpandedPopup(QDialog):
 # ─────────────────────────────────────────────────────────────────────────────
 #  MAIN WINDOW
 # ─────────────────────────────────────────────────────────────────────────────
+class PublicReportsDialog(QDialog):
+    """Browse public reports fetched by mobile number, with search + date filters."""
+
+    def __init__(self, reports: list, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Select Report")
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        self.setMinimumWidth(900)
+        self._all = [r for r in (reports or []) if isinstance(r, dict)]
+        self._selected = None
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(10)
+
+        filters = QHBoxLayout()
+        filters.addWidget(QLabel("Search Name:"))
+        self.name_search = QLineEdit()
+        self.name_search.setPlaceholderText("Type patient name…")
+        filters.addWidget(self.name_search, 2)
+
+        filters.addWidget(QLabel("Search Date:"))
+        self.date_search = QDateEdit()
+        self.date_search.setCalendarPopup(True)
+        self.date_search.setDisplayFormat("dd-MM-yyyy")
+        self._date_any = QDate(1900, 1, 1)
+        self.date_search.setMinimumDate(self._date_any)
+        self.date_search.setSpecialValueText("Any")
+        self.date_search.setDate(self._date_any)
+        self.date_search.setFixedWidth(150)
+        self.date_search.setStyleSheet(
+            "QDateEdit{"
+            " background:#0f1220;"
+            " color:#fff4e8;"
+            " border:1px solid #5e4827;"
+            " border-radius:8px;"
+            " padding:6px 34px 6px 10px;"
+            " font-size:12px;"
+            " font-family:'Segoe UI', Arial;"
+            "}"
+            "QDateEdit:hover{border-color:#ff8a1f;}"
+            "QDateEdit:focus{border-color:#ff8a1f;}"
+            "QDateEdit::drop-down{"
+            " subcontrol-origin:padding;"
+            " subcontrol-position:top right;"
+            " width:28px;"
+            " border-left:1px solid #5e4827;"
+            " background:#15192b;"
+            " border-top-right-radius:8px;"
+            " border-bottom-right-radius:8px;"
+            "}"
+            "QDateEdit::drop-down:hover{background:#1b2036;}"
+        )
+        try:
+            cal = self.date_search.calendarWidget()
+            cal.setGridVisible(True)
+            cal.setStyleSheet(
+                "QCalendarWidget{"
+                " background:#0f1220;"
+                " color:#fff4e8;"
+                " border:1px solid #5e4827;"
+                " border-radius:10px;"
+                "}"
+                "QCalendarWidget QWidget#qt_calendar_navigationbar{"
+                " background:#15192b;"
+                " border-top-left-radius:10px;"
+                " border-top-right-radius:10px;"
+                "}"
+                "QCalendarWidget QToolButton{"
+                " color:#fff4e8;"
+                " background:transparent;"
+                " border:none;"
+                " font-weight:bold;"
+                " padding:6px 10px;"
+                " margin:4px;"
+                " border-radius:8px;"
+                "}"
+                "QCalendarWidget QToolButton:hover{background:#1b2036;}"
+                "QCalendarWidget QToolButton:pressed{background:#241808;}"
+                "QCalendarWidget QSpinBox{"
+                " background:#0f1220;"
+                " color:#fff4e8;"
+                " border:1px solid #5e4827;"
+                " border-radius:6px;"
+                " padding:2px 6px;"
+                " margin:4px;"
+                "}"
+                "QCalendarWidget QSpinBox::up-button, QCalendarWidget QSpinBox::down-button{width:18px;}"
+                "QCalendarWidget QAbstractItemView{"
+                " background:#0b0f1d;"
+                " color:#fff4e8;"
+                " selection-background-color:#ff8a1f;"
+                " selection-color:#ffffff;"
+                " gridline-color:#2a2230;"
+                " outline:0;"
+                "}"
+                "QCalendarWidget QAbstractItemView:disabled{color:#6b5a4a;}"
+                "QCalendarWidget QMenu{"
+                " background:#15192b;"
+                " color:#fff4e8;"
+                " border:1px solid #5e4827;"
+                "}"
+                "QCalendarWidget QMenu::item:selected{background:#1b2036;}"
+            )
+        except Exception:
+            pass
+        filters.addWidget(self.date_search, 0)
+
+        self.clear_filters_btn = QPushButton("Clear")
+        self.clear_filters_btn.setFixedWidth(70)
+        filters.addWidget(self.clear_filters_btn, 0)
+
+        filters.addStretch(1)
+        root.addLayout(filters)
+
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels(["Report ID", "Type", "Date", "Format", "Name", "Age/Gender"])
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.verticalHeader().setVisible(False)
+        hdr = self.table.horizontalHeader()
+        hdr.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(4, QHeaderView.Stretch)
+        hdr.setSectionResizeMode(5, QHeaderView.ResizeToContents)
+        root.addWidget(self.table, 1)
+
+        actions = QHBoxLayout()
+        self.load_btn = QPushButton("Load Selected")
+        self.load_btn.setObjectName("primary")
+        self.load_btn.clicked.connect(self._accept_selected)
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.clicked.connect(self.reject)
+        actions.addStretch(1)
+        actions.addWidget(self.cancel_btn)
+        actions.addWidget(self.load_btn)
+        root.addLayout(actions)
+
+        self.name_search.textChanged.connect(self._refresh_table)
+        self.date_search.dateChanged.connect(self._refresh_table)
+        self.clear_filters_btn.clicked.connect(self._clear_filters)
+        self.table.cellDoubleClicked.connect(lambda *_: self._accept_selected())
+        self._refresh_table()
+
+    def _norm(self, v):
+        return ("" if v is None else str(v)).strip()
+
+    def _get_first(self, d: dict, *keys):
+        for k in keys:
+            if k in d and d[k] not in (None, "", []):
+                return d[k]
+        return None
+
+    def _clear_filters(self):
+        try:
+            self.name_search.setText("")
+            self.date_search.setDate(self._date_any)
+        except Exception:
+            pass
+        self._refresh_table()
+
+    def _matches(self, report: dict) -> bool:
+        name = self._norm(self._get_first(report, "name", "patient_name", "patientName"))
+        query = self._norm(self.name_search.text()).lower()
+        if query and query not in name.lower():
+            return False
+
+        # Date filter (match by YYYY-MM-DD)
+        try:
+            chosen = self.date_search.date()
+            if chosen != self._date_any:
+                rdate = self._norm(self._get_first(report, "report_date", "reportDate", "date", "created_at", "createdAt"))
+                iso = (rdate.replace("Z", "").replace("z", "") or "").strip()
+                date_part = ""
+                if "T" in iso:
+                    date_part = iso.split("T", 1)[0]
+                elif " " in iso:
+                    date_part = iso.split(" ", 1)[0]
+                else:
+                    date_part = iso[:10]
+                # Compare to chosen date in ISO format
+                if date_part and date_part != chosen.toString("yyyy-MM-dd"):
+                    return False
+        except Exception:
+            # If date parsing fails, don't filter out by date
+            pass
+
+        return True
+
+    def _refresh_table(self):
+        self.table.setRowCount(0)
+        rows = [r for r in self._all if self._matches(r)]
+
+        for report in rows:
+            rid = self._norm(self._get_first(report, "report_id", "reportId", "id", "reportID"))
+            rtype = self._norm(self._get_first(report, "report_type", "reportType", "type"))
+            rdate = self._norm(self._get_first(report, "report_date", "reportDate", "date", "created_at", "createdAt"))
+            fmt = self._norm(self._get_first(report, "report_format", "reportFormat", "format"))
+            name = self._norm(self._get_first(report, "name", "patient_name", "patientName"))
+            age = self._norm(self._get_first(report, "age", "patient_age", "patientAge"))
+            gender = self._norm(self._get_first(report, "gender", "patient_gender", "patientGender"))
+
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            vals = [rid, rtype, rdate, fmt, name, f"{age}/{gender}".strip("/")]
+            for col, val in enumerate(vals):
+                item = QTableWidgetItem(val)
+                item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter if col in (4,) else Qt.AlignCenter)
+                self.table.setItem(row, col, item)
+            if self.table.item(row, 0):
+                self.table.item(row, 0).setData(Qt.UserRole, report)
+            self.table.setRowHeight(row, 26)
+
+    def _accept_selected(self):
+        row = self.table.currentRow()
+        if row < 0:
+            QMessageBox.information(self, "Select", "Select a report first.")
+            return
+        item = self.table.item(row, 0)
+        self._selected = item.data(Qt.UserRole) if item else None
+        self.accept()
+
+    def get_selected_report(self):
+        return self._selected
+
+
 class ECGAnalysisWindow(QDialog):
     """Professional ECG Analysis Window with clinical-grade doctor tools."""
 
@@ -820,6 +1048,18 @@ class ECGAnalysisWindow(QDialog):
         self.current_report_path = ""
         self.lead_data           = {lead: np.array([]) for lead in self.LEADS}
         self.sampling_rate       = 500.0
+        # Filter settings
+        self.filter_ac = "50"
+        self.filter_emg = "150"
+        self.filter_dft = "0.5"
+        try:
+            from utils.settings_manager import SettingsManager
+            sm = SettingsManager()
+            self.filter_ac = str(sm.get_setting("filter_ac", self.filter_ac) or self.filter_ac).strip()
+            self.filter_emg = str(sm.get_setting("filter_emg", self.filter_emg) or self.filter_emg).strip()
+            self.filter_dft = str(sm.get_setting("filter_dft", self.filter_dft) or self.filter_dft).strip()
+        except Exception:
+            pass
 
         self.window_seconds      = 10.0
         self.step_seconds        = 0.5
@@ -1540,6 +1780,36 @@ class ECGAnalysisWindow(QDialog):
         right_col = QVBoxLayout()
         right_col.setSpacing(3)
 
+        # Mobile report browser (public API) - right aligned (not inside manual marking frame)
+        mobile_wrap = QWidget()
+        mobile_lay = QHBoxLayout(mobile_wrap)
+        mobile_lay.setContentsMargins(0, 0, 0, 0)
+        mobile_lay.setSpacing(10)
+        mobile_lay.addStretch(1)
+
+        mobile_lbl = QLabel("Mobile No:")
+        mobile_lbl.setStyleSheet("color:#fff4e8;font-size:12px;font-weight:bold;font-family:Arial;")
+        mobile_lay.addWidget(mobile_lbl, 0, Qt.AlignRight)
+
+        self.mobile_no_input = QLineEdit()
+        self.mobile_no_input.setPlaceholderText("XXXXXXXXXX")
+        self.mobile_no_input.setFixedWidth(170)
+        self.mobile_no_input.setStyleSheet(
+            "font-family:Arial; font-size:12px; padding:6px 10px; background:#0f1220; color:#fff4e8;"
+            "border:1px solid #5e4827; border-radius:5px;"
+        )
+        mobile_lay.addWidget(self.mobile_no_input, 0, Qt.AlignRight)
+
+        self.mobile_load_btn = QPushButton("Load")
+        self.mobile_load_btn.setStyleSheet(
+            "background:#ff8a1f; color:#ffffff; border:none; border-radius:5px;"
+            "font-family:Arial; font-weight:bold; font-size:12px; padding:7px 16px;"
+        )
+        self.mobile_load_btn.clicked.connect(self.load_mobile_reports)
+        mobile_lay.addWidget(self.mobile_load_btn, 0, Qt.AlignRight)
+
+        right_col.addWidget(mobile_wrap, 0, Qt.AlignRight)
+
         metrics_lbl = QLabel("▌ ECG Metrics")
         metrics_lbl.setStyleSheet(
             "color:#fff4e8;font-size:11px;font-weight:bold;font-family:'Courier New';")
@@ -1565,6 +1835,256 @@ class ECGAnalysisWindow(QDialog):
 
         h.addLayout(right_col, stretch=1)
         return frame
+
+    def _normalize_mobile_no(self, mobile_no: str) -> str:
+        digits = "".join(ch for ch in str(mobile_no or "") if ch.isdigit())
+        if len(digits) == 12 and digits.startswith("91"):
+            digits = digits[2:]
+        return digits
+
+    def load_mobile_reports(self):
+        """Load list of public reports by mobile number and show selection dialog."""
+        mobile_no = self._normalize_mobile_no(self.mobile_no_input.text().strip() if hasattr(self, "mobile_no_input") else "")
+        if len(mobile_no) != 10:
+            QMessageBox.warning(self, "Mobile", "Enter a valid 10-digit mobile number.")
+            return
+
+        url = (
+            "https://pmltkfluqk.execute-api.us-east-1.amazonaws.com/"
+            f"dev/api/public/reports?mobile_no={mobile_no}"
+        )
+        import requests
+        try:
+            self.mobile_load_btn.setText("…")
+            self.mobile_load_btn.setEnabled(False)
+            QApplication.processEvents()
+
+            resp = requests.get(url, timeout=15)
+            payload = resp.json()
+
+            # Accept multiple shapes: list, {"data": [...]}, {"reports": [...]}
+            if isinstance(payload, list):
+                reports = payload
+            elif isinstance(payload, dict):
+                reports = payload.get("data") or payload.get("reports") or payload.get("items") or []
+            else:
+                reports = []
+
+            if not isinstance(reports, list) or not reports:
+                QMessageBox.information(self, "Reports", "No reports found for this mobile number.")
+                return
+
+            dlg = PublicReportsDialog(reports, parent=self)
+            if dlg.exec_() != QDialog.Accepted:
+                return
+
+            selected = dlg.get_selected_report()
+            if not selected:
+                return
+
+            new_report = self._map_public_report_to_internal(selected)
+            if not new_report:
+                # If listing is metadata-only, try fetching full details by report_id.
+                rep_id = (
+                    selected.get("report_id")
+                    or selected.get("reportId")
+                    or selected.get("id")
+                    or selected.get("reportID")
+                    or ""
+                )
+                rep_id = str(rep_id).strip()
+                if rep_id:
+                    detail = self._fetch_public_report_detail_by_report_id(rep_id, mobile_no=mobile_no)
+                    if isinstance(detail, dict):
+                        new_report = self._map_public_report_to_internal(detail) or new_report
+            if not new_report:
+                QMessageBox.warning(self, "Reports", "Selected report did not include usable waveform data.")
+                return
+
+            self.reports.append(new_report)
+            idx = len(self.reports) - 1
+            pd = new_report.get("patient_details", {}) if isinstance(new_report.get("patient_details"), dict) else {}
+            display_name = pd.get("name") or new_report.get("patient_name") or "Public Report"
+            rep_id = pd.get("report_id") or new_report.get("report_id") or selected.get("report_id") or selected.get("reportId") or ""
+            rep_type = (
+                selected.get("report_type")
+                or selected.get("reportType")
+                or selected.get("type")
+                or new_report.get("report_type")
+                or "report"
+            )
+            self.report_combo.addItem(f"[Mobile] {display_name} | {rep_type} | ID:{rep_id}", "")
+            self.report_combo.setCurrentIndex(idx)
+        except Exception as e:
+            QMessageBox.critical(self, "API Error", f"Failed to load reports: {str(e)}")
+        finally:
+            try:
+                self.mobile_load_btn.setText("Load")
+                self.mobile_load_btn.setEnabled(True)
+            except Exception:
+                pass
+
+    def _fetch_public_report_detail_by_report_id(self, report_id: str, mobile_no: str = None):
+        """Best-effort fetch for a single report by report_id (API contract not guaranteed)."""
+        rid = str(report_id or "").strip()
+        if not rid:
+            return None
+
+        import requests
+
+        base = "https://pmltkfluqk.execute-api.us-east-1.amazonaws.com/dev/api/public"
+        candidates = []
+        mn = self._normalize_mobile_no(mobile_no) if mobile_no else ""
+        if len(mn) == 10:
+            # Shared contract: mobile_no + report_id on /public/reports
+            candidates.append(f"{base}/reports?mobile_no={mn}&report_id={rid}")
+            candidates.append(f"{base}/reports?mobile_no={mn}&reportId={rid}")
+
+        candidates += [
+            f"{base}/report?report_id={rid}",
+            f"{base}/report?reportId={rid}",
+            f"{base}/reports?report_id={rid}",
+            f"{base}/reports?reportId={rid}",
+            f"{base}/reports?id={rid}",
+        ]
+        for url in candidates:
+            try:
+                resp = requests.get(url, timeout=15)
+                payload = resp.json()
+                if isinstance(payload, dict):
+                    if payload.get("status") is False:
+                        continue
+                    data = payload.get("data") or payload.get("report") or payload.get("item")
+                    if isinstance(data, dict):
+                        return data
+                    if isinstance(data, list) and data:
+                        first = data[0]
+                        return first if isinstance(first, dict) else None
+                    # some endpoints might return report object directly
+                    if any(k in payload for k in ("ecg_data", "leads", "device_data", "lead1_reading")):
+                        return payload
+                if isinstance(payload, list) and payload:
+                    first = payload[0]
+                    return first if isinstance(first, dict) else None
+            except Exception:
+                continue
+        return None
+
+    def _map_public_report_to_internal(self, report_obj: dict):
+        """Best-effort mapping from public API report record -> internal report structure used by Waveform Analysis."""
+        if not isinstance(report_obj, dict):
+            return None
+
+        def _get_first(d: dict, *keys):
+            for k in keys:
+                if k in d and d[k] not in (None, "", []):
+                    return d[k]
+            return None
+
+        patient_name = _get_first(report_obj, "name", "patient_name", "patientName")
+        patient_age = _get_first(report_obj, "age", "patient_age", "patientAge")
+        patient_gender = _get_first(report_obj, "gender", "patient_gender", "patientGender")
+        report_id = _get_first(report_obj, "report_id", "reportId", "id", "reportID")
+        report_date = _get_first(report_obj, "report_date", "reportDate", "date", "created_at", "createdAt")
+
+        sampling_rate = (
+            _get_first(report_obj, "sampling_rate", "samplingRate")
+            or _get_first(report_obj.get("ecg_data", {}) if isinstance(report_obj.get("ecg_data"), dict) else {}, "sampling_rate", "samplingRate")
+            or 500
+        )
+        try:
+            sampling_rate = float(sampling_rate or 500)
+        except Exception:
+            sampling_rate = 500.0
+
+        # Waveform sources (accept several shapes)
+        ecg_data = {}
+        if isinstance(report_obj.get("ecg_data"), dict):
+            ecg_data = dict(report_obj.get("ecg_data") or {})
+            ecg_data.setdefault("sampling_rate", sampling_rate)
+        elif isinstance(report_obj.get("leads"), dict):
+            ecg_data = {"sampling_rate": sampling_rate}
+            for lead in self.LEADS:
+                arr = report_obj["leads"].get(lead)
+                if isinstance(arr, list):
+                    ecg_data[lead] = arr
+        elif isinstance(report_obj.get("leads_data"), dict):
+            ecg_data = {"sampling_rate": sampling_rate, "leads_data": report_obj.get("leads_data")}
+        elif isinstance(report_obj.get("device_data"), str):
+            ecg_data = {"sampling_rate": sampling_rate, "device_data": report_obj.get("device_data")}
+        else:
+            # Try raw lead strings like "lead1_reading"
+            possible_keys = [
+                ["lead1_reading", "lead_1_reading", "lead1"],
+                ["lead2_reading", "lead_2_reading", "lead2"],
+                ["lead3_reading", "lead_3_reading", "lead3"],
+                ["leadavr_reading", "lead_avr_reading", "leadavr"],
+                ["leadavl_reading", "lead_avl_reading", "leadavl"],
+                ["leadavf_reading", "lead_avf_reading", "leadavf"],
+                ["leadv1_reading", "lead_v1_reading", "leadv1"],
+                ["leadv2_reading", "lead_v2_reading", "leadv2"],
+                ["leadv3_reading", "lead_v3_reading", "leadv3"],
+                ["leadv4_reading", "lead_v4_reading", "leadv4"],
+                ["leadv5_reading", "lead_v5_reading", "leadv5"],
+                ["leadv6_reading", "lead_v6_reading", "leadv6"],
+            ]
+            lower_keys = {k.lower(): k for k in report_obj.keys()}
+            import numpy as _np
+            from scipy.ndimage import gaussian_filter1d as _gf
+            ecg_data = {"sampling_rate": sampling_rate}
+            for i, variants in enumerate(possible_keys):
+                leadstr = self.LEADS[i]
+                for variant in variants:
+                    actual_key = lower_keys.get(variant.lower())
+                    if actual_key and actual_key in report_obj:
+                        val_str = str(report_obj[actual_key]).strip()
+                        if val_str.endswith(","):
+                            val_str = val_str[:-1]
+                        if val_str:
+                            arr_vals = _np.array([float(x.strip()) for x in val_str.split(",") if x.strip()])
+                            filt = _gf(arr_vals, sigma=1.5)
+                            c_mean = _np.mean(filt)
+                            if not _np.isnan(c_mean):
+                                filt = filt - c_mean
+                            filt = filt + 2048
+                            ecg_data[leadstr] = filt.tolist()
+                        break
+
+        # Ensure we actually have waveform arrays
+        has_any = False
+        if isinstance(ecg_data, dict):
+            for lead in self.LEADS:
+                if isinstance(ecg_data.get(lead), list) and len(ecg_data.get(lead)) > 10:
+                    has_any = True
+                    break
+            if not has_any and isinstance(ecg_data.get("leads_data"), dict):
+                for lead in self.LEADS:
+                    arr = ecg_data["leads_data"].get(lead)
+                    if isinstance(arr, list) and len(arr) > 10:
+                        has_any = True
+                        break
+            if not has_any and isinstance(ecg_data.get("device_data"), str) and "|" in ecg_data["device_data"]:
+                has_any = True
+
+        if not has_any:
+            return None
+
+        internal = {
+            "patient_details": {
+                "name": patient_name or "Unknown",
+                "age": patient_age or "",
+                "gender": patient_gender or "",
+                "report_id": report_id or "",
+                "report_date": report_date or "",
+            },
+            "result_reading": report_obj.get("result_reading") or report_obj.get("metrics") or {},
+            "clinical_findings": report_obj.get("clinical_findings") or {},
+            "ecg_data": ecg_data,
+            "report_type": report_obj.get("report_type") or report_obj.get("reportType") or report_obj.get("type") or "",
+            "source": "public_mobile",
+        }
+        return internal
+
 
     def _fit_window_to_screen(self):
         screen = self.screen() or QApplication.primaryScreen()
@@ -1739,11 +2259,15 @@ class ECGAnalysisWindow(QDialog):
             return
         device_data = ecg_data.get('device_data') if isinstance(ecg_data, dict) else None
         if isinstance(device_data, str) and '|' in device_data:
-            self._parse_compact_device_data(device_data)
+            # For compact per-frame encoding (12 integers per frame), keep initial 5000 frames
+            # so the first 10 seconds (500Hz default) plots immediately without huge memory usage.
+            self._parse_compact_device_data(device_data, max_frames=5000)
 
-    def _parse_compact_device_data(self, device_data):
+    def _parse_compact_device_data(self, device_data, max_frames: int = None):
         per_lead = {lead: [] for lead in self.LEADS}
         frames = [x.strip() for x in device_data.split('|') if x.strip()]
+        if isinstance(max_frames, int) and max_frames > 0:
+            frames = frames[:max_frames]
         for fr in frames:
             try:
                 vals = json.loads(fr)
@@ -2299,6 +2823,29 @@ class ECGAnalysisWindow(QDialog):
             except Exception:
                 pass
 
+            # Read current filter settings
+            filter_ac = getattr(self, "filter_ac", "50")
+            filter_emg = getattr(self, "filter_emg", "150")
+            filter_dft = getattr(self, "filter_dft", "0.5")
+            try:
+                from utils.settings_manager import SettingsManager
+                sm = SettingsManager()
+                filter_ac = str(sm.get_setting("filter_ac", filter_ac) or filter_ac).strip()
+                filter_emg = str(sm.get_setting("filter_emg", filter_emg) or filter_emg).strip()
+                filter_dft = str(sm.get_setting("filter_dft", filter_dft) or filter_dft).strip()
+            except Exception:
+                pass
+
+            if filter_dft not in ("off", "") and filter_emg not in ("off", ""):
+                filter_band = f"{filter_dft}-{filter_emg}Hz"
+            elif filter_dft not in ("off", ""):
+                filter_band = f"HP:{filter_dft}Hz"
+            elif filter_emg not in ("off", ""):
+                filter_band = f"LP:{filter_emg}Hz"
+            else:
+                filter_band = "Filter: Off"
+            ac_freq = f"{filter_ac}Hz" if str(filter_ac) in ("50", "60") else "Off"
+
             frozen = {
                 'HR': int(float(hr) if hr else 0),
                 'RR': int(float(rr) if rr else 0),
@@ -2311,8 +2858,8 @@ class ECGAnalysisWindow(QDialog):
                 'p_axis': '--', 'QRS_axis': '--', 't_axis': '--',
                 'lead_seq': lead_seq,
                 'logo_path': str(self.analysis_pdf_logo_path),
-                'filter_band': f"{self.filter_dft or '0.5'}-{self.filter_emg or '150'}Hz",
-                'ac_frequency': f"{self.filter_ac or '50'}Hz",
+                'filter_band': filter_band,
+                'ac_frequency': ac_freq,
             }
             try:
                 if rv5sv1:
