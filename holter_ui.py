@@ -94,13 +94,13 @@ def _label_style(size=12, color=COL_DARK, bold=False):
 
 class HolterStartDialog(QDialog):
     """
-    Modal dialog to configure and start a Holter recording.
+    Modal dialog to configure and start a comphrensive recording.
     Pre-fills patient info from existing patient_details cache.
     """
 
     def __init__(self, parent=None, patient_info: dict = None, output_dir: str = "recordings"):
         super().__init__(parent)
-        self.setWindowTitle("Start Holter Recording")
+        self.setWindowTitle("Start comphrensive recording")
         self.setMinimumWidth(640)
         self.setStyleSheet(f"background: {COL_DARK}; color: white;")
         self.output_dir = output_dir
@@ -1170,7 +1170,7 @@ class HolterEventsPanel(QWidget):
 
 class HolterReplayPanel(QWidget):
     """
-    Controls for replaying a saved Holter recording.
+    Controls for replaying a saved comphrensive recording.
     Connected to HolterReplayEngine.
     """
     seek_requested   = pyqtSignal(float)   # seconds
@@ -2216,7 +2216,7 @@ class HolterMainWindow(QDialog):
                 self._status_bar.cleanup()
             
             QMessageBox.information(self, "Recording Complete", 
-                                    f"Holter recording saved to:\n{summary.get('session_dir', '')}")
+                                    f"comphrensive recording saved to:\n{summary.get('session_dir', '')}")
             
             # Switch to review mode
             self.load_completed_session(summary.get('session_dir', ''), self.patient_info)

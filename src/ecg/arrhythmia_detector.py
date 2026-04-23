@@ -876,7 +876,10 @@ def detect_arrhythmia(beats_list: Sequence[Dict[str, object]], signal_dict: Dict
     r_peaks = signal_dict.get("r_peaks", [])
     flutter_features = _atrial_flutter_features(signal_for_flutter, fs, r_peaks=r_peaks)
     atrial_fib = p_absent_ratio > 0.70 and rr_variability > 120.0
-    atrial_flutter = bool(flutter_features.get("is_flutter"))
+    # Organised flutter should not win when the ventricular response is
+    # clearly irregular over the same window; that pattern is more consistent
+    # with AF than with classic flutter conduction.
+    atrial_flutter = bool(flutter_features.get("is_flutter")) and rr_variability <= 120.0
 
     if atrial_fib:
         arrhythmias.append("Atrial Fibrillation")
@@ -1282,7 +1285,9 @@ def analyze_ecg(leads_dict: Dict[str, Sequence[float]], fs: float = DEFAULT_FS, 
     flutter_features = _atrial_flutter_features(detection_signal, fs, r_peaks=r_peaks)
     spectral_flutter = bool(flutter_features.get("is_flutter"))
     atrial_fib = (not p_present) and rr_irregular
-    atrial_flutter = spectral_flutter
+    # Suppress flutter when the ventricular response is already irregular
+    # enough to satisfy AF-style RR variability in the same window.
+    atrial_flutter = spectral_flutter and not rr_irregular
     effective_pr_ms = None if (atrial_fib or atrial_flutter) else pr_ms
 
     # Fix 2: PR Series for Mobitz I

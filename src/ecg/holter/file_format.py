@@ -1,7 +1,7 @@
 """
 ecg/holter/file_format.py
 ==========================
-Binary .ecgh file format for 24-48 hour Holter recordings.
+Binary .ecgh file format for 24-48 hour comphrensive recordings.
 
 Format:
   Header: 256 bytes (magic, version, leads, fs, timestamps, patient info)

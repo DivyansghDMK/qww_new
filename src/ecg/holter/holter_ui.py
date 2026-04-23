@@ -29,7 +29,8 @@ import sys
 import json
 import time
 import math
-from datetime import datetime
+import shutil
+from datetime import datetime, timedelta
 from typing import Optional, List, Dict
 
 import numpy as np
@@ -71,6 +72,34 @@ def _resolve_recordings_dir(session_dir: str = "") -> str:
     if os.path.isdir(fallback_dir):
         return fallback_dir
     return preferred_dir
+
+
+def _find_latest_completed_session(output_dir: str) -> str:
+    """Return the newest completed session directory, or empty string."""
+    if not output_dir or not os.path.isdir(output_dir):
+        return ""
+
+    candidates = []
+    try:
+        for name in os.listdir(output_dir):
+            session_dir = os.path.join(output_dir, name)
+            ecgh_path = os.path.join(session_dir, "recording.ecgh")
+            if not os.path.isdir(session_dir):
+                continue
+            if not os.path.exists(ecgh_path):
+                continue
+            try:
+                sort_key = os.path.getmtime(ecgh_path)
+            except Exception:
+                sort_key = os.path.getmtime(session_dir)
+            candidates.append((sort_key, session_dir))
+    except Exception:
+        return ""
+
+    if not candidates:
+        return ""
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return candidates[0][1]
 
 
 def _metrics_duration_sec(metrics_list: list) -> float:
@@ -798,6 +827,7 @@ class HolterHRVPanel(QWidget):
 class HolterReplayPanel(QWidget):
     seek_requested = pyqtSignal(float)
     lead_changed   = pyqtSignal(int)
+    section_requested = pyqtSignal(str)
 
     def __init__(self, parent=None, duration_sec: float = 86400):
         super().__init__(parent)
@@ -819,12 +849,15 @@ class HolterReplayPanel(QWidget):
         rb_l = QHBoxLayout(ribbon)
         rb_l.setContentsMargins(6, 4, 6, 4)
         rb_l.setSpacing(4)
+        self._ribbon_buttons = {}
         for txt in ["Overview", "Template", "Histogram", "Lorenz", "Af Analysis", "Tend. Chart",
                     "Pace Spike", "Edit Event", "Edit Strips", "Add Event", "Advance Tools",
                     "Record Settings", "Edit Report", "Preview", "Print", "Reanalysis", "Quit"]:
             b = QPushButton(txt)
             b.setFixedHeight(30)
             b.setStyleSheet(_style_btn(UI_PANEL_ALT, UI_MUTED, "#1A2C49"))
+            b.clicked.connect(lambda _, t=txt: self.section_requested.emit(t))
+            self._ribbon_buttons[txt] = b
             rb_l.addWidget(b)
         rb_l.addStretch()
         layout.addWidget(ribbon)
@@ -2211,6 +2244,7 @@ class HolterRecordManagementPanel(QWidget):
     def __init__(self, output_dir: str = "recordings"):
         super().__init__()
         self.output_dir = output_dir
+        self._selected_session = ""
         self._build_ui()
         self.refresh_records()
 
@@ -2235,9 +2269,11 @@ class HolterRecordManagementPanel(QWidget):
         actions.addWidget(self._search, 2)
         actions.addWidget(QLabel("Filter:", styleSheet=f"color:{COL_GREEN};font-size:12px;"))
         actions.addWidget(self._filter)
+        self._action_buttons = {}
         for txt in ["Browse", "Import", "Export", "Backup", "Delete"]:
             btn = QPushButton(txt)
             btn.setStyleSheet(_style_btn())
+            self._action_buttons[txt] = btn
             actions.addWidget(btn)
         layout.addLayout(actions)
 
@@ -2249,19 +2285,45 @@ class HolterRecordManagementPanel(QWidget):
         self._table.setEditTriggers(QTableWidget.NoEditTriggers)
         self._table.setSelectionBehavior(QTableWidget.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self._table.itemSelectionChanged.connect(self._sync_selected_session)
         self._table.cellClicked.connect(self._open_row)
         self._table.doubleClicked.connect(self._on_double_click)
         layout.addWidget(self._table, 1)
+        self._action_buttons["Browse"].clicked.connect(self._browse_root)
+        self._action_buttons["Import"].clicked.connect(self._import_session)
+        self._action_buttons["Export"].clicked.connect(self._export_session)
+        self._action_buttons["Backup"].clicked.connect(self._backup_root)
+        self._action_buttons["Delete"].clicked.connect(self._delete_session)
 
     def refresh_records(self):
         self._table.setRowCount(0)
+        self._selected_session = ""
         if not os.path.isdir(self.output_dir): return
         query = self._search.text().strip().lower()
+        filter_label = self._filter.currentText()
+        now = datetime.now()
+        today = now.date()
+        yesterday = today - timedelta(days=1)
         rows = []
         for name in sorted(os.listdir(self.output_dir), reverse=True):
             session_dir = os.path.join(self.output_dir, name)
             if not os.path.isdir(session_dir): continue
             if not os.path.exists(os.path.join(session_dir, "recording.ecgh")): continue
+            try:
+                mtime = datetime.fromtimestamp(os.path.getmtime(os.path.join(session_dir, "recording.ecgh")))
+            except Exception:
+                mtime = datetime.fromtimestamp(os.path.getmtime(session_dir))
+            delta_days = (now - mtime).days
+            if filter_label == "Today" and mtime.date() != today:
+                continue
+            if filter_label == "Yesterday" and mtime.date() != yesterday:
+                continue
+            if filter_label == "This Week" and delta_days > 6:
+                continue
+            if filter_label == "This Month" and (mtime.year != now.year or mtime.month != now.month):
+                continue
+            if filter_label == "This Year" and mtime.year != now.year:
+                continue
             parts = name.split("_", 3)
             rec_time = "_".join(parts[:2]).replace("_", " ") if len(parts) >= 2 else name[:19]
             p_name = parts[-1].replace("_", " ") if len(parts) >= 3 else "Unknown"
@@ -2277,16 +2339,95 @@ class HolterRecordManagementPanel(QWidget):
                 item.setForeground(QColor(COL_GREEN if c == 0 else COL_WHITE))
                 item.setData(Qt.UserRole, session_dir)
                 self._table.setItem(r, c, item)
+        if self._table.rowCount() > 0:
+            self._table.selectRow(0)
+            self._sync_selected_session()
 
     def _open_row(self, row, _column=0):
         item = self._table.item(row, 0)
         if item:
             path = item.data(Qt.UserRole)
             if path:
+                self._selected_session = path
                 self.session_selected.emit(path)
 
     def _on_double_click(self, index):
         self._open_row(index.row())
+
+    def _sync_selected_session(self):
+        rows = self._table.selectionModel().selectedRows() if self._table.selectionModel() else []
+        if rows:
+            item = self._table.item(rows[0].row(), 0)
+            if item:
+                self._selected_session = item.data(Qt.UserRole) or ""
+
+    def _selected_path(self) -> str:
+        self._sync_selected_session()
+        return self._selected_session
+
+    def _browse_root(self):
+        d = QFileDialog.getExistingDirectory(self, "Select Recordings Root", self.output_dir or os.getcwd())
+        if d:
+            self.output_dir = d
+            self.refresh_records()
+
+    def _import_session(self):
+        src = QFileDialog.getExistingDirectory(self, "Import Session Folder")
+        if not src:
+            return
+        if not os.path.exists(os.path.join(src, "recording.ecgh")):
+            QMessageBox.warning(self, "Import Session", "Select a session folder that contains recording.ecgh.")
+            return
+        os.makedirs(self.output_dir, exist_ok=True)
+        dest = os.path.join(self.output_dir, os.path.basename(os.path.normpath(src)))
+        if os.path.exists(dest):
+            QMessageBox.warning(self, "Import Session", "That session already exists in the recordings folder.")
+            return
+        shutil.copytree(src, dest)
+        self.refresh_records()
+        self.session_selected.emit(dest)
+
+    def _export_session(self):
+        src = self._selected_path()
+        if not src:
+            QMessageBox.information(self, "Export Session", "Select a recording to export first.")
+            return
+        dest_root = QFileDialog.getExistingDirectory(self, "Export Session To")
+        if not dest_root:
+            return
+        dest = os.path.join(dest_root, os.path.basename(os.path.normpath(src)))
+        if os.path.exists(dest):
+            QMessageBox.warning(self, "Export Session", "That session already exists in the destination.")
+            return
+        shutil.copytree(src, dest)
+        QMessageBox.information(self, "Export Session", f"Session exported to:\n{dest}")
+
+    def _backup_root(self):
+        if not os.path.isdir(self.output_dir):
+            QMessageBox.information(self, "Backup", "No recordings folder found.")
+            return
+        dest_root = QFileDialog.getExistingDirectory(self, "Backup Recordings To")
+        if not dest_root:
+            return
+        dest = os.path.join(dest_root, os.path.basename(os.path.normpath(self.output_dir)) or "recordings_backup")
+        if os.path.exists(dest):
+            QMessageBox.warning(self, "Backup", "That backup folder already exists.")
+            return
+        shutil.copytree(self.output_dir, dest)
+        QMessageBox.information(self, "Backup", f"Recordings backed up to:\n{dest}")
+
+    def _delete_session(self):
+        src = self._selected_path()
+        if not src:
+            QMessageBox.information(self, "Delete Session", "Select a recording to delete first.")
+            return
+        if QMessageBox.question(self, "Delete Session",
+                                f"Delete this recording?\n\n{src}",
+                                QMessageBox.Yes | QMessageBox.No,
+                                QMessageBox.No) != QMessageBox.Yes:
+            return
+        shutil.rmtree(src, ignore_errors=True)
+        self.refresh_records()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -3025,6 +3166,7 @@ class HolterMainWindow(QDialog):
         self._metrics_list = []
         self._summary = {}
         self._last_live_seq = -1
+        self._tab_name_map = {}
 
         if not self.session_dir and writer:
             self.session_dir = getattr(writer, 'session_dir', '')
@@ -3109,6 +3251,117 @@ class HolterMainWindow(QDialog):
             'template_count': max(template_counts) if template_counts else 0,
         }
 
+    def _tab_index_for(self, name: str) -> int:
+        if not hasattr(self, '_tabs'):
+            return -1
+        target = (name or '').strip().lower()
+        aliases = {
+            'overview': 'preview',
+            'view': 'preview',
+            'report': 'preview',
+            'preview': 'preview',
+            'lorenz': 'lorenz',
+            'histogram': 'histogram',
+            'template': 'template',
+            'af analysis': 'af analysis',
+            'st tendency': 'st tendency',
+            'edit event': 'edit event',
+            'edit strips': 'edit strips',
+            'report table': 'report table',
+            'hrv': 'hrv',
+            'recordings': 'recordings',
+            'record settings': 'recordings',
+            'replay': 'replay',
+        }
+        target = aliases.get(target, target)
+        for idx in range(self._tabs.count()):
+            if self._tabs.tabText(idx).strip().lower() == target:
+                return idx
+        return -1
+
+    def _focus_tab(self, name: str):
+        idx = self._tab_index_for(name)
+        if idx >= 0:
+            self._tabs.setCurrentIndex(idx)
+
+    def _recordings_panel(self):
+        return getattr(self, '_record_mgmt_panel', None)
+
+    def _open_recordings_folder(self):
+        self._focus_tab('RECORDINGS')
+
+    def _search_recordings(self):
+        self._focus_tab('RECORDINGS')
+        panel = self._recordings_panel()
+        if panel and hasattr(panel, '_search'):
+            panel._search.setFocus()
+            panel._search.selectAll()
+
+    def _apply_recordings_filter(self, label: str):
+        self._focus_tab('RECORDINGS')
+        panel = self._recordings_panel()
+        if panel and hasattr(panel, '_filter'):
+            idx = panel._filter.findText(label)
+            if idx >= 0:
+                panel._filter.setCurrentIndex(idx)
+
+    def _import_recording(self):
+        panel = self._recordings_panel()
+        if panel and hasattr(panel, '_import_session'):
+            panel._import_session()
+
+    def _backup_recordings(self):
+        panel = self._recordings_panel()
+        if panel and hasattr(panel, '_backup_root'):
+            panel._backup_root()
+
+    def _delete_recording(self):
+        panel = self._recordings_panel()
+        if panel and hasattr(panel, '_delete_session'):
+            panel._delete_session()
+
+    def _generate_from_current(self):
+        self._focus_tab('Preview')
+        self._generate_report()
+
+    def _refresh_current_session(self):
+        self._load_session()
+        self._refresh_ui()
+
+    def _on_workspace_section_requested(self, section: str):
+        key = (section or '').strip().lower()
+        if key == 'quit':
+            self.close()
+        elif key in {'reanalysis', 'replay'}:
+            self._refresh_current_session()
+            self._focus_tab('REPLAY')
+        elif key in {'overview', 'preview', 'view', 'report', 'edit report'}:
+            self._focus_tab('Preview')
+        elif key == 'template':
+            self._focus_tab('TEMPLATE')
+        elif key == 'histogram':
+            self._focus_tab('HISTOGRAM')
+        elif key == 'lorenz':
+            self._focus_tab('LORENZ')
+        elif key == 'af analysis':
+            self._focus_tab('AF ANALYSIS')
+        elif key in {'tend. chart', 'st tendency'}:
+            self._focus_tab('ST TENDENCY')
+        elif key in {'edit event', 'pace spike', 'add event'}:
+            self._focus_tab('EDIT EVENT')
+        elif key == 'edit strips':
+            self._focus_tab('EDIT STRIPS')
+        elif key == 'report table':
+            self._focus_tab('REPORT TABLE')
+        elif key == 'hrv':
+            self._focus_tab('HRV')
+        elif key in {'record settings', 'advance tools'}:
+            self._focus_tab('RECORDINGS')
+        elif key == 'print':
+            self._generate_report()
+        else:
+            self._focus_tab('REPLAY')
+
     # ── Build UI ───────────────────────────────────────────────────────────────
 
     def _build_ui(self):
@@ -3188,16 +3441,20 @@ class HolterMainWindow(QDialog):
         ab_layout = QHBoxLayout(action_bar)
         ab_layout.setContentsMargins(8, 6, 8, 6)
         ab_layout.setSpacing(6)
+        self._action_buttons = {}
         for label in ["Browse", "Search", "Analyse", "View", "Import", "Backup", "Delete"]:
             btn = QPushButton(label)
             btn.setFixedHeight(30)
             btn.setStyleSheet(_style_btn())
+            self._action_buttons[label] = btn
             ab_layout.addWidget(btn)
         ab_layout.addStretch()
+        self._filter_buttons = {}
         for label in ["All", "Today", "Yesterday", "This Week", "This Month", "This Year"]:
             btn = QPushButton(label)
             btn.setFixedHeight(30)
             btn.setStyleSheet(_style_btn(UI_PANEL_ALT, UI_MUTED, "#1A2C49"))
+            self._filter_buttons[label] = btn
             ab_layout.addWidget(btn)
         main_layout.addWidget(action_bar)
 
@@ -3283,6 +3540,7 @@ class HolterMainWindow(QDialog):
         if self._replay_engine:
             self._replay_panel.set_replay_engine(self._replay_engine)
             self._replay_panel.seek_requested.connect(self._on_seek_requested)
+        self._replay_panel.section_requested.connect(self._on_workspace_section_requested)
         self._replay_panel.update_lorenz(self._metrics_list)
         self._tabs.addTab(self._replay_panel, "REPLAY")
 
@@ -3298,8 +3556,13 @@ class HolterMainWindow(QDialog):
         self._tabs.addTab(self._hist_panel, "HISTOGRAM")
 
         # Lorenz (part of Replay, but user wants separate tab if possible)
-        # For now, we reuse the Lorenz logic or add a dedicated tab
-        self._lorenz_panel = HolterReplayPanel(duration_sec=duration) # Using Replay for Lorenz view
+        # Dedicated Lorenz workspace (re-using the replay review panel layout).
+        self._lorenz_panel = HolterReplayPanel(duration_sec=duration)
+        if self._replay_engine:
+            self._lorenz_panel.set_replay_engine(self._replay_engine)
+            self._lorenz_panel.seek_requested.connect(self._on_seek_requested)
+        self._lorenz_panel.section_requested.connect(self._on_workspace_section_requested)
+        self._lorenz_panel.update_lorenz(self._metrics_list)
         self._tabs.addTab(self._lorenz_panel, "LORENZ")
 
         # AF Analysis
@@ -3326,7 +3589,7 @@ class HolterMainWindow(QDialog):
 
         # Report Tendency (using a trend view)
         self._report_tendency_panel = HolterSTPanel() # Reusing ST panel for tendency trend
-        self._tabs.addTab(self._report_tendency_panel, "REPORT TENDENCTY")
+        self._tabs.addTab(self._report_tendency_panel, "REPORT TENDENCY")
 
         # Report Table
         self._report_table_panel = HolterReportTablePanel()
@@ -3344,6 +3607,13 @@ class HolterMainWindow(QDialog):
         self._hrv_panel.update_hrv(self._metrics_list, self._summary)
         self._tabs.addTab(self._hrv_panel, "HRV")
 
+        # Record browser / system-wide preview
+        self._record_mgmt_panel = HolterRecordManagementPanel(
+            output_dir=_resolve_recordings_dir(self.session_dir)
+        )
+        self._record_mgmt_panel.session_selected.connect(self.load_completed_session)
+        self._tabs.addTab(self._record_mgmt_panel, "RECORDINGS")
+
         # Report Preview (insight)
         scroll_insight = QScrollArea()
         scroll_insight.setWidgetResizable(True)
@@ -3360,8 +3630,19 @@ class HolterMainWindow(QDialog):
                 f"Focused view: {self._tabs.tabText(idx)}"
             )
         )
+        self._action_buttons["Browse"].clicked.connect(self._open_recordings_folder)
+        self._action_buttons["Search"].clicked.connect(self._search_recordings)
+        self._action_buttons["Analyse"].clicked.connect(lambda: self._focus_tab("REPLAY"))
+        self._action_buttons["View"].clicked.connect(lambda: self._focus_tab("Preview"))
+        self._action_buttons["Import"].clicked.connect(self._import_recording)
+        self._action_buttons["Backup"].clicked.connect(self._backup_recordings)
+        self._action_buttons["Delete"].clicked.connect(self._delete_recording)
+        for label, btn in self._filter_buttons.items():
+            btn.clicked.connect(lambda _, t=label: self._apply_recordings_filter(t))
         body.addWidget(right_frame)
         body.setSizes([760, 620])
+        body.setStretchFactor(0, 2)
+        body.setStretchFactor(1, 3)
 
         body_scroll = QScrollArea()
         body_scroll.setWidgetResizable(True)
@@ -3383,17 +3664,21 @@ class HolterMainWindow(QDialog):
                 data = self._replay_engine.get_all_leads_data(window_sec=10.0)
                 if hasattr(self, '_wave_panel'):
                     self._wave_panel.set_replay_frame(data)
-                
-                # Broadcast data to all panels that support it
-                for panel in [getattr(self, p, None) for p in [
-                    '_replay_panel', '_hist_panel', '_af_panel', 
-                    '_st_panel', '_edit_event_panel', '_edit_strips_panel', '_events_panel', '_expert_panel'
-                ]]:
-                    if panel and hasattr(panel, 'set_replay_frame'):
-                        panel.set_replay_frame(data)
-                        
+                self._broadcast_replay_frame(data)
             except Exception:
                 pass
+
+    def _broadcast_replay_frame(self, data):
+        for panel in [getattr(self, p, None) for p in [
+            '_replay_panel', '_lorenz_panel', '_hist_panel', '_af_panel',
+            '_st_panel', '_edit_event_panel', '_edit_strips_panel', '_events_panel',
+            '_expert_panel', '_template_panel', '_report_tendency_panel', '_hrv_panel'
+        ]]:
+            if panel and hasattr(panel, 'set_replay_frame'):
+                try:
+                    panel.set_replay_frame(data)
+                except Exception:
+                    pass
 
     def _build_linked_events(self) -> list:
         events = []
@@ -3466,6 +3751,8 @@ class HolterMainWindow(QDialog):
             self._hrv_panel.update_hrv(self._metrics_list, self._summary)
         if hasattr(self, '_replay_panel'):
             self._replay_panel.update_lorenz(self._metrics_list)
+        if hasattr(self, '_lorenz_panel'):
+            self._lorenz_panel.update_lorenz(self._metrics_list)
         if hasattr(self, '_hist_panel'):
             self._hist_panel.update_from_metrics(self._metrics_list)
         if hasattr(self, '_af_panel'):
@@ -3485,11 +3772,23 @@ class HolterMainWindow(QDialog):
             self._edit_strips_panel.load_events(events, self._summary)
         if hasattr(self, '_wave_panel'):
             self._wave_panel.set_live_source(self._live_source)
-            self._wave_panel.set_replay_engine(self._replay_engine)
+        if hasattr(self, '_record_mgmt_panel'):
+            self._record_mgmt_panel.output_dir = _resolve_recordings_dir(self.session_dir)
+            self._record_mgmt_panel.refresh_records()
+        if hasattr(self, '_wave_panel') and self._replay_engine:
+            try:
+                self._wave_panel.set_replay_engine(self._replay_engine)
+            except Exception:
+                pass
             self._wave_panel.refresh_waveforms()
         if hasattr(self, '_expert_panel') and self._replay_engine:
             try:
                 self._expert_panel.set_replay_frame(self._replay_engine.get_all_leads_data(window_sec=10.0))
+            except Exception:
+                pass
+        if self._replay_engine:
+            try:
+                self._broadcast_replay_frame(self._replay_engine.get_all_leads_data(window_sec=10.0))
             except Exception:
                 pass
 
@@ -3616,6 +3915,8 @@ class HolterMainWindow(QDialog):
             except Exception:
                 pass
             self._replay_panel.seek_requested.connect(self._on_seek_requested)
+        if hasattr(self, '_lorenz_panel') and getattr(self, '_replay_engine', None):
+            self._lorenz_panel.set_replay_engine(self._replay_engine)
         self._refresh_ui()
         if hasattr(self, '_tabs'):
             self._tabs.setCurrentIndex(0)

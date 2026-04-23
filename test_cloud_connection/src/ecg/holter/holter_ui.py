@@ -136,7 +136,7 @@ def _sec_to_hms(s: float) -> str:
 class HolterStartDialog(QDialog):
     def __init__(self, parent=None, patient_info: dict = None, output_dir: str = "recordings"):
         super().__init__(parent)
-        self.setWindowTitle("Start Holter Recording")
+        self.setWindowTitle("Start comphrensive recording")
         self.setMinimumWidth(640)
         self.setStyleSheet(f"background: {COL_DARK}; color: {COL_WHITE};")
         self.output_dir = output_dir
@@ -2526,7 +2526,7 @@ class HolterMainWindow(QDialog):
             
             # Show dialog to collect patient info AFTER recording
             dialog = HolterStartDialog(self, patient_info=self.patient_info or {}, output_dir=self.session_dir)
-            dialog.setWindowTitle("Save Holter Recording Details")
+            dialog.setWindowTitle("Save comphrensive recording Details")
             if dialog.exec_() == QDialog.Accepted:
                 patient_info, dur, out_dir = dialog.get_result()
                 summary['patient_info'] = patient_info
@@ -2539,7 +2539,7 @@ class HolterMainWindow(QDialog):
                     print(f"Failed to save patient.json: {e}")
 
             QMessageBox.information(self, "Recording Complete",
-                                    f"Holter recording saved to:\n{summary.get('session_dir', '')}")
+                                    f"comphrensive recording saved to:\n{summary.get('session_dir', '')}")
             self.load_completed_session(summary.get('session_dir', ''), summary.get('patient_info', {}))
             
             # Auto-generate report when recording is stopped
