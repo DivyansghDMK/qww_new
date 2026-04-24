@@ -4049,6 +4049,28 @@ class Dashboard(QWidget):
                          if lbl.lower() in rhythm_issue.lower()),
                         rhythm_issue,
                     )
+                    hr = 0
+                    pr = 0
+                    qrs = 0
+                    qt = 0
+                    qtc = 0
+                    hr_label = ""
+                    pr_label = ""
+                    qrs_label = ""
+                    qtc_label = ""
+                    try:
+                        if 'heart_rate' in self.metric_labels:
+                            self.metric_labels['heart_rate'].setText("0 BPM")
+                        if 'pr_interval' in self.metric_labels:
+                            self.metric_labels['pr_interval'].setText("0 ms")
+                        if 'qrs_duration' in self.metric_labels:
+                            self.metric_labels['qrs_duration'].setText("0 ms")
+                        if 'st_interval' in self.metric_labels:
+                            self.metric_labels['st_interval'].setText("0 ms")
+                        if 'qtc_interval' in self.metric_labels:
+                            self.metric_labels['qtc_interval'].setText("0/0")
+                    except Exception:
+                        pass
                     conclusion_html += (
                         "<b style='color:#cc0000; font-size:15px;'>"
                         f"\u26a0 {_lethal_name}</b><br><br>"

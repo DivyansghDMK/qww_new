@@ -101,11 +101,17 @@ class ArrhythmiaEngine:
     def _is_atrial_flutter(self):
         flutter_flag = self.f.get("atrial_flutter", False)
         flutter_score = self.f.get("flutter_score", 0)
+        rr_var = float(self._rr_variability() or 0.0)
 
         p = self.f.get("p_detected", True)
         
         # If any clear P waves are detected, it contradicts Atrial Flutter
         if p:
+            return False
+
+        # Flutter usually keeps a comparatively organised ventricular response.
+        # If RR variability is already in the AF range, prefer AF.
+        if rr_var > 80.0:
             return False
 
         # STRICT condition (Fluke-like)

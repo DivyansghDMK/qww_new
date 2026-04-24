@@ -1731,12 +1731,37 @@ class ECGTestPage(QWidget):
             for _buf in ('_pr_smooth_buffer_tl', '_qrs_smooth_buffer', '_qt_smooth_buffer'):
                 if hasattr(self, _buf):
                     getattr(self, _buf).clear()
+            # The generic display updater intentionally holds the last valid
+            # value for noisy frames. For true asystole/flatline we must force
+            # the visible labels back to zero instead of preserving stale data.
+            try:
+                from .ui import display_updates as _du
+                for _key in (
+                    'heart_rate', 'pr_interval', 'qrs_duration',
+                    'qt_interval', 'qtc_interval', 'rr_interval', 'p_duration'
+                ):
+                    _du._last_valid.pop(_key, None)
+            except Exception:
+                pass
             # Push zeros to the display
             self.update_ecg_metrics_display(
                 0, 0, 0, 0, 0, 0, 0,
                 force_immediate=True,
                 rr_interval=0,
             )
+            try:
+                if 'heart_rate' in self.metric_labels:
+                    self.metric_labels['heart_rate'].setText("  0")
+                if 'pr_interval' in self.metric_labels:
+                    self.metric_labels['pr_interval'].setText("  0")
+                if 'qrs_duration' in self.metric_labels:
+                    self.metric_labels['qrs_duration'].setText("  0")
+                if 'st_interval' in self.metric_labels:
+                    self.metric_labels['st_interval'].setText("0")
+                if 'qtc_interval' in self.metric_labels:
+                    self.metric_labels['qtc_interval'].setText("0/0")
+            except Exception:
+                pass
             return
         
         # Get sampling rate
@@ -3796,6 +3821,33 @@ class ECGTestPage(QWidget):
         metric_labels = getattr(self, 'metric_labels', {})
         last_heart_rate = getattr(self, 'last_heart_rate', None)
         sampler = getattr(self, 'sampler', None)
+        try:
+            if hasattr(self, 'data') and len(self.data) > 1:
+                lead_ii = np.asarray(self.data[1], dtype=float)
+                if lead_ii.size > 0:
+                    lead_std = float(np.std(lead_ii))
+                    lead_mean = float(np.mean(np.abs(lead_ii)))
+                    is_flat = (
+                        lead_ii.size < 100
+                        or np.all(lead_ii == 0)
+                        or lead_std < 0.1
+                        or (lead_mean > 100.0 and lead_std < 50.0)
+                    )
+                    if is_flat:
+                        return {
+                            'heart_rate': '0',
+                            'rr_interval': '0',
+                            'pr_interval': '0',
+                            'qrs_duration': '0',
+                            'qt_interval': '0',
+                            'qtc_interval': '0',
+                            'p_duration': '0',
+                            'st_interval': '0',
+                            'time_elapsed': metric_labels.get('time_elapsed').text() if 'time_elapsed' in metric_labels else '',
+                            'sampling_rate': f"{sampler.sampling_rate:.1f}" if sampler and hasattr(sampler, 'sampling_rate') and sampler.sampling_rate > 0 else "--",
+                        }
+        except Exception:
+            pass
         # return get_current_metrics_from_labels(metric_labels, self.data, last_heart_rate, sampler)
         # 1. Try getting from labels first (legacy behavior)
         metrics = get_current_metrics_from_labels(metric_labels, self.data, last_heart_rate, sampler)
@@ -8397,6 +8449,18 @@ class ECGTestPage(QWidget):
             # Review mode - ecgh_path is the file, but load_completed_session expects session_dir
             session_dir = os.path.dirname(ecgh_path)
             self._holter_ui.load_completed_session(session_dir)
+        elif not is_recording:
+            # When opening "View Previous Recording", default to the newest
+            # completed session so the latest recorded values are visible
+            # immediately instead of keeping an older cached session loaded.
+            try:
+                from .holter.holter_ui import _resolve_recordings_dir, _find_latest_completed_session
+                recordings_dir = _resolve_recordings_dir(getattr(self._holter_ui, 'session_dir', ''))
+                latest_session = _find_latest_completed_session(recordings_dir)
+                if latest_session:
+                    self._holter_ui.load_completed_session(latest_session)
+            except Exception:
+                pass
         
         if show_record_mgmt and hasattr(self._holter_ui, '_record_mgmt_panel'):
             try:
