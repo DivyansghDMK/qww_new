@@ -2982,7 +2982,8 @@ def generate_hyperkalemia_report(filename, analysis_results, lead_ii_data, sampl
         "QRS_axis": analysis_results.get("qrs_axis", "--"),
         "risk_level": analysis_results.get("risk_level", "Normal/Low"),
         "risk_score": analysis_results.get("risk_score", 0),
-        "indicators": analysis_results.get("indicators", [])
+        "indicators": analysis_results.get("indicators", []),
+        "estimated_k": analysis_results.get("estimated_k", 0.0)
     }
 
     # Optional patient info passthrough
@@ -3130,6 +3131,7 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
         original_metrics_from_json["QTc"] = _safe_int(latest_metrics.get("QTc_ms", 0))
         original_metrics_from_json["ST"] = _safe_int(latest_metrics.get("ST_ms", 0))
         original_metrics_from_json["RR_ms"] = _safe_int(latest_metrics.get("RR_ms", 0))
+        original_metrics_from_json["Estimated_K"] = _safe_float(latest_metrics.get("Estimated_K", 0.0), 0.0)
         if original_metrics_from_json["HR"] > 0 and original_metrics_from_json["RR_ms"] == 0:
             original_metrics_from_json["RR_ms"] = int(60000 / original_metrics_from_json["HR"])
         
@@ -3971,6 +3973,7 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
         QT = original_metrics_from_json.get('QT', 0)
         QTc = original_metrics_from_json.get('QTc', 0)
         ST = original_metrics_from_json.get('ST', 0)
+        EST_K = original_metrics_from_json.get('Estimated_K', 0.0)
         
         # Calculate RR from HR
         if HR > 0:
@@ -4105,6 +4108,10 @@ def generate_hyperkalemia_ecg_report(filename="hyperkalemia_ecg_report.pdf", lea
 
     qtcf_label = String(442.37, 530.66 + header_y_shift, f"QTCF : {qtcf_ms} ms" if qtcf_ms > 0 else "QTCF : --", fontSize=9, fontName=FONT_TYPE, fillColor=colors.black)
     master_drawing.add(qtcf_label)
+
+    if EST_K > 0:
+        k_label = String(442.37, 516.49 + header_y_shift, f"Est. K+: {EST_K:.1f} mmol/L", fontSize=9, fontName=FONT_TYPE, fillColor=colors.black)
+        master_drawing.add(k_label)
     
     # ST removed per user request
     

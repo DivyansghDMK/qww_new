@@ -1962,7 +1962,8 @@ class ExpandedLeadView(QDialog):
 
             self.ax.clear()
 
-            # Heat map overlay behind waveform
+            # Heat map overlay behind waveform (DEACTIVATED as per user request might be used later)
+            """
             if (
                 self.heatmap_overlay is not None
                 and self.heatmap_time_axis is not None
@@ -1983,6 +1984,7 @@ class ExpandedLeadView(QDialog):
                     interpolation='nearest',
                     zorder=0,
                 )
+            """
 
             # Ensure time and display_adc arrays have matching lengths
             if len(time) != len(display_adc):

@@ -217,6 +217,8 @@ class DashboardHomeWidget(QWidget):
         super().__init__()
 
 class Dashboard(QWidget):
+    internet_status_changed = pyqtSignal(bool, str)
+
     def __init__(self, username=None, role=None, user_details=None, parent=None):
         super().__init__(parent)
         # Settings for wave speed/gain
@@ -263,7 +265,10 @@ class Dashboard(QWidget):
         import threading
         threading.Thread(target=_init_queue_bg, daemon=True,
                          name="OfflineQueueInit").start()
-        
+
+        # Prevent overlapping internet checks (timer fires every 3s)
+        self._inet_check_lock = threading.Lock()
+         
         # Triple-click counter for heart rate metric
         self.heart_rate_click_count = 0
         self.last_heart_rate_click_time = 0
@@ -411,7 +416,10 @@ class Dashboard(QWidget):
         if not self._wifi_pixmap_disconnected.isNull():
             # Default to "disconnected" until first check runs (no gray dot)
             self.status_dot.setPixmap(self._wifi_pixmap_disconnected)
-        
+
+        # Thread-safe UI update for internet status checks
+        self.internet_status_changed.connect(self._apply_internet_status)
+         
         # Kick the first check shortly after the event loop starts. Doing it immediately at startup
         # can occasionally give false negatives on some machines during network initialization.
         QTimer.singleShot(250, self.update_internet_status)
@@ -4580,6 +4588,13 @@ class Dashboard(QWidget):
     def update_internet_status(self):
         """Check internet status in background — never freeze UI."""
         # FIX: was socket.create_connection(timeout=2) on main thread → 2s freeze
+        try:
+            lock = getattr(self, "_inet_check_lock", None)
+            if lock is not None and not lock.acquire(False):
+                return  # previous check still running
+        except Exception:
+            lock = None
+
         def _check():
             import socket
             try:
@@ -4652,33 +4667,45 @@ class Dashboard(QWidget):
             except Exception:
                 online = False
                 source = "error"
-            # Update UI back on main thread via QTimer
-            from PyQt5.QtCore import QTimer
-            def _update():
+
+            try:
+                # Emit from worker thread; Qt delivers to main thread (queued connection).
+                self.internet_status_changed.emit(bool(online), str(source))
+            except Exception:
+                pass
+            finally:
                 try:
-                    if online:
-                        if hasattr(self, "_wifi_pixmap_connected") and not self._wifi_pixmap_connected.isNull():
-                            self.status_dot.setPixmap(self._wifi_pixmap_connected)
-                            self.status_dot.setStyleSheet("background: transparent;")
-                        else:
-                            self.status_dot.setPixmap(QPixmap())
-                            self.status_dot.setStyleSheet(
-                                "border-radius: 9px; background: #00e676; border: 2px solid #fff;")
-                        self.status_dot.setToolTip(f"Wi‑Fi/Internet connected ({source})")
-                    else:
-                        if hasattr(self, "_wifi_pixmap_disconnected") and not self._wifi_pixmap_disconnected.isNull():
-                            self.status_dot.setPixmap(self._wifi_pixmap_disconnected)
-                            self.status_dot.setStyleSheet("background: transparent;")
-                        else:
-                            self.status_dot.setPixmap(QPixmap())
-                            self.status_dot.setStyleSheet(
-                                "border-radius: 9px; background: #e74c3c; border: 2px solid #fff;")
-                        self.status_dot.setToolTip(f"Wi‑Fi/Internet disconnected ({source})")
+                    if lock is not None:
+                        lock.release()
                 except Exception:
                     pass
-            QTimer.singleShot(0, _update)
         import threading
         threading.Thread(target=_check, daemon=True, name="InetStatus").start()
+
+    def _apply_internet_status(self, online: bool, source: str = "unknown"):
+        try:
+            if online:
+                if hasattr(self, "_wifi_pixmap_connected") and not self._wifi_pixmap_connected.isNull():
+                    self.status_dot.setPixmap(self._wifi_pixmap_connected)
+                    self.status_dot.setStyleSheet("background: transparent;")
+                else:
+                    self.status_dot.setPixmap(QPixmap())
+                    self.status_dot.setStyleSheet(
+                        "border-radius: 9px; background: #00e676; border: 2px solid #fff;"
+                    )
+                self.status_dot.setToolTip(f"Wi‑Fi/Internet connected ({source})")
+            else:
+                if hasattr(self, "_wifi_pixmap_disconnected") and not self._wifi_pixmap_disconnected.isNull():
+                    self.status_dot.setPixmap(self._wifi_pixmap_disconnected)
+                    self.status_dot.setStyleSheet("background: transparent;")
+                else:
+                    self.status_dot.setPixmap(QPixmap())
+                    self.status_dot.setStyleSheet(
+                        "border-radius: 9px; background: #e74c3c; border: 2px solid #fff;"
+                    )
+                self.status_dot.setToolTip(f"Wi‑Fi/Internet disconnected ({source})")
+        except Exception:
+            pass
 
     def _load_status_pixmap(self, filename: str, target_px: int = 18) -> QPixmap:
         try:
