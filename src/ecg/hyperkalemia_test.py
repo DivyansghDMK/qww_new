@@ -1141,6 +1141,43 @@ class HyperkalemiaTestWindow(QWidget):
             pass
         return p_amp, qrs_amp, t_amp
 
+    def _calculate_estimated_k(self, p_amp, qrs_amp, t_amp, qrs_ms, pr_ms, max_t_amp_precordial):
+        """
+        Estimate serum potassium (K+) level in mmol/L based on morphological features.
+        This is a heuristic-based estimation model.
+        """
+        # Baseline potassium (Normal average)
+        est_k = 4.0
+        
+        # 1. Effect of QRS widening (Strong indicator)
+        if qrs_ms > 100:
+            # Every 10ms over 100ms adds roughly 0.3 mmol/L
+            est_k += (qrs_ms - 100) / 10.0 * 0.3
+            
+        # 2. Effect of T-wave amplitude (Peaking)
+        # Normal T-wave in Lead II is usually < 0.5mV (approx 500 ADC units)
+        if t_amp > 500:
+            est_k += (t_amp - 500) / 100.0 * 0.2
+            
+        # 3. Effect of Precordial T-wave peaking (V2-V4)
+        if max_t_amp_precordial > 800:
+            est_k += (max_t_amp_precordial - 800) / 200.0 * 0.2
+            
+        # 4. Effect of P-wave flattening
+        if qrs_amp > 0:
+            p_qrs_ratio = p_amp / qrs_amp
+            if p_qrs_ratio < 0.1:
+                est_k += 0.5
+            elif p_qrs_ratio < 0.15:
+                est_k += 0.2
+                
+        # 5. Effect of PR prolongation
+        if pr_ms > 200:
+            est_k += (pr_ms - 200) / 40.0 * 0.1
+            
+        # Cap the results in a physiological range (3.5 to 9.0)
+        return float(np.clip(est_k, 3.5, 9.0))
+
     def analyze_hyperkalemia(self, enable=False):
         """Analyze captured ECG data for hyperkalemia indicators using clinical standards"""
         if self.active_samples < 500:
@@ -1281,6 +1318,9 @@ class HyperkalemiaTestWindow(QWidget):
                 indicators.append("Sine-wave morphology (very wide QRS with merged T-wave)")
                 risk_score += 3
 
+            # 3b. ESTIMATE SERUM POTASSIUM (K+)
+            est_k = self._calculate_estimated_k(p_amp, qrs_amp, t_amp, qrs, pr, max_t_amp)
+
             # 4. DETERMINE RISK LEVEL
             risk_level = "Normal/Low"
             risk_color = "#28a745" # Green
@@ -1312,16 +1352,18 @@ class HyperkalemiaTestWindow(QWidget):
                 "st_segment_ms": 0,
                 "indicators": indicators,
                 "risk_level": risk_level,
-                "risk_score": risk_score
+                "risk_score": risk_score,
+                "estimated_k": est_k
             }
                 
-            self.status_label.setText(f"Status: Analysis Complete ")
+            self.status_label.setText(f"Status: Analysis Complete (Est. K+: {est_k:.1f} mmol/L)")
             self.status_label.setStyleSheet(f"color: {risk_color}; font-weight: bold;")
             self.report_btn.setEnabled(True)
             
             if not enable:
                 msg = f"<b>Hyperkalemia Analysis Results</b><br><br>"
-                msg += f"Risk Level: <span style='color:{risk_color}; font-weight:bold;'>{risk_level}</span><br><br>"
+                msg += f"Risk Level: <span style='color:{risk_color}; font-weight:bold;'>{risk_level}</span><br>"
+                msg += f"<b>Estimated Serum K+: <span style='color:{risk_color}; font-weight:bold;'>{est_k:.1f} mmol/L</span></b><br><br>"
                 msg += f"Heart Rate: {hr} BPM<br>"
                 msg += f"PR Interval: {pr} ms<br>"
                 msg += f"QRS Duration: {qrs} ms<br>"
@@ -1487,6 +1529,7 @@ class HyperkalemiaTestWindow(QWidget):
                     "QRS_ms": qrs,
                     "QT_ms": qt,
                     "QTc_ms": qtc,
+                    "Estimated_K": metrics_source.get("estimated_k", 0.0)
                 }
 
                 hyper_list = []
