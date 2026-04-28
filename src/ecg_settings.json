@@ -2,7 +2,7 @@
   "wave_speed": "25",
   "wave_gain": "10",
   "lead_sequence": "Standard",
-  "serial_port": "/dev/cu.usbserial-8",
+  "serial_port": "COM8",
   "baud_rate": "115200",
   "hardware_version": "",
   "report_format": "12_1",

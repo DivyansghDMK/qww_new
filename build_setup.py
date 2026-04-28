@@ -47,6 +47,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Build ECGMonitor setup.exe with Inno Setup")
     parser.add_argument("--name", default="ECGMonitor", help="App name / exe name without extension")
     parser.add_argument("--version", default=_default_version(), help="Installer version label")
+    parser.add_argument("--channel", default="stable", help="Update channel label")
+    parser.add_argument("--repository", default="", help="GitHub repository in owner/name form")
     parser.add_argument("--publisher", default="Deckmount Electronics", help="Publisher name")
     parser.add_argument("--dist-dir", default="", help="Path to PyInstaller onedir folder")
     parser.add_argument("--output-dir", default="", help="Path where setup exe should be written")
@@ -77,6 +79,9 @@ def main() -> int:
     defines = [
         f"/DMyAppName={ns.name}",
         f"/DMyAppVersion={ns.version}",
+        f"/DMyAppChannel={ns.channel}",
+        f"/DMyAppRepository={ns.repository}",
+        f"/DMyAppURL={'https://github.com/' + ns.repository + '/releases' if ns.repository else 'https://example.com'}",
         f"/DMyAppPublisher={ns.publisher}",
         f"/DMyAppExeName={ns.name}.exe",
         f"/DMyAppDistDir={str(dist_dir)}",
@@ -90,6 +95,8 @@ def main() -> int:
     print(f"Dist dir   : {dist_dir}")
     print(f"Output dir : {output_dir}")
     print(f"Version    : {ns.version}")
+    print(f"Channel    : {ns.channel}")
+    print(f"Repository : {ns.repository or '(none)'}")
     print("=" * 70)
 
     try:

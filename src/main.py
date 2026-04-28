@@ -47,6 +47,7 @@ def _prepare_runtime_workspace() -> str:
 
     seed_files = [
         ".env",
+        "customer_channels.json",
         "users.json",
         "ecg_settings.json",
         "last_conclusions.json",
@@ -99,6 +100,13 @@ from utils.crash_logger import get_crash_logger
 from utils.session_recorder import SessionRecorder
 from PyQt5.QtGui import QFont, QPixmap, QIntValidator
 from utils.ecg_auth_api import get_ecg_auth_api
+
+try:
+    from version import APP_VERSION, UPDATE_CHANNEL, GITHUB_REPOSITORY
+except Exception:
+    APP_VERSION = "0.0.0"
+    UPDATE_CHANNEL = "stable"
+    GITHUB_REPOSITORY = ""
 
 # Import core modules  
 try:
@@ -1190,7 +1198,18 @@ def main():
 
         app = QApplication(sys.argv)
         app.setApplicationName("ECG Monitor")
-        app.setApplicationVersion("1.3")
+        app.setApplicationVersion(APP_VERSION)
+
+        try:
+            from utils.update_manager import check_and_install_update
+
+            if check_and_install_update(parent=None, quiet=True):
+                logger.info(
+                    f"Update launched for channel={UPDATE_CHANNEL}, repo={GITHUB_REPOSITORY or 'unset'}"
+                )
+                return
+        except Exception as e:
+            logger.warning(f"Update check failed: {e}")
 
         # ── Pre-warm heavy imports in background ──────────────────────
         # matplotlib, scipy, pyqtgraph take 2-5s on first import

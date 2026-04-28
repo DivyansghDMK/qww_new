@@ -1,23 +1,44 @@
-#define MyAppName "ECG Monitor"
-#define MyAppExeName "ECGMonitor.exe"
-#define MyAppPublisher "ECG Monitor"
-#define MyAppURL "https://example.com"
-#define MyAppVersion "2.0.0"
+#ifndef MyAppName
+  #define MyAppName "ECG Monitor"
+#endif
+#ifndef MyAppExeName
+  #define MyAppExeName "ECGMonitor.exe"
+#endif
+#ifndef MyAppPublisher
+  #define MyAppPublisher "ECG Monitor"
+#endif
+#ifndef MyAppVersion
+  #define MyAppVersion "2.0.0"
+#endif
+#ifndef MyAppChannel
+  #define MyAppChannel "stable"
+#endif
+#ifndef MyAppDistDir
+  #define MyAppDistDir "..\dist\ECGMonitor"
+#endif
+#ifndef MyAppOutputDir
+  #define MyAppOutputDir "..\dist_installer"
+#endif
+#ifndef MyAppURL
+  #define MyAppURL "https://example.com"
+#endif
 ; NOTE: This installer packages the recommended PyInstaller ONEDIR build output:
 ;       dist\ECGMonitor\ECGMonitor.exe + dist\ECGMonitor\_internal\...
 
 [Setup]
-AppId={{B29D5C9D-67E6-4F8C-8EF0-DBE8E2F0C5EA}
+AppId={{B29D5C9D-67E6-4F8C-8EF0-DBE8E2F0C5EA}}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
+VersionInfoVersion={#MyAppVersion}
+LicenseFile=EULA.txt
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
-OutputDir=..\dist_installer
+OutputDir={#MyAppOutputDir}
 OutputBaseFilename=Setup_{#MyAppName}_{#MyAppVersion}
 Compression=lzma2
 SolidCompression=yes
@@ -36,7 +57,7 @@ Name: "desktopicon"; Description: "Create a &desktop icon"; GroupDescription: "A
 
 [Files]
 ; Main app folder (PyInstaller ONEDIR)
-Source: "..\dist\ECGMonitor\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#MyAppDistDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Dirs]
 ; Runtime folders created/used by the app

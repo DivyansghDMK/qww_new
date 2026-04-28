@@ -1,10 +1,12 @@
 import os
 import json
+import sys
 from datetime import datetime
+from pathlib import Path
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QTableWidget, QTableWidgetItem, QMessageBox, QFileDialog, QFrame,
-    QTabWidget, QTextEdit, QWidget, QApplication
+    QTabWidget, QTextEdit, QWidget, QApplication, QComboBox, QHeaderView
 )
 from PyQt5.QtCore import Qt
 from .history_dialog import HistoryDialog
@@ -14,6 +16,40 @@ def _check_admin_credentials(username: str, password: str) -> bool:
     expected_user = os.getenv('ADMIN_USERNAME', 'admin')
     expected_pass = os.getenv('ADMIN_PASSWORD', 'admin')
     return username == expected_user and password == expected_pass
+
+
+def _customer_channels_candidates() -> list[Path]:
+    candidates: list[Path] = []
+    env_path = os.getenv("ECG_CUSTOMER_CHANNEL_FILE", "").strip()
+    if env_path:
+        candidates.append(Path(env_path).expanduser())
+
+    candidates.append(Path(os.getcwd()) / "customer_channels.json")
+
+    try:
+        if getattr(sys, "frozen", False):
+            candidates.append(Path(sys.executable).resolve().parent / "customer_channels.json")
+            if hasattr(sys, "_MEIPASS"):
+                candidates.append(Path(sys._MEIPASS) / "customer_channels.json")
+    except Exception:
+        pass
+
+    try:
+        candidates.append(Path(__file__).resolve().parents[2] / "customer_channels.json")
+    except Exception:
+        pass
+
+    return candidates
+
+
+def _customer_channels_path() -> Path:
+    for candidate in _customer_channels_candidates():
+        try:
+            if candidate.exists():
+                return candidate
+        except Exception:
+            continue
+    return _customer_channels_candidates()[0]
 
 
 class AdminLoginDialog(QDialog):
@@ -53,7 +89,7 @@ class AdminReportsDialog(QDialog):
     def __init__(self, cloud_uploader, parent=None):
         super().__init__(parent)
         self.cloud_uploader = cloud_uploader
-        self.setWindowTitle("Admin Dashboard - Reports & Users (S3)")
+        self.setWindowTitle("Admin Dashboard - Users & Channels")
         self.resize(1400, 850)  # Increased size for better viewing
         
         # Apply modern window styling
@@ -93,23 +129,16 @@ class AdminReportsDialog(QDialog):
             }
         """)
         
-        # Create Reports tab
-        self.reports_tab = self.create_reports_tab()
-        self.tabs.addTab(self.reports_tab, "📄 Reports")
-        
         # Create Users tab
         self.users_tab = self.create_users_tab()
         self.tabs.addTab(self.users_tab, "Users")
+
+        # Create Customer Channels tab
+        self.channels_tab = self.create_channels_tab()
+        self.tabs.addTab(self.channels_tab, "Channels")
         
         layout.addWidget(self.tabs)
         
-        # Pre-load reports cache for patient lookup (runs in background)
-        try:
-            from PyQt5.QtCore import QTimer
-            QTimer.singleShot(500, self.load_items)  # Load reports after 500ms
-        except Exception as e:
-            print(f"⚠️ Could not schedule cache preload: {e}")
-
     def create_reports_tab(self):
         """Create the Reports tab widget"""
         tab = QWidget()
@@ -491,6 +520,204 @@ class AdminReportsDialog(QDialog):
         self.load_users()
         
         return tab
+
+    def create_channels_tab(self):
+        """Create the customer rollout channels tab widget."""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        header = QHBoxLayout()
+        self.channel_file_label = QLabel("")
+        self.channel_file_label.setStyleSheet("color: #666; font-size: 12px;")
+        self.channel_refresh_btn = QPushButton("🔄 Reload")
+        self.channel_add_btn = QPushButton("➕ Add Customer")
+        self.channel_remove_btn = QPushButton("🗑 Remove Selected")
+        self.channel_save_btn = QPushButton("💾 Save")
+        self.channel_default_combo = QComboBox()
+        self.channel_default_combo.addItems(["stable", "green", "blue", "canary"])
+        self.channel_default_combo.setCurrentText("stable")
+        self.channel_default_combo.setToolTip("Default ring for customers not listed below")
+
+        for widget in (self.channel_refresh_btn, self.channel_add_btn, self.channel_remove_btn, self.channel_save_btn):
+            widget.setStyleSheet("""
+                QPushButton {
+                    background: #ff6600;
+                    color: #fff;
+                    border-radius: 10px;
+                    padding: 8px 16px;
+                    font-weight: bold;
+                    font-size: 13px;
+                    border: none;
+                }
+                QPushButton:hover { background: #ff7a26; }
+                QPushButton:pressed { background: #e65c00; }
+            """)
+
+        self.channel_default_combo.setStyleSheet("""
+            QComboBox {
+                padding: 8px 12px;
+                border: 2px solid #ddd;
+                border-radius: 8px;
+                background: white;
+                min-width: 130px;
+            }
+            QComboBox:focus {
+                border: 2px solid #ff6600;
+            }
+        """)
+
+        header.addWidget(QLabel("Default channel:"))
+        header.addWidget(self.channel_default_combo)
+        header.addStretch(1)
+        header.addWidget(self.channel_file_label)
+        header.addWidget(self.channel_refresh_btn)
+        header.addWidget(self.channel_add_btn)
+        header.addWidget(self.channel_remove_btn)
+        header.addWidget(self.channel_save_btn)
+        layout.addLayout(header)
+
+        help_box = QLabel(
+            "Map a customer key to an update ring. Use ECG_CUSTOMER_ID, machine serial ID, computer name, or username "
+            "to identify the customer. Unlisted customers use the default channel."
+        )
+        help_box.setWordWrap(True)
+        help_box.setStyleSheet("color: #555; font-size: 12px; padding: 6px 2px;")
+        layout.addWidget(help_box)
+
+        self.channels_table = QTableWidget(0, 2)
+        self.channels_table.setHorizontalHeaderLabels(["Customer Key", "Channel"])
+        self.channels_table.setAlternatingRowColors(True)
+        self.channels_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.channels_table.setSelectionMode(QTableWidget.SingleSelection)
+        self.channels_table.setEditTriggers(QTableWidget.AllEditTriggers)
+        self.channels_table.verticalHeader().setVisible(False)
+        self.channels_table.horizontalHeader().setStretchLastSection(True)
+        self.channels_table.setStyleSheet("""
+            QTableWidget {
+                background-color: white;
+                alternate-background-color: #f9f9f9;
+                gridline-color: #e0e0e0;
+                border: 1px solid #ddd;
+                border-radius: 8px;
+                font-size: 13px;
+            }
+            QTableWidget::item {
+                padding: 8px;
+            }
+        """)
+        hh = self.channels_table.horizontalHeader()
+        hh.setSectionResizeMode(0, QHeaderView.Stretch)
+        hh.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        layout.addWidget(self.channels_table)
+
+        self.channel_refresh_btn.clicked.connect(self.load_customer_channels)
+        self.channel_add_btn.clicked.connect(self.add_customer_channel_row)
+        self.channel_remove_btn.clicked.connect(self.remove_selected_customer_channel_row)
+        self.channel_save_btn.clicked.connect(self.save_customer_channels)
+
+        self.load_customer_channels()
+        return tab
+
+    def _read_customer_channels(self) -> dict:
+        path = _customer_channels_path()
+        if not path.exists():
+            return {"default_channel": "stable", "customers": {}}
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            if not isinstance(data, dict):
+                raise ValueError("customer_channels.json must contain a JSON object")
+            data.setdefault("default_channel", "stable")
+            data.setdefault("customers", {})
+            if not isinstance(data["customers"], dict):
+                data["customers"] = {}
+            return data
+        except Exception as exc:
+            QMessageBox.warning(self, "Channels", f"Could not load customer channels:\n{exc}")
+            return {"default_channel": "stable", "customers": {}}
+
+    def _write_customer_channels(self, payload: dict) -> None:
+        path = _customer_channels_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2)
+
+    def load_customer_channels(self):
+        """Reload the channel mapping table from disk."""
+        data = self._read_customer_channels()
+        self.channel_default_combo.setCurrentText(str(data.get("default_channel", "stable")).strip() or "stable")
+        self.channel_file_label.setText(str(_customer_channels_path()))
+
+        customers = data.get("customers", {})
+        self.channels_table.setRowCount(0)
+        allowed = {"canary", "blue", "green", "stable"}
+
+        if isinstance(customers, dict):
+            for key, value in sorted(customers.items(), key=lambda item: str(item[0]).lower()):
+                row = self.channels_table.rowCount()
+                self.channels_table.insertRow(row)
+
+                key_item = QTableWidgetItem(str(key))
+                self.channels_table.setItem(row, 0, key_item)
+
+                combo = QComboBox()
+                combo.addItems(["canary", "blue", "green", "stable"])
+                channel = str(value).strip().lower()
+                combo.setCurrentText(channel if channel in allowed else "stable")
+                self.channels_table.setCellWidget(row, 1, combo)
+
+    def add_customer_channel_row(self):
+        row = self.channels_table.rowCount()
+        self.channels_table.insertRow(row)
+        self.channels_table.setItem(row, 0, QTableWidgetItem(""))
+        combo = QComboBox()
+        combo.addItems(["canary", "blue", "green", "stable"])
+        combo.setCurrentText("stable")
+        self.channels_table.setCellWidget(row, 1, combo)
+        self.channels_table.setCurrentCell(row, 0)
+
+    def remove_selected_customer_channel_row(self):
+        row = self.channels_table.currentRow()
+        if row < 0:
+            QMessageBox.information(self, "Channels", "Select a customer row to remove.")
+            return
+        self.channels_table.removeRow(row)
+
+    def save_customer_channels(self):
+        """Persist the channel mapping to customer_channels.json."""
+        default_channel = self.channel_default_combo.currentText().strip().lower() or "stable"
+        allowed = {"canary", "blue", "green", "stable"}
+        if default_channel not in allowed:
+            default_channel = "stable"
+
+        customers: dict[str, str] = {}
+        for row in range(self.channels_table.rowCount()):
+            key_item = self.channels_table.item(row, 0)
+            if key_item is None:
+                continue
+            key = key_item.text().strip()
+            if not key:
+                continue
+
+            channel_widget = self.channels_table.cellWidget(row, 1)
+            channel = "stable"
+            if isinstance(channel_widget, QComboBox):
+                channel = channel_widget.currentText().strip().lower()
+            if channel not in allowed:
+                channel = "stable"
+            customers[key] = channel
+
+        payload = {
+            "default_channel": default_channel,
+            "customers": customers,
+        }
+
+        try:
+            self._write_customer_channels(payload)
+            self.channel_file_label.setText(str(_customer_channels_path()))
+            QMessageBox.information(self, "Channels", "Customer channels saved successfully.")
+        except Exception as exc:
+            QMessageBox.critical(self, "Channels", f"Failed to save customer channels:\n{exc}")
 
     def _metric_card(self, title: str, value: str, icon: str = "", color: str = "#ff6600") -> QFrame:
         """Create a modern, clean metric card - NO ICONS to prevent rendering issues"""

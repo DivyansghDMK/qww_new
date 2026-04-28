@@ -46,6 +46,7 @@ def _add_data_args(project_root: Path) -> list[str]:
     # Runtime config/demo files often expected in working directory
     for filename in [
         ".env",
+        "customer_channels.json",
         "dummycsv.csv",
         "users.json",
         "ecg_settings.json",
