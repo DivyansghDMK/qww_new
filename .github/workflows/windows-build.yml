@@ -1,4 +1,4 @@
-name: Build Windows Release
+﻿name: Build Windows Release
 
 on:
   push:
@@ -32,9 +32,7 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
-          cache-dependency-path: |
-            src/requirements.txt
-            requirements.txt
+          cache-dependency-path: requirements.txt
 
       - name: Install dependencies (pinned first)
         shell: pwsh
