@@ -1201,13 +1201,15 @@ def main():
         app.setApplicationVersion(APP_VERSION)
 
         try:
-            from utils.update_manager import check_and_install_update
+            from utils.update_manager import check_and_install_update, report_update_completion
 
             if check_and_install_update(parent=None, quiet=True):
                 logger.info(
                     f"Update launched for channel={UPDATE_CHANNEL}, repo={GITHUB_REPOSITORY or 'unset'}"
                 )
                 return
+
+            report_update_completion(APP_VERSION, async_mode=True)
         except Exception as e:
             logger.warning(f"Update check failed: {e}")
 

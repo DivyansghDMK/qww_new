@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import json
 import os
 import re
-import json
 import subprocess
 import tempfile
 import sys
+import threading
 from pathlib import Path
 from typing import Any
+from datetime import datetime
 
 import requests
 from PyQt5.QtWidgets import QMessageBox
@@ -150,6 +152,116 @@ def _download_asset(url: str, destination: Path) -> None:
             for chunk in response.iter_content(chunk_size=1024 * 128):
                 if chunk:
                     handle.write(chunk)
+
+
+def _telemetry_state_path() -> Path:
+    base = os.getenv("ECG_RUNTIME_DIR", "").strip()
+    if base:
+        root = Path(base)
+    else:
+        root = Path(os.getcwd())
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    return root / "update_status.json"
+
+
+def _load_telemetry_state() -> dict[str, Any]:
+    path = _telemetry_state_path()
+    if not path.exists():
+        return {}
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+            return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_telemetry_state(state: dict[str, Any]) -> None:
+    path = _telemetry_state_path()
+    try:
+        with path.open("w", encoding="utf-8") as handle:
+            json.dump(state, handle, indent=2)
+    except Exception:
+        pass
+
+
+def _build_update_event(current_version: str, channel: str, repo: str) -> dict[str, Any]:
+    customer_key = (
+        os.getenv("ECG_CUSTOMER_ID", "").strip()
+        or os.getenv("MACHINE_SERIAL_ID", "").strip()
+        or os.getenv("COMPUTERNAME", "").strip()
+        or os.getenv("USERNAME", "").strip()
+    )
+    return {
+        "event_type": "update_report",
+        "reported_at": datetime.utcnow().isoformat() + "Z",
+        "app_version": current_version,
+        "channel": channel,
+        "repository": repo,
+        "customer_key": customer_key,
+        "machine_serial_id": os.getenv("MACHINE_SERIAL_ID", "").strip(),
+        "computer_name": os.getenv("COMPUTERNAME", "").strip(),
+        "username": os.getenv("USERNAME", "").strip(),
+        "install_type": "update" if _load_telemetry_state().get("reported_version") else "first_run",
+    }
+
+
+def _post_update_event(event: dict[str, Any]) -> bool:
+    url = os.getenv("ECG_UPDATE_TELEMETRY_URL", "").strip()
+    if not url:
+        return True
+
+    headers = {"Content-Type": "application/json"}
+    api_key = os.getenv("ECG_UPDATE_TELEMETRY_API_KEY", "").strip()
+    if api_key:
+        headers["x-api-key"] = api_key
+
+    try:
+        response = requests.post(url, json=event, headers=headers, timeout=8)
+        return response.status_code in (200, 201, 202)
+    except Exception:
+        return False
+
+
+def report_update_completion(current_version: str | None = None, *, async_mode: bool = True) -> bool:
+    """
+    Record and optionally send an update-complete heartbeat.
+
+    The event is emitted once per app version. If a telemetry endpoint is not
+    configured, the event is stored locally in update_status.json.
+    """
+    version, channel, repo = _load_version_metadata()
+    current_version = str(current_version or version or "0.0.0").strip()
+    if not current_version:
+        return False
+
+    state = _load_telemetry_state()
+    if state.get("reported_version") == current_version and not state.get("pending_event"):
+        return False
+
+    event = _build_update_event(current_version, channel, repo)
+    state["pending_event"] = event
+    _save_telemetry_state(state)
+
+    def _worker() -> None:
+        latest_state = _load_telemetry_state()
+        pending = latest_state.get("pending_event")
+        if not isinstance(pending, dict):
+            pending = event
+        if _post_update_event(pending):
+            latest_state["reported_version"] = current_version
+            latest_state["reported_at"] = pending.get("reported_at")
+            latest_state.pop("pending_event", None)
+            _save_telemetry_state(latest_state)
+
+    if async_mode:
+        threading.Thread(target=_worker, daemon=True, name="UpdateTelemetry").start()
+    else:
+        _worker()
+    return True
 
 
 def check_and_install_update(parent=None, quiet: bool = False) -> bool:
