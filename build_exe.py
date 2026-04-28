@@ -53,7 +53,13 @@ def _add_data_args(project_root: Path) -> list[str]:
         "last_conclusions.json",
         "ecg_auth_session.json",
     ]:
-        pairs.append((project_root / filename, "."))
+        file_path = project_root / filename
+        if not file_path.exists() and filename.endswith('.json'):
+            try:
+                file_path.write_text('{}', encoding='utf-8')
+            except Exception:
+                pass
+        pairs.append((file_path, "."))
 
     # Some deployments use src-side settings files as fallbacks
     for filename in [
@@ -61,7 +67,13 @@ def _add_data_args(project_root: Path) -> list[str]:
         "src/users.json",
         "src/ecg_auth_session.json",
     ]:
-        pairs.append((project_root / filename, "src"))
+        file_path = project_root / filename
+        if not file_path.exists():
+            try:
+                file_path.write_text('{}', encoding='utf-8')
+            except Exception:
+                pass
+        pairs.append((file_path, "src"))
 
     args: list[str] = []
     for src, dst in pairs:
@@ -75,6 +87,9 @@ def build_args(project_root: Path, name: str, onefile: bool, console: bool) -> l
     if not main_script.exists():
         raise FileNotFoundError(f"Main script not found: {main_script}")
 
+    build_dir = project_root / "build"
+    build_dir.mkdir(parents=True, exist_ok=True)
+
     args: list[str] = [
         str(main_script),
         f"--name={name}",
@@ -83,7 +98,11 @@ def build_args(project_root: Path, name: str, onefile: bool, console: bool) -> l
         "--runtime-tmpdir=.",
         "--windowed" if not console else "--console",
         "--onedir" if not onefile else "--onefile",
-        "--uac-admin",  # Request admin privileges for writing to app folder
+        "--uac-admin",
+        # FIX: src/ on path so PyInstaller finds organization.py and all src modules
+        f"--paths={project_root / 'src'}",
+        # FIX: write spec to build/ so stale local spec is never used on CI
+        f"--specpath={build_dir}",
         # Imported dynamically via importlib in src/main.py
         "--hidden-import=organization",
         # `importlib` is stdlib, but include explicitly for deterministic PyInstaller analysis.
