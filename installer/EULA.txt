@@ -1,0 +1,22 @@
+ECG Monitor End User License Agreement
+
+IMPORTANT: READ CAREFULLY BEFORE INSTALLING OR USING THIS SOFTWARE.
+
+This software is provided to you by the owner of ECG Monitor for evaluation,
+deployment, and use under the terms of your commercial or written agreement
+with the publisher.
+
+By installing or using this software, you agree to the following:
+
+1. You will use the software only under the terms agreed with the publisher.
+2. You will not reverse engineer, decompile, or disassemble the software except
+   where such restriction is prohibited by applicable law.
+3. The software may contact GitHub Releases or your configured update source to
+   check for and download updates.
+4. The software may collect diagnostic logs and crash information as configured
+   by the application.
+5. The software is provided "as is" unless your separate contract with the
+   publisher states otherwise.
+
+If you do not agree to these terms, do not install or use the software.
+

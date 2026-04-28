@@ -1,0 +1,9 @@
+{
+  "default_channel": "green",
+  "customers": {
+    "DEMO-BLUE": "blue",
+    "DEMO-CANARY": "canary",
+    "DEMO-GREEN": "green",
+    "DEMO-STABLE": "stable"
+  }
+}
