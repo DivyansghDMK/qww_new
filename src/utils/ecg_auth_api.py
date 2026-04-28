@@ -2,6 +2,7 @@ import json
 import os
 from datetime import datetime
 from typing import Any, Dict, Optional
+from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
@@ -21,12 +22,17 @@ class ECGAuthAPI:
         self.auth_prefix = os.getenv("ECG_AUTH_API_PREFIX", "/dev/api")
         self.api_prefix = os.getenv("ECG_API_PREFIX", "/api")
         self.timeout = int(os.getenv("ECG_API_TIMEOUT_SECONDS", "20"))
-        self.session_file = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)),
-            "..",
-            "ecg_auth_session.json",
-        )
+        self.session_file = str(self._resolve_session_file())
         self._session_cache: Optional[Dict[str, Any]] = None
+
+    def _resolve_session_file(self) -> Path:
+        runtime_dir = os.getenv("ECG_RUNTIME_DIR", "").strip()
+        if runtime_dir:
+            base = Path(runtime_dir)
+        else:
+            base = Path(os.getenv("LOCALAPPDATA") or Path.home()) / "Deckmount" / "ECGMonitor"
+        base.mkdir(parents=True, exist_ok=True)
+        return base / "ecg_auth_session.json"
 
     def normalize_phone(self, phone_no: str) -> str:
         digits = "".join(ch for ch in str(phone_no or "") if ch.isdigit())

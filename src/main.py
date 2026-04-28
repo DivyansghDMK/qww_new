@@ -95,7 +95,7 @@ from PyQt5.QtWidgets import (
     QApplication, QDialog, QLabel, QLineEdit, QPushButton, QVBoxLayout, QHBoxLayout, 
     QMessageBox, QStackedWidget, QWidget, QInputDialog, QSizePolicy, QFrame, QScrollArea
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 from utils.crash_logger import get_crash_logger
 from utils.session_recorder import SessionRecorder
 from PyQt5.QtGui import QFont, QPixmap, QIntValidator
@@ -505,6 +505,7 @@ class LoginRegisterDialog(QDialog):
         phone_btn.setMinimumWidth(132)
         phone_btn.setStyleSheet(secondary_button_style)
         phone_btn.clicked.connect(self.handle_phone_login)
+        self.phone_btn = phone_btn
 
         self.login_phone = QLineEdit()
         self.login_phone.setPlaceholderText("Phone number (10 digits)")
@@ -545,6 +546,14 @@ class LoginRegisterDialog(QDialog):
             }
         """)
         self.verify_otp_btn.clicked.connect(self.verify_phone_otp)
+
+        self._otp_cooldown_seconds = 60
+        self._otp_lockout_seconds = 300
+        self._otp_resend_available_at = 0.0
+        self._otp_lockout_until = 0.0
+        self._otp_failed_attempts = 0
+        self._otp_timer = QTimer(self)
+        self._otp_timer.timeout.connect(self._refresh_otp_controls)
 
         otp_row = QHBoxLayout()
         otp_row.setSpacing(10)
@@ -658,6 +667,7 @@ class LoginRegisterDialog(QDialog):
         layout.addLayout(nav_row)
         layout.addWidget(self.nav_stack)
         self.nav_stack.setVisible(False)
+        self._refresh_otp_controls()
         layout.addStretch(1)
         widget.setLayout(layout)
         return widget
@@ -1022,7 +1032,54 @@ class LoginRegisterDialog(QDialog):
     def _update_verify_otp_button(self):
         otp = self.login_otp.text().strip() if hasattr(self, "login_otp") else ""
         if hasattr(self, "verify_otp_btn"):
-            self.verify_otp_btn.setEnabled(len(otp) == 4 and otp.isdigit())
+            locked = self._is_otp_locked()
+            self.verify_otp_btn.setEnabled(len(otp) == 4 and otp.isdigit() and not locked)
+
+    def _is_otp_locked(self) -> bool:
+        import time
+        now = time.time()
+        return now < getattr(self, "_otp_lockout_until", 0.0)
+
+    def _otp_resend_cooldown_remaining(self) -> int:
+        import time
+        remaining = int(getattr(self, "_otp_resend_available_at", 0.0) - time.time())
+        return max(0, remaining)
+
+    def _refresh_otp_controls(self):
+        if not hasattr(self, "phone_btn") or not hasattr(self, "verify_otp_btn"):
+            return
+
+        resend_remaining = self._otp_resend_cooldown_remaining()
+        locked = self._is_otp_locked()
+
+        if locked:
+            import time
+            remaining = int(getattr(self, "_otp_lockout_until", 0.0) - time.time())
+            remaining = max(0, remaining)
+            self.phone_btn.setEnabled(False)
+            self.phone_btn.setText(f"Send OTP ({remaining}s)")
+            self.verify_otp_btn.setEnabled(False)
+            self.verify_otp_btn.setText(f"Verify OTP ({remaining}s)")
+            if remaining == 0:
+                self._otp_lockout_until = 0.0
+                self._otp_failed_attempts = 0
+                self.phone_btn.setEnabled(True)
+                self.phone_btn.setText("Send OTP")
+                self.verify_otp_btn.setText("Verify OTP")
+                self._update_verify_otp_button()
+            return
+
+        if resend_remaining > 0:
+            self.phone_btn.setEnabled(False)
+            self.phone_btn.setText(f"Send OTP ({resend_remaining}s)")
+        else:
+            self.phone_btn.setEnabled(True)
+            self.phone_btn.setText("Send OTP")
+            self.verify_otp_btn.setText("Verify OTP")
+            if not self._otp_timer.isActive():
+                self._otp_timer.stop()
+
+        self._update_verify_otp_button()
 
     def handle_phone_login(self):
         auth_api = get_ecg_auth_api()
@@ -1031,9 +1088,24 @@ class LoginRegisterDialog(QDialog):
             QMessageBox.warning(self, "Invalid Phone Number", "Phone number must be exactly 10 digits.")
             return
 
+        if self._is_otp_locked():
+            QMessageBox.warning(self, "OTP Locked", "Too many failed OTP attempts. Please wait before trying again.")
+            self._refresh_otp_controls()
+            return
+
+        resend_remaining = self._otp_resend_cooldown_remaining()
+        if resend_remaining > 0:
+            QMessageBox.information(self, "Please Wait", f"You can request another OTP in {resend_remaining} seconds.")
+            self._refresh_otp_controls()
+            return
+
         try:
             auth_api.send_otp(normalized_phone)
             QMessageBox.information(self, "OTP Sent", f"OTP sent successfully to +91 {normalized_phone}.")
+            import time
+            self._otp_resend_available_at = time.time() + getattr(self, "_otp_cooldown_seconds", 60)
+            self._otp_timer.start(1000)
+            self._refresh_otp_controls()
         except Exception as e:
             logger.error(f"OTP send failed for {normalized_phone}: {e}")
             QMessageBox.warning(self, "OTP Failed", f"Could not send OTP: {e}")
@@ -1048,6 +1120,11 @@ class LoginRegisterDialog(QDialog):
         otp = self.login_otp.text().strip() if hasattr(self, "login_otp") else ""
         if len(otp) != 4 or not otp.isdigit():
             QMessageBox.warning(self, "OTP Required", "OTP must be exactly 4 digits.")
+            return
+
+        if self._is_otp_locked():
+            QMessageBox.warning(self, "OTP Locked", "Too many failed OTP attempts. Please wait before trying again.")
+            self._refresh_otp_controls()
             return
 
         auth_api = get_ecg_auth_api()
@@ -1065,6 +1142,12 @@ class LoginRegisterDialog(QDialog):
 
             username, user_record = self._upsert_phone_login_user(normalized_phone, token)
             user_record = self._ensure_phone_user_password(username, user_record, normalized_phone)
+            self._otp_failed_attempts = 0
+            self._otp_lockout_until = 0.0
+            self._otp_resend_available_at = 0.0
+            if hasattr(self, "_otp_timer"):
+                self._otp_timer.stop()
+            self._refresh_otp_controls()
             self.result = True
             self.username = username
             self.user_details = user_record
@@ -1074,6 +1157,13 @@ class LoginRegisterDialog(QDialog):
             logger.error(f"OTP verification failed for {normalized_phone}: {e}")
             error_text = str(e).lower()
             if "otp" in error_text or "invalid" in error_text or "incorrect" in error_text:
+                self._otp_failed_attempts = getattr(self, "_otp_failed_attempts", 0) + 1
+                if self._otp_failed_attempts >= 5:
+                    import time
+                    self._otp_lockout_until = time.time() + getattr(self, "_otp_lockout_seconds", 300)
+                    self._otp_failed_attempts = 0
+                    self._otp_timer.start(1000)
+                    self._refresh_otp_controls()
                 QMessageBox.warning(self, "Incorrect OTP", "Incorrect OTP. Please enter the 4-digit OTP again.")
             else:
                 QMessageBox.warning(self, "Verification Failed", f"Could not verify OTP: {e}")

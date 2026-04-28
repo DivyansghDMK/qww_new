@@ -1,5 +1,9 @@
 import os
 import json
+import base64
+import hashlib
+import hmac
+import secrets
 from typing import Dict, Any, Optional, Tuple
 from PyQt5.QtWidgets import (
     QDialog, QLabel, QLineEdit, QPushButton, QVBoxLayout, QHBoxLayout, QMessageBox, QStackedWidget, QWidget, QSizePolicy
@@ -34,6 +38,48 @@ USER_DATA_FILE = os.path.join(os.path.dirname(__file__), '../../users.json')
 class SignIn:
     def __init__(self):
         self.users: Dict[str, Dict[str, Any]] = self.load_users()
+
+    def _password_needs_hashing(self, stored: Any) -> bool:
+        text = str(stored or "")
+        return not text.startswith("pbkdf2_sha256$")
+
+    def _hash_password(self, password: str, salt: Optional[str] = None) -> str:
+        salt_bytes = (
+            base64.urlsafe_b64decode(salt.encode("ascii"))
+            if salt
+            else secrets.token_bytes(16)
+        )
+        iterations = 260000
+        digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt_bytes, iterations)
+        return "pbkdf2_sha256${}${}${}".format(
+            iterations,
+            base64.urlsafe_b64encode(salt_bytes).decode("ascii"),
+            base64.urlsafe_b64encode(digest).decode("ascii"),
+        )
+
+    def _verify_password(self, password: str, stored: str) -> bool:
+        text = str(stored or "")
+        if text.startswith("pbkdf2_sha256$"):
+            try:
+                _, iterations, salt_b64, hash_b64 = text.split("$", 3)
+                iterations_i = int(iterations)
+                salt = base64.urlsafe_b64decode(salt_b64.encode("ascii"))
+                expected = base64.urlsafe_b64decode(hash_b64.encode("ascii"))
+                actual = hashlib.pbkdf2_hmac("sha256", str(password).encode("utf-8"), salt, iterations_i)
+                return hmac.compare_digest(actual, expected)
+            except Exception:
+                return False
+        return hmac.compare_digest(str(password), text)
+
+    def _upgrade_password_if_needed(self, username: str, plain_password: str) -> None:
+        record = self.users.get(username)
+        if not isinstance(record, dict):
+            return
+        current = str(record.get("password", ""))
+        if self._password_needs_hashing(current):
+            record["password"] = self._hash_password(plain_password)
+            self.users[username] = record
+            self.save_users()
 
     def _migrate_legacy_format(self, raw: Any) -> Dict[str, Dict[str, Any]]:
         # Legacy format: {username: password}
@@ -86,29 +132,22 @@ class SignIn:
         # Try normal login first
         found = self._find_user_record(identifier)
         if not found:
-            # Check if both fields are serial IDs (hidden recovery method)
-            for uname, record in self.users.items():
-                serial_id = str(record.get("serial_id", ""))
-                if serial_id and str(identifier) == serial_id and str(secret) == serial_id:
-                    return True
             return False
         _, record = found
         stored_password = str(record.get("password", ""))
-        serial_id = str(record.get("serial_id", ""))
-        # Accept password, or serial ID in password field, or serial in both fields
-        return str(secret) == stored_password or (serial_id and str(secret) == serial_id)
+        return self._verify_password(secret, stored_password)
 
     def validate_credentials(self, username: str, password: str) -> bool:
         found = self._find_user_record(username)
         if not found:
             return False
-        _, record = found
+        found_username, record = found
         stored_password = str(record.get("password", "")) if isinstance(record, dict) else str(record)
-        if str(password) == stored_password:
+        if self._verify_password(password, stored_password):
+            if self._password_needs_hashing(stored_password):
+                self._upgrade_password_if_needed(found_username, str(password))
             return True
-        # Also allow serial as password (forgot-password convenience)
-        serial_id = str(record.get("serial_id", "")) if isinstance(record, dict) else ""
-        return bool(serial_id) and str(password) == serial_id
+        return False
 
     def _is_unique(self, key: str, value: str) -> bool:
         if not value:
@@ -140,7 +179,7 @@ class SignIn:
             return False, "Phone number already registered."
         from datetime import datetime
         record: Dict[str, Any] = {
-            "password": password,
+            "password": self._hash_password(password),
             "full_name": full_name or "",
             "phone": phone or "",
             "serial_id": serial_id or "",
