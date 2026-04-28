@@ -714,8 +714,6 @@ class HistoryWindow(QDialog):
         # Tab 2 — Reviewed reports from API
         reviewed_tab = self._build_reviewed_tab()
         self.tabs.addTab(reviewed_tab, "Reviewed")
-        json_tab = self._build_json_tab()
-        self.tabs.addTab(json_tab, "JSON Waves")
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
         # Right: PDF preview
