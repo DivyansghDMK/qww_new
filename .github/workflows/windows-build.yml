@@ -76,6 +76,8 @@ jobs:
           echo "C:\Program Files (x86)\Inno Setup 6" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
       - name: Build Windows EXE and installer
         shell: pwsh
+        env:
+          PYTHONPATH: ${{ github.workspace }}\src
         run: |
           .\build_release.ps1 -Name ECGMonitor -Version $env:VERSION -Channel $env:CHANNEL -Repository $env:REPOSITORY
           if (!(Test-Path "dist/ECGMonitor/ECGMonitor.exe")) {
