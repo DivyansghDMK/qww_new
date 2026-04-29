@@ -116,7 +116,14 @@ class ECGAuthAPI:
 
     def _request(self, method: str, endpoint: str, **kwargs: Any) -> Dict[str, Any]:
         url = f"{self.base_url}{endpoint}"
-        response = requests.request(method, url, timeout=self.timeout, **kwargs)
+        try:
+            response = requests.request(method, url, timeout=self.timeout, **kwargs)
+        except requests.exceptions.ConnectionError:
+            raise Exception("No internet connection. Please check your network and try again.")
+        except requests.exceptions.Timeout:
+            raise Exception("Request timed out. The server might be busy or your connection is slow.")
+        except requests.exceptions.RequestException as e:
+            raise Exception(f"Network error: {str(e)}")
 
         try:
             payload = response.json()

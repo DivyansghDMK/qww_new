@@ -855,6 +855,7 @@ class ECGMenu(QGroupBox):
         entries["Org. Address"].setMaxLength(45)
         entries["Doctor"].setMaxLength(20)
         entries["Phone No."].setMaxLength(10)
+        entries["Phone No."].setValidator(QIntValidator(0, 2147483647, self))
         entries["Patient Name"].setMaxLength(20) 
 
         # Age field with responsive sizing

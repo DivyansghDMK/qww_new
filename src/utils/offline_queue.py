@@ -298,6 +298,28 @@ class OfflineQueue:
         Attempt to sync single item to backend or cloud storage
         Supports both BackendAPI and CloudUploader (S3)
         """
+        # Support complaint sync (CardioX Support API)
+        try:
+            if item.get("type") == "support_complaint":
+                from .support_api import get_support_api
+
+                api = get_support_api()
+                payload = item.get("data") or {}
+                if not isinstance(payload, dict):
+                    payload = {}
+
+                result = api.submit_complaint(
+                    name=str(payload.get("name", "")),
+                    machine_id=str(payload.get("machine_id", "")),
+                    complaint=str(payload.get("complaint", "")),
+                    source=str(payload.get("source", "software") or "software"),
+                    queue_if_offline=False,  # already in sync path
+                )
+                return bool(result.get("success")) and result.get("status") == "success"
+        except Exception as e:
+            print(f"[WARN] Support complaint sync error: {e}")
+            return False
+
         # Try cloud uploader first (for S3 uploads)
         try:
             from .cloud_uploader import get_cloud_uploader

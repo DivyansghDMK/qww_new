@@ -7007,6 +7007,10 @@ class ECGTestPage(QWidget):
             self.demo_toggle.setChecked(False)
             # This will trigger on_demo_toggle_changed which calls demo_manager.toggle_demo_mode(False)
 
+        # Hide the sliding panel if it's open before going back
+        if hasattr(self, 'ecg_menu') and self.ecg_menu:
+            self.ecg_menu.hide_sliding_panel()
+
         # Go back to dashboard (assumes dashboard is at index 0)
         self.stacked_widget.setCurrentIndex(0)
 
