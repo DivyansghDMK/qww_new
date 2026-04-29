@@ -489,6 +489,14 @@ class Dashboard(QWidget):
         self.admin_btn = QPushButton("Admin")
         self.admin_btn.setVisible(False)
 
+        self.support_btn = QPushButton("Raise a Complaint")
+        self.support_btn.setStyleSheet(
+            "background: #2ecc71; color: white; border-radius: 10px; padding: 4px 18px; margin-right: 10px;"
+        )
+        self.support_btn.clicked.connect(self.show_support_dialog)
+        self.support_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        header.addWidget(self.support_btn)
+
         self.version_btn = QPushButton("Version Information")
         self.version_btn.setStyleSheet("background: #3498db; color: white; border-radius: 10px; padding: 4px 18px; margin-right: 10px;")
         self.version_btn.clicked.connect(self.show_version_popup)
@@ -4279,6 +4287,281 @@ class Dashboard(QWidget):
                 hw_v = "Not Detected"
                 
             QMessageBox.information(self, "Version Information", f"Software Version: V 1.1.1\nHardware Version: {hw_v}")
+
+    def show_support_dialog(self):
+        """Open Help & Support dialog to submit a complaint to Support API."""
+        try:
+            from utils.support_api import get_support_api
+        except Exception as e:
+            QMessageBox.critical(self, "Support", f"Support module not available: {e}")
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        dialog.setWindowTitle("Raise a Complaint")
+        dialog.setMinimumWidth(520)
+        dialog.setStyleSheet("""
+            QDialog {
+                background: #ffffff;
+            }
+            QLabel {
+                color: #111;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            QLineEdit, QComboBox, QTextEdit {
+                border: 1px solid #d7dde6;
+                border-radius: 10px;
+                padding: 8px 10px;
+                font-size: 12px;
+                background: #fbfcfe;
+                color: #111;
+            }
+            QLineEdit:focus, QComboBox:focus, QTextEdit:focus {
+                border: 2px solid #ff7a26;
+                background: #ffffff;
+            }
+            QComboBox::drop-down {
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 28px;
+                border: 0px;
+                background: transparent;
+            }
+            QComboBox::down-arrow {
+                image: none;
+                width: 0px;
+                height: 0px;
+                border-left: 6px solid transparent;
+                border-right: 6px solid transparent;
+                border-top: 8px solid #ff6600;
+            }
+            QPushButton#supportCancel {
+                background: #f2f4f7;
+                color: #111;
+                border-radius: 10px;
+                padding: 8px 18px;
+                font-weight: 700;
+                border: 1px solid #d7dde6;
+                min-width: 100px;
+            }
+            QPushButton#supportCancel:hover { background: #e9edf3; }
+            QPushButton#supportSubmit {
+                background: #ff6600;
+                color: white;
+                border-radius: 10px;
+                padding: 8px 18px;
+                font-weight: 800;
+                border: 2px solid #ff7a26;
+                min-width: 110px;
+            }
+            QPushButton#supportSubmit:hover { background: #ff7a26; border: 2px solid #ff8e47; }
+            QPushButton#supportSubmit:pressed { background: #e65c00; }
+            QLabel#supportTitle {
+                font-size: 16px;
+                font-weight: 900;
+                color: #111;
+            }
+            QLabel#supportHint {
+                font-size: 11px;
+                font-weight: 500;
+                color: #55606f;
+            }
+        """)
+
+        root = QVBoxLayout(dialog)
+        root.setContentsMargins(18, 16, 18, 16)
+        root.setSpacing(10)
+
+        title = QLabel("Raise a complaint")
+        title.setObjectName("supportTitle")
+        hint = QLabel("Send a complaint to support. If offline, it will be queued and sent automatically when online.")
+        hint.setWordWrap(True)
+        hint.setObjectName("supportHint")
+        root.addWidget(title)
+        root.addWidget(hint)
+
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignLeft)
+        form.setFormAlignment(Qt.AlignTop)
+        form.setHorizontalSpacing(14)
+        form.setVerticalSpacing(10)
+
+        name_input = QLineEdit()
+        name_input.setPlaceholderText("Your name")
+
+        machine_input = QLineEdit()
+        machine_input.setPlaceholderText("Machine ID / Serial Number")
+
+        source_input = QComboBox()
+        source_input.addItems(["software", "hardware", "other"])
+        source_input.setCurrentText("software")
+
+        complaint_input = QTextEdit()
+        complaint_input.setPlaceholderText("Describe the issue…")
+        complaint_input.setFixedHeight(150)
+
+        form.addRow("Name", name_input)
+        form.addRow("Machine ID", machine_input)
+        form.addRow("Source", source_input)
+        form.addRow("Complaint", complaint_input)
+
+        root.addLayout(form)
+
+        foot = QLabel("Note: Rate limit is 10 requests per minute per Machine ID.")
+        foot.setObjectName("supportHint")
+        root.addWidget(foot)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch()
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setObjectName("supportCancel")
+        submit_btn = QPushButton("Submit")
+        submit_btn.setObjectName("supportSubmit")
+        buttons.addWidget(cancel_btn)
+        buttons.addWidget(submit_btn)
+        root.addLayout(buttons)
+
+        cancel_btn.clicked.connect(dialog.reject)
+
+        def _submit():
+            api = get_support_api()
+            payload = {
+                "name": name_input.text().strip(),
+                "machine_id": machine_input.text().strip(),
+                "complaint": complaint_input.toPlainText().strip(),
+                "source": str(source_input.currentText() or "software").strip() or "software",
+            }
+
+            if not payload["name"]:
+                QMessageBox.warning(dialog, "Support", "Please enter your name to raise the complaint.")
+                return
+
+            if not payload["complaint"]:
+                QMessageBox.warning(dialog, "Support", "Please enter your complaint.")
+                return
+
+            submit_btn.setEnabled(False)
+            try:
+                result = api.submit_complaint(
+                    name=payload["name"],
+                    machine_id=payload["machine_id"],
+                    complaint=payload["complaint"],
+                    source=payload["source"],
+                    queue_if_offline=True,
+                )
+            finally:
+                submit_btn.setEnabled(True)
+
+            if result.get("success") and result.get("status") == "success":
+                cid = result.get("complaint_id") or ""
+                copy_box = QDialog(dialog)
+                copy_box.setWindowFlags(copy_box.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+                copy_box.setWindowTitle("Complaint Submitted")
+                copy_box.setMinimumWidth(520)
+                copy_box.setStyleSheet(dialog.styleSheet())
+
+                lay = QVBoxLayout(copy_box)
+                title2 = QLabel("Complaint submitted successfully.")
+                title2.setObjectName("supportTitle")
+                lay.addWidget(title2)
+
+                msg = QLabel("Please copy the Complaint ID for future reference.")
+                msg.setObjectName("supportHint")
+                msg.setWordWrap(True)
+                lay.addWidget(msg)
+
+                row = QHBoxLayout()
+                id_box = QLineEdit(str(cid))
+                id_box.setReadOnly(True)
+                id_box.setSelection(0, len(str(cid)))
+                row.addWidget(id_box, 1)
+                lay.addLayout(row)
+
+                action_row = QHBoxLayout()
+                action_row.addStretch()
+                copy_btn = QPushButton("Copy")
+                copy_btn.setObjectName("supportSubmit")
+                copy_btn.setFixedWidth(110)
+                close_btn = QPushButton("Close")
+                close_btn.setObjectName("supportCancel")
+                close_btn.setFixedWidth(110)
+                action_row.addWidget(copy_btn)
+                action_row.addSpacing(10)
+                action_row.addWidget(close_btn)
+                lay.addLayout(action_row)
+
+                def _copy():
+                    try:
+                        QApplication.clipboard().setText(str(cid))
+                        copy_btn.setText("Copied")
+                    except Exception:
+                        pass
+
+                copy_btn.clicked.connect(_copy)
+                close_btn.clicked.connect(copy_box.accept)
+
+                copy_box.exec_()
+                dialog.accept()
+                return
+
+            if result.get("success") and result.get("status") == "queued":
+                qid = result.get("queued_id") or ""
+                copy_box = QDialog(dialog)
+                copy_box.setWindowFlags(copy_box.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+                copy_box.setWindowTitle("Complaint Queued")
+                copy_box.setMinimumWidth(520)
+                copy_box.setStyleSheet(dialog.styleSheet())
+
+                lay = QVBoxLayout(copy_box)
+                title2 = QLabel("You're offline. Complaint queued.")
+                title2.setObjectName("supportTitle")
+                lay.addWidget(title2)
+
+                msg = QLabel("Please copy the Queue ID for future reference. It will auto-send when online.")
+                msg.setObjectName("supportHint")
+                msg.setWordWrap(True)
+                lay.addWidget(msg)
+
+                row = QHBoxLayout()
+                id_box = QLineEdit(str(qid))
+                id_box.setReadOnly(True)
+                id_box.setSelection(0, len(str(qid)))
+                row.addWidget(id_box, 1)
+                lay.addLayout(row)
+
+                action_row = QHBoxLayout()
+                action_row.addStretch()
+                copy_btn = QPushButton("Copy")
+                copy_btn.setObjectName("supportSubmit")
+                copy_btn.setFixedWidth(110)
+                close_btn = QPushButton("Close")
+                close_btn.setObjectName("supportCancel")
+                close_btn.setFixedWidth(110)
+                action_row.addWidget(copy_btn)
+                action_row.addSpacing(10)
+                action_row.addWidget(close_btn)
+                lay.addLayout(action_row)
+
+                def _copy():
+                    try:
+                        QApplication.clipboard().setText(str(qid))
+                        copy_btn.setText("Copied")
+                    except Exception:
+                        pass
+
+                copy_btn.clicked.connect(_copy)
+                close_btn.clicked.connect(copy_box.accept)
+
+                copy_box.exec_()
+                dialog.accept()
+                return
+
+            QMessageBox.warning(dialog, "Support", str(result.get("message") or "Failed to submit complaint."))
+
+        submit_btn.clicked.connect(_submit)
+
+        dialog.exec_()
 
     def handle_sign_out(self):
         # User label removed per request

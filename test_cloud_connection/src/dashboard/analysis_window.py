@@ -285,14 +285,11 @@ class ECGAnalysisWindow(QDialog):
         self.mark_start_btn.clicked.connect(self.mark_start)
         self.mark_end_btn = QPushButton("Mark End + Save")
         self.mark_end_btn.clicked.connect(self.mark_end_and_save)
-        self.auto_detect_btn = QPushButton("Automatic Detection")
-        self.auto_detect_btn.clicked.connect(self.run_automatic_detection)
         self.delete_mark_btn = QPushButton("Delete Selected")
         self.delete_mark_btn.setObjectName("secondary")
         self.delete_mark_btn.clicked.connect(self.delete_selected_annotation)
         row2.addWidget(self.mark_start_btn)
         row2.addWidget(self.mark_end_btn)
-        row2.addWidget(self.auto_detect_btn)
         row2.addWidget(self.delete_mark_btn)
         av.addLayout(row2)
 
@@ -664,105 +661,6 @@ class ECGAnalysisWindow(QDialog):
         if not self.current_report:
             return
         self.current_report['manual_annotations'] = self.manual_annotations
-
-    # --------------------------- automatic detection ---------------------------
-    def run_automatic_detection(self):
-        if not self.current_report:
-            QMessageBox.warning(self, "Detection", "No report loaded.")
-            return
-
-        # Use the lead selected in the marking combo, fallback to Lead II
-        lead_name = self.mark_lead_combo.currentText()
-        if lead_name == "All Leads":
-            lead_name = 'II'
-            
-        data = self.lead_data.get(lead_name, np.array([]))
-        if len(data) == 0:
-            # Try to find any lead with data
-            for l in self.LEADS:
-                if len(self.lead_data.get(l, [])) > 0:
-                    lead_name = l
-                    data = self.lead_data[l]
-                    break
-            
-            if len(data) == 0:
-                QMessageBox.warning(self, "Detection", "No ECG data available for analysis.")
-                return
-
-        # Get the current window data
-        ws = self._window_samples()
-        st = self.frame_start_sample
-        en = min(len(data), st + ws)
-        
-        # Analyze current visible segment
-        segment = data[st:en]
-        if len(segment) < self.sampling_rate * 1.5: # At least 1.5 seconds
-            QMessageBox.warning(self, "Detection", "Visible window too short for accurate detection (need >1.5s).")
-            return
-
-        try:
-            if PQRSTAnalyzer is None or ArrhythmiaDetector is None:
-                QMessageBox.critical(self, "Error", "ECG analysis modules not loaded. Please check your installation.")
-                return
-
-            # Use PQRSTAnalyzer to get peaks for detection
-            analyzer = PQRSTAnalyzer(self.sampling_rate)
-            analysis = analyzer.analyze_signal(segment)
-            
-            # Run Arrhythmia Detection
-            detector = ArrhythmiaDetector(self.sampling_rate)
-            # We pass the segment and its analysis
-            results = detector.detect_arrhythmias(segment, analysis)
-            
-            # Filter out "Insufficient data" or NSR if we want to show only arrhythmias
-            # But the user said "all arthmia and mention", so let's show all results.
-            
-            if not results or (len(results) == 1 and "Insufficient data" in results[0]):
-                QMessageBox.information(self, "Detection", "No specific arrhythmia patterns detected in this window.")
-                return
-
-            # Format results for display
-            rhythm_text = ", ".join(results)
-            is_normal = "Normal Sinus Rhythm" in rhythm_text
-            
-            msg = f"<b>Window Analysis (Lead {lead_name}):</b><br><br>"
-            msg += f"Detected: <span style='color: {'#2ecc71' if is_normal else '#e74c3c'}; font-weight: bold;'>{rhythm_text}</span><br><br>"
-            msg += "Would you like to add these findings to the report?"
-            
-            reply = QMessageBox.question(self, "Automatic Detection Result", msg, QMessageBox.Yes | QMessageBox.No)
-            if reply == QMessageBox.Yes:
-                start_sec = st / self.sampling_rate
-                end_sec = en / self.sampling_rate
-                
-                added_count = 0
-                for arr in results:
-                    # Skip NSR if adding to report annotations
-                    if arr == "Normal Sinus Rhythm":
-                        continue
-                        
-                    ann = {
-                        'start_sec': round(start_sec, 3),
-                        'end_sec': round(end_sec, 3),
-                        'type': arr,
-                        'lead': lead_name,
-                        'notes': "Automatically detected",
-                        'created_at': datetime.now().isoformat(timespec='seconds')
-                    }
-                    self.manual_annotations.append(ann)
-                    added_count += 1
-                
-                if added_count > 0:
-                    self._refresh_annotation_table()
-                    self._persist_annotations_in_report()
-                    self._render_current_frame()
-                    QMessageBox.information(self, "Report Updated", f"Added {added_count} detected arrhythmia(s) to the report.")
-                else:
-                    QMessageBox.information(self, "Report", "Normal rhythm detected; no annotations added.")
-                
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            QMessageBox.critical(self, "Error", f"Detection failed: {str(e)}")
 
     # --------------------------- actions ---------------------------
     # --------------------------- API actions ---------------------------
@@ -1242,7 +1140,7 @@ class ECGAnalysisWindow(QDialog):
         y_cursor = MT + 20
         
         # Summary Table Header
-        ax.text(ML, y_cursor, "Summary of Manual & Automatic Annotations:", fontsize=9, fontweight='bold', va='top')
+        ax.text(ML, y_cursor, "Summary of Manual Annotations:", fontsize=9, fontweight='bold', va='top')
         y_cursor += 8
         
         # Table Header
@@ -1269,7 +1167,7 @@ class ECGAnalysisWindow(QDialog):
         y_cursor = max(y_cursor + 10, PAGE_H / 2 - 20)
         
         # Add Wave Strips for each annotation (max 3 for second half of page)
-        ax.text(ML, y_cursor, "Waveform Strips for Detected Events:", fontsize=9, fontweight='bold', va='top')
+        ax.text(ML, y_cursor, "Waveform Strips for Marked Events:", fontsize=9, fontweight='bold', va='top')
         y_cursor += 10
         
         # Sort annotations to prioritize arrhythmias for strips

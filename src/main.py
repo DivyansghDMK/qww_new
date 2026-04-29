@@ -100,6 +100,7 @@ from utils.crash_logger import get_crash_logger
 from utils.session_recorder import SessionRecorder
 from PyQt5.QtGui import QFont, QPixmap, QIntValidator
 from utils.ecg_auth_api import get_ecg_auth_api
+from utils.offline_queue import get_offline_queue
 
 try:
     from version import APP_VERSION, UPDATE_CHANNEL, GITHUB_REPOSITORY
@@ -1105,6 +1106,14 @@ class LoginRegisterDialog(QDialog):
         self._update_verify_otp_button()
 
     def handle_phone_login(self):
+        # Check internet connection first
+        try:
+            if not get_offline_queue().is_online():
+                QMessageBox.warning(self, "No Internet Connection", "An active internet connection is required to send and verify OTP. Please check your network and try again.")
+                return
+        except Exception as e:
+            logger.warning(f"Failed to check connectivity: {e}")
+
         auth_api = get_ecg_auth_api()
         normalized_phone = self._get_inline_phone_number()
         if len(normalized_phone) != 10:
@@ -1135,6 +1144,14 @@ class LoginRegisterDialog(QDialog):
             return
 
     def verify_phone_otp(self):
+        # Check internet connection first
+        try:
+            if not get_offline_queue().is_online():
+                QMessageBox.warning(self, "No Internet Connection", "An active internet connection is required to verify OTP. Please check your network and try again.")
+                return
+        except Exception as e:
+            logger.warning(f"Failed to check connectivity: {e}")
+            
         normalized_phone = self._get_inline_phone_number()
         if len(normalized_phone) != 10:
             QMessageBox.warning(self, "Invalid Phone Number", "Phone number must be exactly 10 digits.")
