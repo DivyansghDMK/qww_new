@@ -226,6 +226,12 @@ class DemoManager:
             
             # Start demo data generation in the existing 12-lead grid
             self.start_demo_data()
+            try:
+                # Demo mode uses synthetic packets, so the lead banner should look connected.
+                if hasattr(self.ecg_test_page, '_set_lead_status_label'):
+                    self.ecg_test_page._set_lead_status_label([])
+            except Exception:
+                pass
             
             # Start elapsed timer for demo mode (sync with demo start time)
             # ALWAYS reset start_time to current time for fresh start
@@ -359,6 +365,11 @@ class DemoManager:
             
             # Stop demo data generation
             self.stop_demo_data()
+            try:
+                if hasattr(self.ecg_test_page, '_set_lead_status_idle'):
+                    self.ecg_test_page._set_lead_status_idle()
+            except Exception:
+                pass
             
             self._enable_hardware_controls()
             self._demo_lead_ranges.clear()

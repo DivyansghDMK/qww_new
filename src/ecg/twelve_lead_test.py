@@ -813,6 +813,7 @@ class ECGTestPage(QWidget):
         self._lead_connection_state = {lead: True for lead in self.leads}
         self._lead_last_valid_value = {lead: 0.0 for lead in self.leads}
         self._last_off_leads_signature = None
+        self._lead_data_received = False
         self._prev_p_axis = None  # Track P-axis for safety assertions
         self._prev_qrs_axis = None
         self._prev_t_axis = None
@@ -1150,7 +1151,7 @@ class ECGTestPage(QWidget):
         )
         self.lead_status_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         main_vbox.addWidget(self.lead_status_label)
-        self._set_lead_status_label([])
+        self._set_lead_status_idle()
         
         # Ensure metrics are reset to zero after frame creation
         self.reset_metrics_to_zero()
@@ -4265,6 +4266,19 @@ class ECGTestPage(QWidget):
         
         return metrics_frame
 
+    def _set_lead_status_idle(self, text: str = "Leads: Waiting for device..."):
+        """Show a neutral state before any real packets arrive."""
+        try:
+            if not hasattr(self, 'lead_status_label') or self.lead_status_label is None:
+                return
+            self._last_off_leads_signature = None
+            self.lead_status_label.setText(text)
+            self.lead_status_label.setStyleSheet(
+                "color: #c77700; font-size: 12px; font-weight: bold; padding: 2px 6px;"
+            )
+        except Exception:
+            pass
+
     def _set_lead_status_label(self, off_leads: List[str]):
         """Show lead-off status in top label (never use popup for lead-off)."""
         try:
@@ -5887,7 +5901,8 @@ class ECGTestPage(QWidget):
         self._lead_connection_state = {lead: True for lead in self.leads}
         self._lead_last_valid_value = {lead: 0.0 for lead in self.leads}
         self._last_off_leads_signature = None
-        self._set_lead_status_label([])
+        self._lead_data_received = False
+        self._set_lead_status_idle()
 
         # --- START HOLTER SESSION IF ENABLED ---
         if self.holter_mode_enabled:
@@ -6390,6 +6405,10 @@ class ECGTestPage(QWidget):
                 color: white;
             }
         """)
+
+        # Reset the lead banner so a stale green status does not survive into the next session.
+        self._lead_data_received = False
+        self._set_lead_status_idle()
 
     def update_plot(self):
         print(f"[DEBUG] ECGTestPage - update_plot called, serial_reader exists: {self.serial_reader is not None}")
@@ -8955,6 +8974,7 @@ class ECGTestPage(QWidget):
                             self._last_packet_time = current_time
                     
                     for packet in packets:
+                        self._lead_data_received = True
                         # Packet contains all 12 leads: I, II, III, aVR, aVL, aVF, V1, V2, V3, V4, V5, V6
                         # Map packet dict to our lead order
                         lead_order = ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"]
@@ -9048,6 +9068,7 @@ class ECGTestPage(QWidget):
                         # Read serial data - can return 8 or 12 leads
                         all_leads = self.serial_reader.read_value()
                         if all_leads:
+                            self._lead_data_received = True
                             # If we got 12 leads directly, use them; otherwise calculate from 8
                             if isinstance(all_leads, list) and len(all_leads) >= 12:
                                 all_12_leads = all_leads[:12]

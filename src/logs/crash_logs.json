@@ -739,5 +739,25 @@
     "exception_type": "OSError",
     "exception_message": "[Errno 6] Device not configured",
     "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/Desktop/cardiox software/qww_new/src/ecg/serial/serial_reader.py\", line 527, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-04-28T17:56:30.449159",
+    "message": "Packet parsing error: [Errno 6] Device not configured",
+    "category": "SERIAL_ERROR",
+    "error_count": 1,
+    "session_duration": "0:24:51.911241",
+    "exception_type": "OSError",
+    "exception_message": "[Errno 6] Device not configured",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/Desktop/cardiox software/clone/qww_new/src/ecg/serial/serial_reader.py\", line 527, in read_packets\n    if hasattr(self.ser, 'in_waiting'):\n       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/deckmount/miniforge3/lib/python3.12/site-packages/serial/serialposix.py\", line 549, in in_waiting\n    s = fcntl.ioctl(self.fd, TIOCINQ, TIOCM_zero_str)\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nOSError: [Errno 6] Device not configured\n"
+  },
+  {
+    "timestamp": "2026-04-29T10:16:59.959962",
+    "message": "Serial communication error: module 'os' has no attribute 'startfile'",
+    "category": "SERIAL_ERROR",
+    "error_count": 2,
+    "session_duration": "16:45:21.422043",
+    "exception_type": "AttributeError",
+    "exception_message": "module 'os' has no attribute 'startfile'",
+    "traceback": "Traceback (most recent call last):\n  File \"/Users/deckmount/Desktop/cardiox software/clone/qww_new/src/ecg/twelve_lead_test.py\", line 8915, in update_plots\n    self.stop_acquisition()\n  File \"/Users/deckmount/Desktop/cardiox software/clone/qww_new/src/ecg/twelve_lead_test.py\", line 6222, in stop_acquisition\n    self._stop_holter_session_internal()\n  File \"/Users/deckmount/Desktop/cardiox software/clone/qww_new/src/ecg/twelve_lead_test.py\", line 8661, in _stop_holter_session_internal\n    os.startfile(report_path)\n    ^^^^^^^^^^^^\nAttributeError: module 'os' has no attribute 'startfile'\n"
   }
 ]
