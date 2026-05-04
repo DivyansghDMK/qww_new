@@ -1250,7 +1250,7 @@ class ECGTestPage(QWidget):
 
         btn_layout = QHBoxLayout()
         self.start_btn = QPushButton("Start")
-        self.stop_btn = QPushButton("Stop")
+        self.stop_btn = QPushButton("Freeze")
         # self.ports_btn = QPushButton("Ports") # Commented out
         self.generate_report_btn = QPushButton("Generate Report")
         # self.export_csv_btn = QPushButton("Export as CSV")  # Commented out
@@ -1342,7 +1342,7 @@ class ECGTestPage(QWidget):
 
 
         self.start_btn.setToolTip("Start ECG recording from the selected port")
-        self.stop_btn.setToolTip("Stop current ECG recording")
+        self.stop_btn.setToolTip("Freeze current ECG recording")
         # self.ports_btn.setToolTip("Configure COM port and baud rate settings") # Commented out
         self.generate_report_btn.setToolTip("Generate ECG PDF report and add to Recent Reports")
         # self.export_csv_btn.setToolTip("Export ECG data as CSV file")  # Commented out
@@ -1522,7 +1522,7 @@ class ECGTestPage(QWidget):
             self.recording_toggle.setText(translator("Record Screen"))
         for attr, key in [
             ('start_btn', "Start"),
-            ('stop_btn', "Stop"),
+            ('stop_btn', "Freeze"),
             ('generate_report_btn', "Generate Report"),
             ('twelve_leads_btn', "12:1"),
             ('six_leads_btn', "6:2"),

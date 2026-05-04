@@ -8,6 +8,7 @@ import os
 import time
 import json
 import numpy as np
+from collections import deque
 from datetime import datetime
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox, QMessageBox,
@@ -45,6 +46,7 @@ from utils.crash_logger import get_crash_logger
 from utils.patient_profile import resolve_patient_profile
 from ecg.ui import display_updates as shared_display_updates
 from dashboard.history_window import append_history_entry
+from ecg.lead_off_detection import detect_lead_off
 
 # Import ECGTestPage + helpers to reuse EXACT same calculation + smoothing as 12‑lead test
 try:
@@ -108,12 +110,26 @@ class HyperkalemiaTestWindow(QWidget):
             'V5': [],  # V5
             'V6': []   # V6
         }
+
+        # Plot buffers (bounded) to keep UI responsive even if capture lists grow.
+        # Use ADC center line (2048) as flat line when a lead is detected OFF.
+        self._adc_center = 2048.0
+        self._plot_buffers = {}  # lead -> deque[float]
+        self._plot_seconds = {}  # lead -> float seconds shown
+        self._lead_off_windows = {}  # lead -> deque[float] (recent 1s window)
+        self._lead_off_state = {}  # lead -> bool
+        self._last_packet_time = 0.0
+
         
         # Lead mapping: name -> index in ecg_calculator.data
         self.lead_indices = {
             'I': 0, 'II': 1, 'III': 2, 'aVR': 3, 'aVL': 4, 'aVF': 5,
             'V1': 6, 'V2': 7, 'V3': 8, 'V4': 9, 'V5': 10, 'V6': 11
         }
+
+        # Track lead connection like 12-lead (prevents one bad lead from freezing all updates)
+        self._lead_last_valid_value = {name: self._adc_center for name in self.lead_indices.keys()}
+        self._lead_connection_state = {name: True for name in self.lead_indices.keys()}
         
         self.start_time = None
         self.capture_duration = 30  # 30 seconds for hyperkalemia detection
@@ -187,12 +203,47 @@ class HyperkalemiaTestWindow(QWidget):
 
         # Initialize UI
         self.init_ui()
+
+        # Init bounded plotting + lead-off detection buffers
+        self._init_plot_and_lead_off_buffers()
         
         # Timers
         self.capture_timer = QTimer(self)
         self.capture_timer.timeout.connect(self.update_plot)
         self.duration_timer = QTimer(self)
         self.duration_timer.timeout.connect(self.check_duration)
+
+    def _init_plot_and_lead_off_buffers(self):
+        # Keep a slightly larger buffer than the visible window for stable filtering.
+        fs = float(self.sampling_rate or 500.0)
+        if fs < 100.0 or fs > 1000.0:
+            fs = 500.0
+
+        self._plot_seconds = {}
+        self._plot_buffers = {}
+        for lead_name in self.lead_data.keys():
+            seconds = 10.0 if lead_name == 'II' else 3.0
+            self._plot_seconds[lead_name] = float(seconds)
+            max_seconds = seconds + 2.0  # margin for filtering
+            maxlen = int(max_seconds * fs)
+            if maxlen < 200:
+                maxlen = 200
+            self._plot_buffers[lead_name] = deque(maxlen=maxlen)
+
+        self._lead_off_windows = {}
+        self._lead_off_state = {}
+        window_len = int(1.0 * fs)
+        if window_len < 50:
+            window_len = 50
+        for lead_name in self.lead_indices.keys():
+            self._lead_off_windows[lead_name] = deque(maxlen=window_len)
+            self._lead_off_state[lead_name] = False
+
+        # Reset connection tracking
+        self._lead_last_valid_value = {name: self._adc_center for name in self.lead_indices.keys()}
+        self._lead_connection_state = {name: True for name in self.lead_indices.keys()}
+
+        self._last_packet_time = 0.0
 
     def mousePressEvent(self, event):
         # Block all mouse press events (left/right click) for dragging
@@ -524,6 +575,12 @@ class HyperkalemiaTestWindow(QWidget):
             pass
         self._last_metric_update_ts = 0.0
 
+        # Reset plot buffers + lead-off state
+        try:
+            self._init_plot_and_lead_off_buffers()
+        except Exception:
+            pass
+
         # Get port from settings or auto-detect
         port_to_use = self.settings_manager.get_serial_port()
         baudrate = int(self.settings_manager.get_setting("baud_rate", "115200"))
@@ -615,6 +672,7 @@ class HyperkalemiaTestWindow(QWidget):
             self.analysis_results = None
             self.start_time = time.time()
             self.is_capturing = True
+            self._last_packet_time = 0.0
             
             # Reset smoothing buffers
             if self.ecg_calculator:
@@ -845,34 +903,68 @@ class HyperkalemiaTestWindow(QWidget):
 
                 self.sample_index += 1
                 packet_time = self.sample_index / 500.0
+                self._last_packet_time = packet_time
                 
                 # Update calculator's data buffer for all leads from serial data
                 if self.ecg_calculator:
-                    try:
-                        for lead_name, idx in self.lead_indices.items():
-                            if lead_name in packet:
-                                raw_value = float(packet[lead_name])
-                                
-                                # 1. ANALYSIS DATA (RAW)
-                                self.ecg_calculator.data[idx] = np.roll(self.ecg_calculator.data[idx], -1)
-                                self.ecg_calculator.data[idx][-1] = raw_value
-                                
-                                # Store smoothed data for plotting
-                                if lead_name in self.lead_data:
-                                    self.lead_data[lead_name].append({
-                                        'time': packet_time,
-                                        'value': raw_value
-                                    })
-                                
-                                # Primary Lead II backup
-                                if lead_name == 'II':
-                                    self.data = np.roll(self.data, -1)
-                                    self.data[-1] = raw_value
-                                    self.lead_ii_data.append({'time': packet_time, 'value': raw_value})
-                        
-                    except Exception as e:
-                        print(f" Error updating buffers: {e}")
-                        continue
+                    for lead_name, idx in self.lead_indices.items():
+                        try:
+                            # Mirror 12-lead behavior: packet may contain missing keys or None for disconnected leads.
+                            raw = packet.get(lead_name, None)
+                            was_connected = bool(self._lead_connection_state.get(lead_name, True))
+
+                            if raw is None:
+                                self._lead_connection_state[lead_name] = False
+                                self._lead_off_state[lead_name] = True
+                                raw_value = float(self._lead_last_valid_value.get(lead_name, self._adc_center))
+                                value_for_buffers = self._adc_center  # user-visible flatline for disconnected lead
+                            else:
+                                raw_value = float(raw)
+                                self._lead_last_valid_value[lead_name] = raw_value
+                                self._lead_connection_state[lead_name] = True
+                                if not was_connected:
+                                    # Clear OFF state immediately on reconnection; detector will re-evaluate within 1s.
+                                    self._lead_off_state[lead_name] = False
+
+                                # Lead-off detection (same thresholds used by 12-lead) on connected streams.
+                                try:
+                                    w = self._lead_off_windows.get(lead_name)
+                                    if w is not None:
+                                        w.append(raw_value)
+                                        if len(w) >= 50:
+                                            self._lead_off_state[lead_name] = bool(
+                                                detect_lead_off(
+                                                    np.asarray(w, dtype=float),
+                                                    sampling_rate=float(self.sampling_rate or 500.0),
+                                                    window_size=1.0
+                                                )
+                                            )
+                                except Exception:
+                                    pass
+
+                                value_for_buffers = self._adc_center if bool(self._lead_off_state.get(lead_name, False)) else raw_value
+
+                            # 1. ANALYSIS DATA (RAW/flat on OFF)
+                            self.ecg_calculator.data[idx] = np.roll(self.ecg_calculator.data[idx], -1)
+                            self.ecg_calculator.data[idx][-1] = value_for_buffers
+
+                            # Store capture data for reports/analysis (bounded plotting is separate)
+                            if lead_name in self.lead_data:
+                                self.lead_data[lead_name].append({'time': packet_time, 'value': value_for_buffers})
+
+                            # Push into bounded plot buffer (keeps UI responsive)
+                            if lead_name in self._plot_buffers:
+                                self._plot_buffers[lead_name].append(value_for_buffers)
+
+                            # Primary Lead II backup
+                            if lead_name == 'II':
+                                self.data = np.roll(self.data, -1)
+                                self.data[-1] = value_for_buffers
+                                self.lead_ii_data.append({'time': packet_time, 'value': value_for_buffers})
+                        except Exception as e:
+                            # Per-lead failure must not block other leads (prevents "freeze all" bug)
+                            print(f" Error updating lead {lead_name}: {e}")
+                            continue
             
             # Update sampling rate counter
             if self.ecg_calculator and hasattr(self.ecg_calculator, "sampler"):
@@ -897,69 +989,71 @@ class HyperkalemiaTestWindow(QWidget):
             
             # Update all plots with stable display window
             for lead_name in self.lead_data.keys():
-                if len(self.lead_data[lead_name]) > 0:
-                    # Match 12-lead style window size for sharper, consistent motion.
-                    # USER REQUEST: Lead II should show 5000 samples (10 seconds at 500Hz)
-                    if lead_name == 'II':
-                        seconds_to_show = 10.0
-                    else:
-                        seconds_to_show = 3.0
-                        try:
-                            if self.ecg_calculator is not None and hasattr(self.ecg_calculator, 'window_size'):
-                                ws = int(getattr(self.ecg_calculator, 'window_size', 0) or 0)
-                                if ws > 0:
-                                    seconds_to_show = max(1.0, ws / float(fs))
-                        except Exception:
-                            pass
+                buf = self._plot_buffers.get(lead_name)
+                if not buf:
+                    continue
 
+                seconds_to_show = float(self._plot_seconds.get(lead_name, 3.0))
+                try:
+                    if lead_name != 'II' and self.ecg_calculator is not None and hasattr(self.ecg_calculator, 'window_size'):
+                        ws = int(getattr(self.ecg_calculator, 'window_size', 0) or 0)
+                        if ws > 0:
+                            seconds_to_show = max(1.0, ws / float(fs))
+                except Exception:
+                    pass
 
-                    # try:
-                    #     wave_speed = float(self.settings_manager.get_wave_speed())
-                    #     seconds_to_show = 3.0 * (25.0 / max(1e-6, wave_speed))
-                    # except:
-                    #     pass
+                values = list(buf)
+                if not values:
+                    continue
 
-                    times = [d['time'] for d in self.lead_data[lead_name]]
-                    values = [d['value'] for d in self.lead_data[lead_name]]
+                # If lead is OFF, render a stable flat trace (match 12-lead behavior).
+                lead_is_off = bool(self._lead_off_state.get(lead_name, False))
+                if lead_is_off:
+                    values = [self._adc_center] * len(values)
 
-                    # Apply Filters
+                # Build aligned time axis for the bounded buffer (oldest → newest)
+                latest_t = float(self._last_packet_time or 0.0)
+                n = len(values)
+                start_t = latest_t - ((n - 1) / float(fs)) if n > 1 else latest_t
+                times = (start_t + (np.arange(n, dtype=float) / float(fs))).tolist()
+
+                # Apply Filters only when lead is connected (avoid distorting flat OFF trace)
+                if not lead_is_off:
                     try:
                         from ecg.ecg_filters import apply_ac_filter, apply_emg_filter
-                        if len(values) > 100: # Ensure enough data
-                            values_array = np.array(values)
+                        if len(values) > 100:  # Ensure enough data
+                            values_array = np.array(values, dtype=float)
                             if ac_val not in ["Off", "off"]:
                                 values_array = apply_ac_filter(values_array, fs, ac_val)
                             if emg_val not in ["Off", "off"]:
                                 values_array = apply_emg_filter(values_array, fs, emg_val)
-
-                            # edge_trim = int(0.5 * fs)
-                            # if len(values_array) > 2 * edge_trim:
-                            #     values_array = values_array[edge_trim:-edge_trim]
-                                
                             values = values_array.tolist()
                     except ImportError:
                         pass
                     
-                    if len(times) > 0:
-                        max_time = max(times)
-                        min_time = max(0, max_time - seconds_to_show)
-                        mask = [t >= min_time for t in times]
-                        display_times = [t for i, t in enumerate(times) if mask[i]]
-                        display_values = [v for i, v in enumerate(values) if mask[i]]
+                if len(times) > 0:
+                    max_time = times[-1]
+                    min_time = max(0, max_time - seconds_to_show)
 
-                        # Keep waveform sharp: do not apply additional display-time Gaussian blur.
-                        
-                        if len(display_times) > 0:
-                            
-                            # Update plot line
-                            self.plot_curves[lead_name].setData(display_times, display_values)
-                            self.plot_widgets[lead_name].setXRange(min(display_times), max(display_times), padding=0)
-                            
-                            # Fixed Y-axis scaling: standard leads 0..4096, aVR 0..-4096
-                            if lead_name == 'aVR':
-                                self.plot_widgets[lead_name].setYRange(0, -4096, padding=0)
-                            else:
-                                self.plot_widgets[lead_name].setYRange(0, 4096, padding=0)
+                    # Keep only visible range (fast slice instead of full-history mask)
+                    # times is ascending; find first index >= min_time
+                    start_i = 0
+                    for i, t in enumerate(times):
+                        if t >= min_time:
+                            start_i = i
+                            break
+                    display_times = times[start_i:]
+                    display_values = values[start_i:]
+
+                    if len(display_times) > 1:
+                        self.plot_curves[lead_name].setData(display_times, display_values)
+                        self.plot_widgets[lead_name].setXRange(display_times[0], display_times[-1], padding=0)
+
+                        # Fixed Y-axis scaling: standard leads 0..4096, aVR 0..-4096
+                        if lead_name == 'aVR':
+                            self.plot_widgets[lead_name].setYRange(0, -4096, padding=0)
+                        else:
+                            self.plot_widgets[lead_name].setYRange(0, 4096, padding=0)
         
         except Exception as e:
             pass
