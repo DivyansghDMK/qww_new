@@ -2162,12 +2162,69 @@ class HolterWaveGridPanel(QFrame):
             while len(lead_data) < len(self.LEADS):
                 lead_data.append(np.full(400, 2048.0, dtype=float))
 
+        fs = 500.0
+        try:
+            if self.replay_engine is not None and getattr(self.replay_engine, "fs", None):
+                fs = float(self.replay_engine.fs)
+        except Exception:
+            pass
+        if self.replay_engine is None:
+            try:
+                if self.live_source is not None and getattr(self.live_source, "sampling_rate", None):
+                    fs = float(self.live_source.sampling_rate)
+            except Exception:
+                pass
+            try:
+                sampler = getattr(self.live_source, "sampler", None) if self.live_source is not None else None
+                if sampler and getattr(sampler, "sampling_rate", None):
+                    fs = float(sampler.sampling_rate)
+            except Exception:
+                pass
+        if fs < 50.0 or fs > 2000.0:
+            fs = 500.0
+
+        ac_opt = "50"
+        emg_opt = "150"
+        dft_opt = "0.5"
+        try:
+            sm = getattr(self.live_source, "settings_manager", None)
+            if sm is None:
+                from utils.settings_manager import SettingsManager
+                sm = SettingsManager()
+            ac_opt = str(sm.get_setting("filter_ac", ac_opt) or ac_opt).strip()
+            emg_opt = str(sm.get_setting("filter_emg", emg_opt) or emg_opt).strip()
+            dft_opt = str(sm.get_setting("filter_dft", dft_opt) or dft_opt).strip()
+        except Exception:
+            pass
+
         for idx, (curve, plot) in enumerate(self._lead_widgets):
             sig = lead_data[idx] if idx < len(lead_data) else np.full(400, 2048.0)
             lead_name = self.LEADS[idx] if idx < len(self.LEADS) else ""
+
+            # Apply the same display filters used elsewhere in the app (DFT -> EMG -> AC).
+            try:
+                from ecg.ecg_filters import apply_ecg_filters
+
+                arr = np.asarray(sig, dtype=float)
+                if arr.size > 120 and (str(ac_opt).lower() not in ("off", "") or str(emg_opt).lower() not in ("off", "") or str(dft_opt).lower() not in ("off", "")):
+                    pad_len = 50
+                    if arr.size > pad_len:
+                        work = np.concatenate((np.full(pad_len, arr[0]), arr, np.full(pad_len, arr[-1])))
+                    else:
+                        work = arr
+                        pad_len = 0
+                    work = apply_ecg_filters(work, sampling_rate=float(fs), ac_filter=ac_opt, emg_filter=emg_opt, dft_filter=dft_opt)
+                    if pad_len and work.size > 2 * pad_len:
+                        arr = work[pad_len:-pad_len]
+                    else:
+                        arr = work
+                    sig = arr
+            except Exception:
+                pass
+
             sig = self._to_display_space(np.asarray(sig, dtype=float), lead_name)
-            # Create time axis based on 500 SPS
-            time_axis = np.arange(sig.size, dtype=float) / 500.0
+            # Create time axis based on sampling rate
+            time_axis = np.arange(sig.size, dtype=float) / float(fs if fs > 0 else 500.0)
             curve.setData(time_axis, sig)
             # Auto-scroll X axis to show the latest window_sec
             if sig.size > 0:
