@@ -61,6 +61,7 @@ from scipy.signal import butter, filtfilt, find_peaks
 from .signal_paths import display_filter
 from .qrs_detection import qrs_duration_from_raw_signal
 from .metrics.reference_intervals import lookup_reference_intervals
+from .pre_analysis import pre_analyze, should_analyze
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1042,6 +1043,12 @@ def calculate_all_ecg_metrics(
     try:
         arr = np.asarray(lead_data, dtype=float)
         if len(arr) < 2000 or np.all(arr == 0) or np.std(arr) < 0.1:
+            return results
+
+        # ── Pre-analysis filter layer (baseline + noise rejection) ────────────
+        arr, quality_score, reject_reason = pre_analyze(arr, fs)
+        if not should_analyze(quality_score):
+            print(f" Pre-analysis rejected segment: {reject_reason} (score={quality_score:.2f})")
             return results
 
         # ── Filter ────────────────────────────────────────────────────────────
