@@ -860,15 +860,23 @@ class Dashboard(QWidget):
 
         visitors_layout.addLayout(col_header)
 
-        for idx, (mon, val, color) in enumerate(zip(month_names, month_data, bar_colors)):
+        # Show latest month on top (descending by recency), but keep trend computed vs the
+        # *previous* chronological month (e.g. May vs Apr).
+        display_order = list(range(len(month_names) - 1, -1, -1))
+
+        for display_idx, src_idx in enumerate(display_order):
+            mon = month_names[src_idx]
+            val = month_data[src_idx]
+            color = bar_colors[display_idx] if display_idx < len(bar_colors) else "#ff6600"
+
             pct = (val / total_visits * 100) if total_visits > 0 else 0
             bar_fill = int((val / _max_val) * 100)
 
-            # Trend vs previous month
-            if idx == 0:
+            # Trend vs previous month (chronological)
+            if src_idx == 0:
                 trend_txt, trend_color = "—", "#bbb"
             else:
-                diff = val - month_data[idx - 1]
+                diff = val - month_data[src_idx - 1]
                 if diff > 0:
                     trend_txt, trend_color = "↑", "#27ae60"
                 elif diff < 0:
@@ -907,7 +915,7 @@ class Dashboard(QWidget):
             # Use a fixed width ratio approach via QLabel inside
             bar_label = QLabel(f" {val}")
             bar_label.setStyleSheet(
-                f"background: {color}; color: {'#333' if idx < 3 else '#c44'}; "
+                f"background: {color}; color: {'#333' if display_idx < 3 else '#c44'}; "
                 f"font-size: 10px; font-weight: 700; border-radius: 5px; "
                 f"min-width: {bar_fill}px;")
             bar_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
@@ -5346,7 +5354,19 @@ class Dashboard(QWidget):
         if success:
             # Inform user if not the initial scan
             if getattr(self, '_initial_scan_completed', False):
-                QMessageBox.information(self, "Connection Status", "Device connected")
+                msg = QMessageBox(self)
+                msg.setWindowTitle("Connection Status")
+                msg.setText("Device connected")
+                try:
+                    icon_path = get_asset_path("connection_icon_tick.png")
+                    pix = QPixmap(icon_path)
+                    if not pix.isNull():
+                        msg.setIconPixmap(pix)
+                    else:
+                        msg.setIcon(QMessageBox.Information)
+                except Exception:
+                    msg.setIcon(QMessageBox.Information)
+                msg.exec_()
 
             # Update hardware version if it's different from current
             if self.device_version != version:
