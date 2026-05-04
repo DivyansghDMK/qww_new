@@ -20,6 +20,13 @@ import requests
 
 from .offline_queue import get_offline_queue
 
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(override=False)
+except Exception:
+    pass
+
 
 def _safe_json_load(path: str, default: Any) -> Any:
     try:
@@ -103,7 +110,7 @@ class SupportAPI:
             self.config.url,
             headers=self._headers(),
             json=payload,
-            timeout=max(3, int(self.config.timeout_s)),
+            timeout=(3, max(3, int(self.config.timeout_s))),
         )
         try:
             data = resp.json()
@@ -119,6 +126,45 @@ class SupportAPI:
             "message": data.get("message") if isinstance(data, dict) else resp.text,
             "raw": data,
         }
+
+    def get_complaint_status(self, complaint_id: str) -> Dict[str, Any]:
+        complaint_id = str(complaint_id or "").strip()
+        if not complaint_id:
+            return {"success": False, "status": "error", "message": "Complaint ID is required"}
+
+        url = os.getenv(
+            "SUPPORT_COMPLAINT_STATUS_URL",
+            "https://6jhix49qt6.execute-api.us-east-1.amazonaws.com/prod/support/complaint/status",
+        ).strip()
+
+        try:
+            resp = requests.get(
+                url,
+                headers=self._headers(),
+                params={"complaint_id": complaint_id},
+                timeout=(3, max(3, int(self.config.timeout_s))),
+            )
+            try:
+                data = resp.json()
+            except Exception:
+                data = {"success": False, "message": resp.text}
+
+            if resp.status_code >= 200 and resp.status_code < 300 and isinstance(data, dict):
+                return data
+
+            return {
+                "success": False,
+                "status": "error",
+                "status_code": resp.status_code,
+                "message": data.get("message") if isinstance(data, dict) else resp.text,
+                "raw": data,
+            }
+        except requests.exceptions.Timeout:
+            return {"success": False, "status": "error", "message": "Request timed out"}
+        except requests.exceptions.ConnectionError:
+            return {"success": False, "status": "error", "message": "Connection error"}
+        except Exception as e:
+            return {"success": False, "status": "error", "message": str(e)}
 
     def submit_complaint(
         self,
@@ -156,10 +202,15 @@ class SupportAPI:
         try:
             data = self._post_complaint(payload)
             if isinstance(data, dict) and data.get("success") is True:
+                status = data.get("status")
                 return {
                     "success": True,
                     "status": "success",
                     "complaint_id": data.get("complaint_id", ""),
+                    "complaint_status": status,
+                    "created_at": data.get("created_at"),
+                    "updated_at": data.get("updated_at"),
+                    "resolved_at": data.get("resolved_at"),
                 }
             return {"success": False, "status": "error", **(data if isinstance(data, dict) else {"raw": data})}
         except requests.exceptions.Timeout:
