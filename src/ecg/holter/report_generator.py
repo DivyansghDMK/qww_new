@@ -210,8 +210,8 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
     ]))
     story.append(sig_table)
     
-    # ── PAGE 2: NUMERICAL SUMMARY TABLE ────────────────────────────────────────
-    story.append(PageBreak())
+    # ── NUMERICAL SUMMARY TABLE ────────────────────────────────────────
+    story.append(Spacer(1, 15*mm))
     story.append(Paragraph("NUMERICAL SUMMARY TABLE", title_style))
     story.append(HRFlowable(width="100%", thickness=2, color=ORANGE, spaceAfter=4*mm))
     
@@ -239,8 +239,8 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
     else:
         story.append(Paragraph("No significant arrhythmias detected during this recording.", body_style))
 
-    # ── PAGE 3: HOURLY ANALYSIS ────────────────────────────────────────────────
-    story.append(PageBreak())
+    # ── HOURLY ANALYSIS ────────────────────────────────────────────────
+    story.append(Spacer(1, 15*mm))
     story.append(Paragraph("HOURLY ANALYSIS", title_style))
     story.append(HRFlowable(width="100%", thickness=2, color=ORANGE, spaceAfter=4*mm))
     
@@ -253,8 +253,8 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
     else:
         story.append(Paragraph("Hourly HR chart not available.", small_style))
 
-    # ── PAGE 4: HRV ANALYSIS ───────────────────────────────────────────────────
-    story.append(PageBreak())
+    # ── HRV ANALYSIS ───────────────────────────────────────────────────
+    story.append(Spacer(1, 15*mm))
     story.append(Paragraph("HEART RATE VARIABILITY (HRV)", title_style))
     story.append(HRFlowable(width="100%", thickness=2, color=ORANGE, spaceAfter=4*mm))
     
@@ -292,8 +292,8 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
     ]))
     story.append(hrv_table)
     
-    # ── PAGE 5: QT / QTC ANALYSIS ──────────────────────────────────────────────
-    story.append(PageBreak())
+    # ── QT / QTC ANALYSIS ──────────────────────────────────────────────
+    story.append(Spacer(1, 15*mm))
     story.append(Paragraph("QT / QTc ANALYSIS", title_style))
     story.append(HRFlowable(width="100%", thickness=2, color=ORANGE, spaceAfter=4*mm))
     
@@ -364,11 +364,14 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
                 end_chunk = min((page_idx + 1) * rows_per_page, n_chunks)
                 actual_rows = end_chunk - start_chunk
                 
-                fig, axes = plt.subplots(actual_rows, 1, figsize=(8.27, 10.5), gridspec_kw={'hspace': 0.0})
+                # Scale height dynamically so short recordings don't create huge blank spaces
+                fig_height = 10.5 * (max(1, actual_rows) / rows_per_page)
+                
+                fig, axes = plt.subplots(actual_rows, 1, figsize=(8.27, fig_height), gridspec_kw={'hspace': 0.0})
                 if actual_rows == 1: axes = [axes]
                 
                 # Title
-                fig.suptitle("Full Disclosure(CH1)", fontsize=14, fontweight='bold', y=0.95)
+                fig.suptitle("Full Disclosure(CH1)", fontsize=14, fontweight='bold', y=0.98 if actual_rows > 5 else 1.1)
                 
                 for r in range(actual_rows):
                     chunk_i = start_chunk + r
@@ -404,7 +407,10 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
                 plt.savefig(chart_path, dpi=200, bbox_inches='tight')
                 plt.close(fig)
                 
-                story.append(Image(chart_path, width=190*mm, height=250*mm))
+                # Scale Image height in PDF so it aligns cleanly at the top
+                pdf_img_height = 250 * mm * (max(1, actual_rows) / rows_per_page)
+                story.append(Image(chart_path, width=190*mm, height=pdf_img_height))
+                
                 if page_idx < int(np.ceil(n_chunks / rows_per_page)) - 1:
                     story.append(PageBreak())
                     
