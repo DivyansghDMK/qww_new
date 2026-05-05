@@ -404,7 +404,6 @@ class ECGMenu(QGroupBox):
         layout = QVBoxLayout(self)
         self.buttons = {}
         self.menu_button_defs = [
-            ("Save ECG", self.on_save_ecg),
             ("Open ECG", self.on_open_ecg),
             ("Working Mode", self.on_working_mode),
             ("Report Setup", self.on_report_setup),
@@ -453,7 +452,6 @@ class ECGMenu(QGroupBox):
             panel = self.current_open_panel
             self.hide_sliding_panel()
             reopen_map = {
-                "Save ECG": self.show_save_ecg,
                 "Open ECG": self.show_open_ecg,
                 "Working Mode": self.show_working_mode,
                 "Report Setup": self.show_report_setup,

@@ -3,7 +3,7 @@ from PyQt5.QtWidgets import (
     QDialog, QLineEdit, QComboBox, QFormLayout, QMessageBox, QSizePolicy, QStackedWidget, QScrollArea, QSpacerItem, QSlider,
     QRadioButton, QButtonGroup
 )
-from PyQt5.QtGui import QFont, QPixmap, QMovie, QPainter, QColor, QPen, QImage
+from PyQt5.QtGui import QFont, QPixmap, QMovie, QPainter, QColor, QPen, QImage, QIntValidator
 from PyQt5.QtCore import Qt, QTimer, QSize, QThread, pyqtSignal, QDate
 try:
     from PyQt5.QtMultimedia import QSound
@@ -489,6 +489,15 @@ class Dashboard(QWidget):
         # Admin button (disabled per request; keep logic available)
         self.admin_btn = QPushButton("Admin")
         self.admin_btn.setVisible(False)
+
+        # Patient registration moved from ECG menu ("Save ECG") to outer dashboard header.
+        self.new_registration_btn = QPushButton("New registration")
+        self.new_registration_btn.setStyleSheet(
+            "background: #ff6600; color: white; border-radius: 10px; padding: 4px 18px; margin-right: 10px;"
+        )
+        self.new_registration_btn.clicked.connect(self.show_new_registration_dialog)
+        self.new_registration_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        header.addWidget(self.new_registration_btn)
 
         self.support_btn = QPushButton("Help and Support")
         self.support_btn.setStyleSheet(
@@ -4294,8 +4303,230 @@ class Dashboard(QWidget):
                 
             if not hw_v:
                 hw_v = "Not Detected"
-                
+                 
             QMessageBox.information(self, "Version Information", f"Software Version: V 1.1.1\nHardware Version: {hw_v}")
+
+    def show_new_registration_dialog(self):
+        """Create/update patient registration details (previously 'Save ECG' in ECG menu)."""
+        dialog = QDialog(self)
+        dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        dialog.setWindowTitle(self.tr("New registration"))
+        dialog.setMinimumWidth(720)
+        dialog.setMinimumHeight(650)
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(14)
+
+        title = QLabel(self.tr("New registration"))
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet(
+            "font: bold 18pt Arial; color: white; background: #ff6600; border-radius: 10px; padding: 10px;"
+        )
+        title.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        layout.addWidget(title)
+
+        form_frame = QFrame()
+        form_frame.setStyleSheet(
+            "QFrame { background: #ffffff; border: 1px solid #e6eaf0; border-radius: 12px; padding: 14px; }"
+        )
+        form_layout = QVBoxLayout(form_frame)
+        form_layout.setSpacing(10)
+
+        label_style = (
+            "QLabel { font: bold 11pt Arial; color: #2c3e50; background: #f8f9fa; padding: 8px;"
+            " border: 1px solid #e0e0e0; border-radius: 6px; min-width: 140px; max-width: 140px; }"
+        )
+        input_style = (
+            "QLineEdit { font: 10pt Arial; color: #ff6600; background: white; padding: 8px;"
+            " border: 1px solid #e0e0e0; border-radius: 6px; min-height: 28px; }"
+            "QLineEdit:focus { border: 2px solid #ff6600; background: #fff8f0; }"
+        )
+
+        fields = ["Org. Name", "Org. Address", "Doctor", "Phone No.", "Patient Name"]
+        entries = {}
+        for field in fields:
+            row = QHBoxLayout()
+            row.setSpacing(10)
+            lbl = QLabel(self.tr(field))
+            lbl.setStyleSheet(label_style)
+            entry = QLineEdit()
+            entry.setPlaceholderText(self.tr(f"Enter {field}"))
+            entry.setStyleSheet(input_style)
+            entry.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            row.addWidget(lbl)
+            row.addWidget(entry)
+            form_layout.addLayout(row)
+            entries[field] = entry
+
+        entries["Org. Name"].setMaxLength(28)
+        entries["Org. Address"].setMaxLength(45)
+        entries["Doctor"].setMaxLength(20)
+        entries["Phone No."].setMaxLength(10)
+        entries["Phone No."].setValidator(QIntValidator(0, 2147483647, dialog))
+        entries["Patient Name"].setMaxLength(20)
+
+        age_row = QHBoxLayout()
+        age_row.setSpacing(10)
+        age_lbl = QLabel(self.tr("Age"))
+        age_lbl.setStyleSheet(label_style)
+        age_entry = QLineEdit()
+        age_entry.setPlaceholderText(self.tr("Enter Age"))
+        age_entry.setValidator(QIntValidator(0, 120, dialog))
+        age_entry.setStyleSheet(input_style)
+        age_entry.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        age_row.addWidget(age_lbl)
+        age_row.addWidget(age_entry)
+        form_layout.addLayout(age_row)
+        entries["Age"] = age_entry
+
+        gender_row = QHBoxLayout()
+        gender_row.setSpacing(10)
+        gender_lbl = QLabel(self.tr("Gender"))
+        gender_lbl.setStyleSheet(label_style)
+        gender_menu = QComboBox()
+        gender_menu.addItems([self.tr("Select Gender"), self.tr("Male"), self.tr("Female"), self.tr("Other")])
+        gender_menu.setStyleSheet(
+            "QComboBox { font: 10pt Arial; padding: 8px; border: 1px solid #e0e0e0; border-radius: 6px;"
+            " background: white; color: #ff6600; min-height: 28px; }"
+            "QComboBox:focus { border: 2px solid #ff6600; background: #fff8f0; }"
+        )
+        gender_menu.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        gender_row.addWidget(gender_lbl)
+        gender_row.addWidget(gender_menu)
+        form_layout.addLayout(gender_row)
+
+        # Prefill previously saved values (same behavior as former Save ECG panel)
+        try:
+            prefill = resolve_patient_profile(
+                explicit_patient=getattr(self, "patient_details", None),
+                username=getattr(self, "username", "") or "",
+                user_details=getattr(self, "user_details", {}) or {},
+            )
+
+            if not prefill:
+                base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+                patients_db_file = os.path.join(base_dir, "all_patients.json")
+                if os.path.exists(patients_db_file):
+                    with open(patients_db_file, "r") as jf:
+                        all_patients = json.load(jf) or {}
+                    patients = all_patients.get("patients") or []
+                    if patients:
+                        prefill = patients[-1]
+
+            if prefill:
+                pd = prefill
+                if pd.get("Org.") or pd.get("Org. Name"):
+                    entries["Org. Name"].setText(pd.get("Org.") or pd.get("Org. Name") or "")
+                if pd.get("Org. Address"):
+                    entries["Org. Address"].setText(str(pd.get("Org. Address") or ""))
+                if pd.get("doctor"):
+                    entries["Doctor"].setText(str(pd.get("doctor") or ""))
+                if pd.get("doctor_mobile"):
+                    entries["Phone No."].setText(str(pd.get("doctor_mobile") or ""))
+                first = str(pd.get("first_name") or "")
+                last = str(pd.get("last_name") or "")
+                full_name = (first + (" " + last if last else "")).strip()
+                if full_name:
+                    entries["Patient Name"].setText(full_name)
+                if pd.get("age") is not None:
+                    entries["Age"].setText(str(pd.get("age")))
+                if pd.get("gender"):
+                    idx = gender_menu.findText(str(pd.get("gender")))
+                    if idx != -1:
+                        gender_menu.setCurrentIndex(idx)
+        except Exception:
+            pass
+
+        layout.addWidget(form_frame)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch(1)
+
+        cancel_btn = QPushButton(self.tr("Cancel"))
+        cancel_btn.setStyleSheet(
+            "background: #f2f4f7; color: #111; border-radius: 10px; padding: 8px 18px;"
+            " font-weight: 700; border: 1px solid #d7dde6; min-width: 120px;"
+        )
+        cancel_btn.clicked.connect(dialog.reject)
+        btn_row.addWidget(cancel_btn)
+
+        save_btn = QPushButton(self.tr("Save"))
+        save_btn.setStyleSheet(
+            "background: #28a745; color: white; border-radius: 10px; padding: 8px 18px;"
+            " font-weight: 800; border: 1px solid #1e7e34; min-width: 160px;"
+        )
+        save_btn.clicked.connect(lambda: self._submit_new_registration(entries, gender_menu, dialog))
+        btn_row.addWidget(save_btn)
+
+        layout.addLayout(btn_row)
+        dialog.exec_()
+
+    def _submit_new_registration(self, entries, gender_menu, dialog):
+        values = {
+            label: entries[label].text().strip()
+            for label in ["Org. Name", "Org. Address", "Doctor", "Phone No.", "Patient Name", "Age"]
+        }
+        values["Gender"] = (gender_menu.currentText() or "").strip()
+
+        if any(v == "" for v in values.values()) or gender_menu.currentIndex() == 0:
+            QMessageBox.warning(
+                dialog,
+                self.tr("Missing Data"),
+                self.tr("Please fill all the fields and select gender."),
+            )
+            return
+
+        all_patients = {"patients": []}
+        try:
+            from datetime import datetime as _dt
+
+            name = values["Patient Name"]
+            first, *rest = name.split()
+            patient_details = {
+                "first_name": first,
+                "last_name": " ".join(rest),
+                "age": values["Age"],
+                "gender": values["Gender"],
+                "doctor": values["Doctor"],
+                "doctor_mobile": values["Phone No."],
+                "Org.": values.get("Org. Name", ""),
+                "Org. Name": values.get("Org. Name", ""),
+                "Org. Address": values.get("Org. Address", ""),
+                "patient_name": values.get("Patient Name", ""),
+                "date_time": _dt.now().strftime("%Y-%m-%d %H:%M:%S"),
+            }
+            setattr(self, "patient_details", patient_details)
+
+            # Persist to centralized all_patients.json database
+            base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+            patients_db_file = os.path.join(base_dir, "all_patients.json")
+
+            if os.path.exists(patients_db_file):
+                try:
+                    with open(patients_db_file, "r") as jf:
+                        all_patients = json.load(jf) or {"patients": []}
+                except Exception:
+                    all_patients = {"patients": []}
+
+            patient_details["id"] = len(all_patients.get("patients", []) or []) + 1
+            if "patients" not in all_patients:
+                all_patients["patients"] = []
+            all_patients["patients"].append(patient_details)
+
+            with open(patients_db_file, "w") as jf:
+                json.dump(all_patients, jf, indent=2)
+        except Exception as e:
+            print(f" Could not persist patient details: {e}")
+
+        QMessageBox.information(
+            dialog,
+            self.tr("Saved"),
+            self.tr(
+                f" Patient details saved successfully!\n\nTotal patients in database: {len(all_patients.get('patients', []) or [])}"
+            ),
+        )
+        dialog.accept()
 
     def show_help_support_dialog(self):
         """Open Help & Support hub dialog (more options can be added later)."""
