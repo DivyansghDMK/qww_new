@@ -49,7 +49,8 @@ def generate_holter_report(session_dir: str,
     except ImportError:
         _has_reportlab = False
 
-    output_path = os.path.join(session_dir, 'holter_report.pdf')
+    timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_path = os.path.join(session_dir, f'holter_report_{timestamp_str}.pdf')
 
     if not _has_reportlab:
         # Fallback: text report
@@ -113,7 +114,7 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
 
     story = []
 
-    # ── Cover / Header ─────────────────────────────────────────────────────────
+    # ── PAGE 1: FINAL SUMMARY ──────────────────────────────────────────────────
     story.append(Paragraph("COMPREHENSIVE ECG ANALYSIS REPORT", title_style))
     story.append(HRFlowable(width="100%", thickness=2, color=ORANGE, spaceAfter=4*mm))
 
@@ -146,7 +147,6 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
     story.append(pinfo_table)
     story.append(Spacer(1, 4*mm))
 
-    # ── Section 1: Overall Summary ─────────────────────────────────────────────
     story.append(Paragraph("1. RECORDING SUMMARY", h1_style))
     story.append(HRFlowable(width="100%", thickness=1, color=ORANGE, spaceAfter=2*mm))
 
@@ -189,9 +189,76 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
         f"Overall signal quality was <b>{avg_quality:.1f}%</b>. The automated event summary shows: <b>{top_events}</b>."
     )
     story.append(Paragraph(impression_text, body_style))
+    
+    auto_conclusion = _auto_conclusion(summary)
+    story.append(Paragraph(auto_conclusion, body_style))
+    story.append(Spacer(1, 10*mm))
 
-    # ── Section 2: HRV Analysis ────────────────────────────────────────────────
-    story.append(Paragraph("2. HEART RATE VARIABILITY (HRV)", h1_style))
+    # Signature box
+    sig_data = [
+        ['Reference Report Confirmed by', 'Doctor Name', 'Doctor Sign'],
+        ['', patient_info.get('doctor', ''), ''],
+    ]
+    sig_table = Table(sig_data, colWidths=[70*mm, 50*mm, 60*mm])
+    sig_table.setStyle(TableStyle([
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica'),
+        ('FONTSIZE', (0, 0), (-1, -1), 8),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
+        ('ROWBACKGROUNDS', (0, 0), (-1, 0), [GRAY]),
+        ('MINROWHEIGHT', (0, 1), (-1, 1), 20*mm),
+        ('PADDING', (0, 0), (-1, -1), 5),
+    ]))
+    story.append(sig_table)
+    
+    # ── PAGE 2: NUMERICAL SUMMARY TABLE ────────────────────────────────────────
+    story.append(PageBreak())
+    story.append(Paragraph("NUMERICAL SUMMARY TABLE", title_style))
+    story.append(HRFlowable(width="100%", thickness=2, color=ORANGE, spaceAfter=4*mm))
+    
+    story.append(Paragraph("2. ARRHYTHMIA SUMMARY", h1_style))
+    story.append(HRFlowable(width="100%", thickness=1, color=ORANGE, spaceAfter=2*mm))
+
+    if arrhy_counts:
+        arrhy_data = [['Arrhythmia Type', 'Episodes', 'Burden']]
+        total_chunks = max(1, summary.get('chunks_analyzed', 1))
+        for label, count in sorted(arrhy_counts.items(), key=lambda x: -x[1]):
+            burden = f"{count / total_chunks * 100:.1f}%"
+            arrhy_data.append([label, str(count), burden])
+
+        arrhy_table = Table(arrhy_data, colWidths=[90*mm, 30*mm, 30*mm])
+        arrhy_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), RED),
+            ('TEXTCOLOR',  (0, 0), (-1, 0), colors.white),
+            ('FONTNAME',   (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE',   (0, 0), (-1, -1), 9),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#FFEBEE')]),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
+            ('PADDING', (0, 0), (-1, -1), 5),
+        ]))
+        story.append(arrhy_table)
+    else:
+        story.append(Paragraph("No significant arrhythmias detected during this recording.", body_style))
+
+    # ── PAGE 3: HOURLY ANALYSIS ────────────────────────────────────────────────
+    story.append(PageBreak())
+    story.append(Paragraph("HOURLY ANALYSIS", title_style))
+    story.append(HRFlowable(width="100%", thickness=2, color=ORANGE, spaceAfter=4*mm))
+    
+    story.append(Paragraph("3. HOURLY HEART RATE TREND", h1_style))
+    story.append(HRFlowable(width="100%", thickness=1, color=ORANGE, spaceAfter=2*mm))
+
+    hourly_chart_path = _generate_hourly_hr_chart(session_dir, summary.get('hourly_hr', {}))
+    if hourly_chart_path and os.path.exists(hourly_chart_path):
+        story.append(Image(hourly_chart_path, width=170*mm, height=55*mm))
+    else:
+        story.append(Paragraph("Hourly HR chart not available.", small_style))
+
+    # ── PAGE 4: HRV ANALYSIS ───────────────────────────────────────────────────
+    story.append(PageBreak())
+    story.append(Paragraph("HEART RATE VARIABILITY (HRV)", title_style))
+    story.append(HRFlowable(width="100%", thickness=2, color=ORANGE, spaceAfter=4*mm))
+    
+    story.append(Paragraph("4. HRV TIME DOMAIN", h1_style))
     story.append(HRFlowable(width="100%", thickness=1, color=ORANGE, spaceAfter=2*mm))
 
     sdnn  = summary.get('sdnn', 0)
@@ -224,43 +291,12 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
         ('PADDING', (0, 0), (-1, -1), 5),
     ]))
     story.append(hrv_table)
-
-    # ── Section 3: Arrhythmia Summary ─────────────────────────────────────────
-    story.append(Paragraph("3. ARRHYTHMIA SUMMARY", h1_style))
-    story.append(HRFlowable(width="100%", thickness=1, color=ORANGE, spaceAfter=2*mm))
-
-    if arrhy_counts:
-        arrhy_data = [['Arrhythmia Type', 'Episodes', 'Burden']]
-        total_chunks = max(1, summary.get('chunks_analyzed', 1))
-        for label, count in sorted(arrhy_counts.items(), key=lambda x: -x[1]):
-            burden = f"{count / total_chunks * 100:.1f}%"
-            arrhy_data.append([label, str(count), burden])
-
-        arrhy_table = Table(arrhy_data, colWidths=[90*mm, 30*mm, 30*mm])
-        arrhy_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), RED),
-            ('TEXTCOLOR',  (0, 0), (-1, 0), colors.white),
-            ('FONTNAME',   (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE',   (0, 0), (-1, -1), 9),
-            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#FFEBEE')]),
-            ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
-            ('PADDING', (0, 0), (-1, -1), 5),
-        ]))
-        story.append(arrhy_table)
-    else:
-        story.append(Paragraph("No significant arrhythmias detected during this recording.", body_style))
-
-    # ── Section 4: Hourly HR Chart ─────────────────────────────────────────────
-    story.append(Paragraph("4. HOURLY HEART RATE TREND", h1_style))
-    story.append(HRFlowable(width="100%", thickness=1, color=ORANGE, spaceAfter=2*mm))
-
-    hourly_chart_path = _generate_hourly_hr_chart(session_dir, summary.get('hourly_hr', {}))
-    if hourly_chart_path and os.path.exists(hourly_chart_path):
-        story.append(Image(hourly_chart_path, width=170*mm, height=55*mm))
-    else:
-        story.append(Paragraph("Hourly HR chart not available.", small_style))
-
-    # ── Section 5: Interval Statistics ────────────────────────────────────────
+    
+    # ── PAGE 5: QT / QTC ANALYSIS ──────────────────────────────────────────────
+    story.append(PageBreak())
+    story.append(Paragraph("QT / QTc ANALYSIS", title_style))
+    story.append(HRFlowable(width="100%", thickness=2, color=ORANGE, spaceAfter=4*mm))
+    
     jsonl_path = os.path.join(session_dir, 'metrics.jsonl')
     interval_stats = _compute_interval_stats(jsonl_path)
 
@@ -298,30 +334,83 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
     ]))
     story.append(int_table)
 
-    # ── Section 6: Conclusion ──────────────────────────────────────────────────
-    story.append(Spacer(1, 4*mm))
-    story.append(Paragraph("6. PHYSICIAN INTERPRETATION", h1_style))
-    story.append(HRFlowable(width="100%", thickness=1, color=ORANGE, spaceAfter=2*mm))
-
-    auto_conclusion = _auto_conclusion(summary)
-    story.append(Paragraph(auto_conclusion, body_style))
-    story.append(Spacer(1, 10*mm))
-
-    # Signature box
-    sig_data = [
-        ['Reference Report Confirmed by', 'Doctor Name', 'Doctor Sign'],
-        ['', patient_info.get('doctor', ''), ''],
-    ]
-    sig_table = Table(sig_data, colWidths=[70*mm, 50*mm, 60*mm])
-    sig_table.setStyle(TableStyle([
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica'),
-        ('FONTSIZE', (0, 0), (-1, -1), 8),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.lightgrey),
-        ('ROWBACKGROUNDS', (0, 0), (-1, 0), [GRAY]),
-        ('MINROWHEIGHT', (0, 1), (-1, 1), 20*mm),
-        ('PADDING', (0, 0), (-1, -1), 5),
-    ]))
-    story.append(sig_table)
+    # ── FULL DISCLOSURE ECG STRIPS ─────────────────────────────────────────────
+    # User requested: "all waves should be attached to the report for how many time it has run all 12 lead data should go with time stamp"
+    ecgh_path = os.path.join(session_dir, 'recording.ecgh')
+    if os.path.exists(ecgh_path):
+        story.append(PageBreak())
+        story.append(Paragraph("FULL DISCLOSURE ECG (10s CHUNKS)", title_style))
+        story.append(HRFlowable(width="100%", thickness=2, color=ORANGE, spaceAfter=4*mm))
+        
+        try:
+            from .replay_engine import HolterReplayEngine
+            import matplotlib
+            matplotlib.use('Agg')
+            import matplotlib.pyplot as plt
+            
+            engine = HolterReplayEngine(ecgh_path)
+            dur = int(engine.duration_sec)
+            
+            chunk_sec = 60.0 # 1 minute per row
+            rows_per_page = 30 # 30 minutes per page
+            fs = engine.fs if hasattr(engine, 'fs') else 250
+            
+            n_chunks = int(np.ceil(dur / chunk_sec))
+            if n_chunks == 0: n_chunks = 1
+            
+            # Iterate by pages
+            for page_idx in range(int(np.ceil(n_chunks / rows_per_page))):
+                start_chunk = page_idx * rows_per_page
+                end_chunk = min((page_idx + 1) * rows_per_page, n_chunks)
+                actual_rows = end_chunk - start_chunk
+                
+                fig, axes = plt.subplots(actual_rows, 1, figsize=(8.27, 10.5), gridspec_kw={'hspace': 0.0})
+                if actual_rows == 1: axes = [axes]
+                
+                # Title
+                fig.suptitle("Full Disclosure(CH1)", fontsize=14, fontweight='bold', y=0.95)
+                
+                for r in range(actual_rows):
+                    chunk_i = start_chunk + r
+                    start_t = chunk_i * chunk_sec
+                    engine._current_sec = start_t + (chunk_sec/2)
+                    data = engine.get_all_leads_data(window_sec=chunk_sec)
+                    
+                    if data is None or data.shape[0] == 0:
+                        continue
+                        
+                    ch1_data = data[0] # Lead 1
+                    x_time = np.linspace(start_t, start_t + chunk_sec, len(ch1_data))
+                    
+                    ax = axes[r]
+                    ax.plot(x_time, ch1_data, color='black', linewidth=0.5)
+                    
+                    # Format timestamp
+                    h = int(start_t // 3600)
+                    m = int((start_t % 3600) // 60)
+                    s = int(start_t % 60)
+                    time_str = f"{h:02d}:{m:02d}:{s:02d}"
+                    
+                    ax.set_ylabel(time_str, fontsize=6, rotation=0, labelpad=25, va='center')
+                    ax.axis('off') # remove borders
+                    
+                    # Add back the ylabel so it stays visible even with axis('off')
+                    ax.text(-0.01, 0.5, time_str, transform=ax.transAxes, 
+                            fontsize=8, fontweight='bold', va='center', ha='right')
+                            
+                plt.tight_layout(rect=[0.05, 0.02, 0.98, 0.92])
+                
+                chart_path = os.path.join(session_dir, f'full_disclosure_page_{page_idx}.png')
+                plt.savefig(chart_path, dpi=200, bbox_inches='tight')
+                plt.close(fig)
+                
+                story.append(Image(chart_path, width=190*mm, height=250*mm))
+                if page_idx < int(np.ceil(n_chunks / rows_per_page)) - 1:
+                    story.append(PageBreak())
+                    
+        except Exception as e:
+            print(f"Error generating full disclosure: {e}")
+            story.append(Paragraph(f"Could not generate waveforms: {e}", body_style))
 
     doc.build(story)
     print(f"[HolterReport] PDF saved: {output_path}")

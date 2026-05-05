@@ -1470,16 +1470,31 @@ class HolterReplayPanel(QWidget):
         longest_rr = (max(rr_n) / 1000.0) if rr_n else 0.0
         ve = int(sum(1 for m in metrics_list if any("V" in str(a) for a in (m.get("arrhythmias", []) or []))))
         sve = int(sum(1 for m in metrics_list if any(("PAC" in str(a)) or ("SVE" in str(a)) for a in (m.get("arrhythmias", []) or []))))
+        
+        # Calculate percentages and durations
+        total_chunks = len(metrics_list) if metrics_list else 1
+        tachy_chunks = sum(1 for m in metrics_list if m.get('hr_mean', 0) > 100)
+        brady_chunks = sum(1 for m in metrics_list if 0 < m.get('hr_mean', 0) < 60)
+        af_chunks = sum(1 for m in metrics_list if any("AF" in str(a) for a in (m.get("arrhythmias", []) or [])))
+        
+        # Each chunk is roughly 4 seconds.
+        chunk_dur = 4.0
+        tachy_pct = (tachy_chunks / total_chunks) * 100.0
+        brady_pct = (brady_chunks / total_chunks) * 100.0
+        af_dur_str = f"{(af_chunks * chunk_dur) / 60.0:.1f} m"
+        
         return [
-            ("Total", str(total_beats)),
-            ("X Total", str(pauses)),
+            ("Total NNs", str(total_beats)),
             ("AVG HR", f"{avg_hr:.0f} bpm"),
             ("Max HR", f"{max_hr:.0f} bpm"),
             ("Min HR", f"{min_hr:.0f} bpm"),
-            ("V Total", str(ve)),
-            ("S Total", str(sve)),
             ("Longest RR Interval", f"{longest_rr:.2f}s"),
             ("RRI (>=2.0s)", str(pauses)),
+            ("During Tachy (>100)", f"{tachy_pct:.1f}%"),
+            ("During Brady (<60)", f"{brady_pct:.1f}%"),
+            ("AF Duration", af_dur_str),
+            ("V Total", str(ve)),
+            ("S Total", str(sve)),
         ]
 
 
@@ -1577,11 +1592,13 @@ class ECGStripCanvas(QWidget):
         self._hover_pos = None
         self.update()
 
-    def set_data(self, *args):
+    def set_data(self, *args, beat_annotations=None, start_sec=0.0):
         if len(args) == 2:
             self._data = np.asarray(args[1], dtype=float)
         elif len(args) == 1:
             self._data = np.asarray(args[0], dtype=float)
+        self._beat_annotations = beat_annotations or []
+        self._start_sec = start_sec
         self.update()
 
     def mousePressEvent(self, event):
@@ -1619,17 +1636,18 @@ class ECGStripCanvas(QWidget):
             return np.array([]), 0.0, 1.0
         sig = np.asarray(self._data, dtype=float)
         
-        # Apply gain around the median to avoid shifting the DC offset off-screen.
+        # Calculate the true baseline of the raw signal
         baseline = float(np.median(sig))
+        
+        # Apply gain relative to the baseline
         d = (sig - baseline) * self._gain + baseline
         
-        if self.lead_name == "aVR":
-            # User explicitly requested 0 to -4096 Y-axis mapping for aVR.
-            # aVR data is synthesized to be centered at -2048, so it perfectly fits this range.
-            return d, -4096.0, 4096.0
-        else:
-            # User requested exactly 0 to 4096 Y-axis bounds for all other leads.
-            return d, 0.0, 4096.0
+        # Universally center the signal for ALL leads. 
+        # By dynamically setting the minimum bound relative to the baseline,
+        # we ensure the baseline always maps perfectly to the vertical center (y = 0.5 * h),
+        # while strictly preserving the 4096 amplitude uncropped scale.
+        mn = baseline - 2048.0
+        return d, mn, 4096.0
 
     def _x_to_index(self, x: int, width: int, n: int) -> int:
         if n <= 1 or width <= 1:
@@ -1670,12 +1688,45 @@ class ECGStripCanvas(QWidget):
         # (if n_visible >= len(d) we show all data, which appears compressed at slow speed)
         x_scale = w / max(1, len(d) - 1)
         for i in range(1, len(d)):
-            x1 = int((i - 1) * x_scale)
-            y1 = int(h - (d[i-1] - mn) / rng * h)
-            x2 = int(i * x_scale)
-            y2 = int(h - (d[i] - mn) / rng * h)
-            painter.drawLine(x1, y1, x2, y2)
-
+            x1 = (i - 1) * x_scale
+            y1 = h - (d[i-1] - mn) / rng * h
+            x2 = i * x_scale
+            y2 = h - (d[i] - mn) / rng * h
+            painter.drawLine(QPointF(x1, y1), QPointF(x2, y2))
+            
+        # --- Draw Clinical Beat Annotations ---
+        if hasattr(self, '_beat_annotations') and self._beat_annotations:
+            font = painter.font()
+            font.setPixelSize(10)
+            font.setBold(True)
+            painter.setFont(font)
+            
+            end_sec = self._start_sec + len(d) / self._fs
+            
+            for beat in self._beat_annotations:
+                ts = beat['timestamp']
+                # Check if beat is within the visible window
+                if self._start_sec <= ts <= end_sec:
+                    # Calculate x coordinate
+                    pct = (ts - self._start_sec) / (end_sec - self._start_sec)
+                    bx = int(pct * w)
+                    
+                    lbl = beat['label']
+                    # Color code labels: Normal=White, PVC=Red, PAC=Cyan, AF=Magenta, Pause/Block=Yellow
+                    if lbl == 'N':
+                        color = COL_WHITE
+                    elif lbl == 'V':
+                        color = "#FF3333"
+                    elif lbl == 'S':
+                        color = "#00FFFF"
+                    elif lbl == 'AF':
+                        color = "#FF00FF"
+                    else:
+                        color = "#FFFF00"
+                        
+                    painter.setPen(QPen(QColor(color)))
+                    painter.drawText(bx - 4, 12, lbl)
+                    
         if self._mode == TOOL_RULER and self._start_pos and self._curr_pos:
             rpen = QPen(QColor("#00FFFF"), 2, Qt.DashLine)
             painter.setPen(rpen)
@@ -1730,9 +1781,14 @@ class ECGStripCanvas(QWidget):
             if len(sub) > 1:
                 sub_min = float(np.min(sub))
                 sub_max = float(np.max(sub))
-                pad = max(20.0, (sub_max - sub_min) * 0.35)
-                view_min = sub_min - pad
-                view_max = sub_max + pad
+                
+                # Symmetrically frame the magnifier around the local median baseline
+                # This prevents asymmetrical waves from pushing the baseline to the bottom/top edge
+                base_val = float(np.median(sub))
+                max_dev = max(abs(sub_max - base_val), abs(sub_min - base_val))
+                pad = max(20.0, max_dev * 0.35)
+                view_min = base_val - max_dev - pad
+                view_max = base_val + max_dev + pad
                 view_rng = max(1.0, view_max - view_min)
 
                 path_pen = QPen(QColor(self._color))
@@ -1741,10 +1797,10 @@ class ECGStripCanvas(QWidget):
                 x_scale_sub = inner.width() / max(1, len(sub) - 1)
                 prev = None
                 for i in range(len(sub)):
-                    xx = int(inner.left() + i * x_scale_sub)
-                    yy = int(inner.bottom() - ((sub[i] - view_min) / view_rng) * inner.height())
+                    xx = inner.left() + i * x_scale_sub
+                    yy = inner.bottom() - ((sub[i] - view_min) / view_rng) * inner.height()
                     if prev is not None:
-                        painter.drawLine(prev[0], prev[1], xx, yy)
+                        painter.drawLine(QPointF(prev[0], prev[1]), QPointF(xx, yy))
                     prev = (xx, yy)
 
                 focus_x = int(inner.left() + ((src_center - i0) / max(1, len(sub) - 1)) * inner.width())
@@ -3213,7 +3269,7 @@ class HolterEditStripsPanel(QWidget):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
 
-        # Left: event list
+        # --- LEFT: Event List (20% width) ---
         left = QWidget()
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(0, 0, 0, 0)
@@ -3233,47 +3289,98 @@ class HolterEditStripsPanel(QWidget):
             btn.setStyleSheet(_style_btn())
             nav_row.addWidget(btn)
         left_layout.addLayout(nav_row)
-        layout.addWidget(left, 1)
+        layout.addWidget(left, 2)
 
-        # Right: 4 thumbnail grids (Max HR, Min HR, Sinus Max, Sinus Min)
-        right = QWidget()
-        right_layout = QVBoxLayout(right)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(4)
+        # --- CENTER: 2x2 Thumbnail Boxes (30% width) ---
+        center = QWidget()
+        center_layout = QVBoxLayout(center)
+        center_layout.setContentsMargins(0, 0, 0, 0)
+        center_layout.setSpacing(4)
 
         # Tool buttons
         tool_row = QHBoxLayout()
-        for icon in ["↻", "☰", "⏕", "⏖", "⏜", "⏝", "⏟", "⏪"]:
+        for icon in ["↻", "☰", "⏕", "⏖", "⏜", "⏝", "⏟", "⏪", "⏩"]:
             btn = QPushButton(icon)
             btn.setStyleSheet(_style_btn())
-            btn.setFixedSize(30, 30)
+            btn.setFixedSize(28, 28)
             tool_row.addWidget(btn)
         tool_row.addStretch()
-        right_layout.addLayout(tool_row)
+        center_layout.addLayout(tool_row)
 
-        # 2×2 grid of thumbnail strips
         thumb_grid = QGridLayout()
         thumb_grid.setSpacing(8)
         self._thumb_frames = []
         for row, col, title in [(0,0,"Maximum Heart Rate"),(0,1,"Minimum Heart Rate"),
                                  (1,0,"Sinus Max HR"),(1,1,"Sinus Min HR")]:
             frame = QFrame()
-            frame.setStyleSheet(f"QFrame{{background:{COL_BLACK};border:1px solid {COL_GREEN_DRK};border-radius:6px;}}")
+            # Styled with white/gray border to match reference
+            frame.setStyleSheet(f"QFrame{{background:{COL_DARK};border:1px solid #888888;border-radius:4px;}}")
             fl = QVBoxLayout(frame)
             fl.setContentsMargins(6, 6, 6, 6)
             fl.setSpacing(2)
-            title_lbl = QLabel(title)
-            title_lbl.setStyleSheet(f"color:{COL_GREEN};font-size:11px;font-weight:bold;border:none;")
-            fl.addWidget(title_lbl)
-            strip = ECGStripCanvas(height=80)
-            fl.addWidget(strip)
+            
+            header_w = QWidget()
+            header_w.setStyleSheet("border:none;")
+            hl = QHBoxLayout(header_w)
+            hl.setContentsMargins(0,0,0,0)
+            
+            t_lbl = QLabel(title)
+            t_lbl.setStyleSheet("color:#FFFFFF;font-size:12px;font-weight:bold;")
+            hl.addWidget(t_lbl)
+            hl.addStretch()
+            hr_lbl = QLabel("HR: --")
+            hr_lbl.setStyleSheet("color:#FFFF00;font-size:11px;")
+            hl.addWidget(hr_lbl)
+            fl.addWidget(header_w)
+            
+            time_lbl = QLabel("19:18:22 (07-31)")
+            time_lbl.setStyleSheet("color:#AAAAAA;font-size:10px;")
+            fl.addWidget(time_lbl)
+            
+            # Using 3 mini canvases to simulate 3 channels in the thumbnail box
+            for _ in range(3):
+                strip = ECGStripCanvas(height=35)
+                strip.setStyleSheet("border:1px solid #444444;")
+                fl.addWidget(strip)
+                self._thumb_frames.append(strip)
+                
             thumb_grid.addWidget(frame, row, col)
-            self._thumb_frames.append(strip)
-        right_layout.addLayout(thumb_grid, 1)
+            
+        center_layout.addLayout(thumb_grid)
+        center_layout.addStretch() # Keep boxes compact at the top
+        layout.addWidget(center, 3)
+
+        # --- RIGHT: Large Clinical Strip View (50% width) ---
+        right = QWidget()
+        right_layout = QVBoxLayout(right)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(4)
+        
+        main_frame = QFrame()
+        main_frame.setStyleSheet(f"QFrame{{background:{COL_BLACK};border:1px solid #888888;border-radius:4px;}}")
+        ml = QVBoxLayout(main_frame)
+        ml.setContentsMargins(8, 8, 8, 8)
+        
+        header_lbl = QLabel("Detailed View  -  N N N N N N  -  19:18:22")
+        header_lbl.setStyleSheet("color:#FFFF00;font-size:12px;font-weight:bold;border:none;")
+        ml.addWidget(header_lbl)
+        
+        self._main_strip_1 = ECGStripCanvas(height=110)
+        self._main_strip_2 = ECGStripCanvas(height=110)
+        self._main_strip_3 = ECGStripCanvas(height=110)
+        
+        for name, strip in [("CH1", self._main_strip_1), ("CH2", self._main_strip_2), ("CH3", self._main_strip_3)]:
+            lbl = QLabel(name)
+            lbl.setStyleSheet(f"color:{COL_GREEN};border:none;font-weight:bold;")
+            ml.addWidget(lbl)
+            ml.addWidget(strip)
+            
+        ml.addStretch()
+        right_layout.addWidget(main_frame, 1)
 
         self._mini = ECGStripCanvas(height=40, color="#00AA00")
         right_layout.addWidget(self._mini)
-        layout.addWidget(right, 2)
+        layout.addWidget(right, 5)
 
     def load_events(self, events: list, summary: dict):
         self._ev_table.setRowCount(len(events))
@@ -3283,14 +3390,32 @@ class HolterEditStripsPanel(QWidget):
                 item.setForeground(QColor(COL_WHITE))
                 self._ev_table.setItem(i, j, item)
 
-    def set_replay_frame(self, data):
+    def set_replay_frame(self, data, metrics_dict=None, current_sec=0.0):
         if data is None or data.shape[0] < 1: return
         N = data.shape[1]
-        x = np.linspace(0, N/500.0, N) if N > 0 else []
+        x = np.linspace(0, N/250.0, N) if N > 0 else []
+        
+        start_sec = max(0.0, current_sec - 5.0) # 10s window centered
+        all_beats = metrics_dict.get('all_beats', []) if metrics_dict else []
+        
         if N > 0:
-            for strip in self._thumb_frames:
-                strip.set_data(x, data[0].copy())
-            self._mini.set_data(x, data[0].copy())
+            # Update thumbnails (cycle through CH1, CH2, CH3 if available)
+            for i, strip in enumerate(self._thumb_frames):
+                ch_idx = i % 3
+                if ch_idx < data.shape[0]:
+                    strip.set_data(x, data[ch_idx].copy(), beat_annotations=all_beats, start_sec=start_sec)
+                else:
+                    strip.set_data(x, data[0].copy(), beat_annotations=all_beats, start_sec=start_sec)
+            
+            # Update large main strips
+            if hasattr(self, "_main_strip_1") and data.shape[0] > 0:
+                self._main_strip_1.set_data(x, data[0].copy(), beat_annotations=all_beats, start_sec=start_sec)
+            if hasattr(self, "_main_strip_2") and data.shape[0] > 1:
+                self._main_strip_2.set_data(x, data[1].copy(), beat_annotations=all_beats, start_sec=start_sec)
+            if hasattr(self, "_main_strip_3") and data.shape[0] > 2:
+                self._main_strip_3.set_data(x, data[2].copy(), beat_annotations=all_beats, start_sec=start_sec)
+                
+            self._mini.set_data(x, data[0].copy(), beat_annotations=all_beats, start_sec=start_sec)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -4046,20 +4171,43 @@ class HolterMainWindow(QDialog):
 
     def _generate_report(self):
         from PyQt5.QtWidgets import QProgressDialog
-        progress = QProgressDialog("Generating Comprehensive ECG Analysis Report...", None, 0, 0, self)
+        from PyQt5.QtCore import QThread, pyqtSignal
+        
+        progress = QProgressDialog("Generating Comprehensive ECG Analysis Report. Please wait...", None, 0, 0, self)
+        progress.setWindowTitle("Please Wait")
         progress.setWindowModality(Qt.WindowModal)
         progress.setStyleSheet(f"QProgressDialog{{background:{COL_DARK};color:{COL_GREEN};}}")
+        progress.setRange(0, 0)
         progress.show()
-        QApplication.processEvents()
-        try:
-            from .report_generator import generate_holter_report
-            path = generate_holter_report(
-                session_dir=self.session_dir,
-                patient_info=self.patient_info,
-                summary=self._summary,
-            )
+        
+        class ReportWorker(QThread):
+            finished = pyqtSignal(str)
+            error = pyqtSignal(str)
             
-            # Save to history
+            def __init__(self, session_dir, patient_info, summary):
+                super().__init__()
+                self.session_dir = session_dir
+                self.patient_info = patient_info
+                self.summary = summary
+                
+            def run(self):
+                try:
+                    from .report_generator import generate_holter_report
+                    path = generate_holter_report(
+                        session_dir=self.session_dir,
+                        patient_info=self.patient_info,
+                        summary=self.summary,
+                    )
+                    self.finished.emit(path)
+                except Exception as e:
+                    import traceback
+                    traceback.print_exc()
+                    self.error.emit(str(e))
+                    
+        self._report_worker = ReportWorker(self.session_dir, self.patient_info, self._summary)
+        
+        def on_finished(path):
+            progress.close()
             try:
                 from dashboard.history_window import append_history_entry
                 h_pat = self.patient_info.copy() if self.patient_info else {}
@@ -4069,20 +4217,31 @@ class HolterMainWindow(QDialog):
                 _uname = getattr(_p, "username", "") if _p is not None else ""
                 _full = (getattr(_p, "user_details", {}) or {}).get("full_name") or _uname
                 append_history_entry(
-                    h_pat,
-                    path,
-                    report_type="Comprehensive ECG Analysis",
-                    username=_uname,
-                    owner_full_name=_full,
+                    h_pat, path, report_type="Comprehensive ECG Analysis",
+                    username=_uname, owner_full_name=_full
                 )
             except Exception as h_err:
                 print(f"Failed to append Holter history: {h_err}")
                 
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Report Generated")
+            msg.setText(f"Comprehensive ECG Analysis report saved:\n{path}")
+            msg.setIcon(QMessageBox.Information)
+            msg.setStyleSheet(f"QMessageBox {{ background: {COL_BLACK}; }} QLabel {{ color: {COL_WHITE}; font-size: 12px; }}")
+            msg.exec_()
+            
+        def on_error(err_str):
             progress.close()
-            QMessageBox.information(self, "Report Generated", f"Comprehensive ECG Analysis report saved:\n{path}")
-        except Exception as e:
-            progress.close()
-            QMessageBox.warning(self, "Report Error", f"Could not generate report:\n{e}")
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Report Error")
+            msg.setText(f"Could not generate report:\n{err_str}")
+            msg.setIcon(QMessageBox.Warning)
+            msg.setStyleSheet(f"QMessageBox {{ background: {COL_BLACK}; }} QLabel {{ color: {COL_WHITE}; font-size: 12px; }}")
+            msg.exec_()
+            
+        self._report_worker.finished.connect(on_finished)
+        self._report_worker.error.connect(on_error)
+        self._report_worker.start()
 
     def attach_writer(self, writer, session_dir: str = "", patient_info: dict = None):
         self._writer = writer

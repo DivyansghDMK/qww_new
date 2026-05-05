@@ -311,7 +311,7 @@ class HolterAnalysisWorker(threading.Thread):
         result["brady_beats"] = int(np.sum(rr_intervals > 1500)) if len(rr_intervals) else 0
         result["tachy_beats"] = int(np.sum(rr_intervals < 400)) if len(rr_intervals) else 0
         try:
-            beat_classes, template_summary, classified_events = self._classify_beats(
+            beat_classes, template_summary, classified_events, all_beats = self._classify_beats(
                 lead_ii=best_signal,
                 r_peaks=r_peaks,
                 rr_intervals=rr_intervals,
@@ -320,13 +320,14 @@ class HolterAnalysisWorker(threading.Thread):
             )
         except Exception as e:
             print(f"[HolterWorker] Beat classification error: {e}")
-            beat_classes, template_summary, classified_events = ({}, [], [])
+            beat_classes, template_summary, classified_events, all_beats = ({}, [], [], [])
         result["beat_class_counts"] = beat_classes
         result["template_summary"] = template_summary
         result["classified_events"] = classified_events
         result["template_count"] = len(template_summary)
-        result["ve_beats"] = int(beat_classes.get("VE", 0))
-        result["sve_beats"] = int(beat_classes.get("SVE", 0))
+        result["all_beats"] = all_beats
+        result["ve_beats"] = int(beat_classes.get("V", 0))
+        result["sve_beats"] = int(beat_classes.get("S", 0))
 
         try:
             result["st_mv"] = round(self._estimate_st(best_signal, r_peaks, fs), 4)
@@ -363,18 +364,47 @@ class HolterAnalysisWorker(threading.Thread):
             print(f"[HolterWorker] t={start_sec:.0f}s | HR={result['hr_mean']:.0f} | Beats={result['beat_count']} | Arrhy={arrhythmias} | took {result['analysis_ms']:.0f}ms")
 
     def _detect_r_peaks(self, lead_ii: np.ndarray, fs: int):
-        """Simple Pan-Tompkins-inspired R-peak detection for HRV/classification."""
+        """Clinical-grade Pan-Tompkins R-peak detection for accurate HRV and classification."""
         from scipy.signal import butter, filtfilt, find_peaks
-        b, a = butter(2, [5 / (fs / 2), 20 / (fs / 2)], btype='band')
+        
+        # 1. Bandpass filter (5-15 Hz) to isolate QRS energy and remove baseline wander / T-waves
+        b, a = butter(2, [5.0 / (fs / 2), 15.0 / (fs / 2)], btype='band')
         filtered = filtfilt(b, a, lead_ii)
-        squared = filtered ** 2
+        
+        # 2. Derivative to enhance steep QRS slopes
+        diff = np.diff(filtered)
+        diff = np.append(diff, 0)
+        
+        # 3. Squaring to emphasize large differences and make all positive
+        squared = diff ** 2
+        
+        # 4. Moving window integration (150ms window)
         window = int(0.15 * fs)
         kernel = np.ones(window) / window
         mwa = np.convolve(squared, kernel, mode='same')
-        threshold = np.mean(mwa) * 0.5
-        min_dist = int(0.3 * fs)
-        r_peaks, _ = find_peaks(mwa, height=threshold, distance=min_dist)
-
+        
+        # 5. Adaptive thresholding
+        threshold = np.mean(mwa) + 0.5 * np.std(mwa)
+        min_dist = int(0.25 * fs)  # 250ms refractory period (~240 bpm max)
+        
+        mwa_peaks, _ = find_peaks(mwa, height=threshold, distance=min_dist)
+        
+        # 6. Refine peaks to the actual R-wave maximum on the original signal for perfect template alignment
+        refined_peaks = []
+        search_win = int(0.06 * fs) # Search +/- 60ms around MWA peak
+        for p in mwa_peaks:
+            i0 = max(0, p - search_win)
+            i1 = min(len(lead_ii), p + search_win)
+            if i1 > i0:
+                # Find the local maximum (assuming positive R-waves for Lead II)
+                # For universally robust detection, we find the max absolute deviation from local median
+                segment = lead_ii[i0:i1]
+                median_val = np.median(segment)
+                local_peak = i0 + np.argmax(np.abs(segment - median_val))
+                refined_peaks.append(local_peak)
+                
+        r_peaks = np.unique(np.array(refined_peaks))
+        
         rr_intervals = np.diff(r_peaks) / fs * 1000
         per_beat_hr = np.array([])
         if len(rr_intervals) > 0:
@@ -490,7 +520,8 @@ class HolterAnalysisWorker(threading.Thread):
                     'first_timestamp': round(float(min(b.get('timestamp', 0.0) for b in beats)), 3),
                 })
 
-        return class_counts, template_rows, classified_events
+        all_beats = [{'timestamp': b['timestamp'], 'label': b['label']} for b in beat_records]
+        return class_counts, template_rows, classified_events, all_beats
 
     @staticmethod
     def _estimate_qrs_width_ms(segment: np.ndarray, fs: int) -> float:
@@ -513,17 +544,17 @@ class HolterAnalysisWorker(threading.Thread):
             return 'Brady'
         if hr_prev > 130:
             return 'Tachy'
-        if qrs_width_ms >= 130 and rr_prev_ms <= rr_median_ms * 0.95:
-            return 'VE'
-        if rr_prev_ms < rr_median_ms * 0.8 and qrs_width_ms < 130:
-            return 'SVE'
+        if qrs_width_ms >= 120 and rr_prev_ms <= rr_median_ms * 0.95:
+            return 'V'
+        if rr_prev_ms < rr_median_ms * 0.85 and qrs_width_ms < 120:
+            return 'S'
         return 'N'
 
     @staticmethod
     def _event_label_from_class(label: str) -> str:
         mapping = {
-            'VE': 'PVC Candidate',
-            'SVE': 'PAC Candidate',
+            'V': 'PVC Candidate',
+            'S': 'PAC Candidate',
             'Brady': 'Brady Episode',
             'Tachy': 'Tachy Episode',
             'Pause': 'Pause Episode',

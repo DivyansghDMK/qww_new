@@ -249,10 +249,22 @@ class HolterReplayEngine:
 
         hr_values = [m['hr_mean'] for m in self._metrics if m.get('hr_mean', 0) > 0]
         beat_counts = [m.get('beat_count', 0) for m in self._metrics]
-        rr_stds = [m['rr_std'] for m in self._metrics if m.get('rr_std', 0) > 0]
-        rmssds = [m['rmssd'] for m in self._metrics if m.get('rmssd', 0) > 0]
-        pnn50s = [m['pnn50'] for m in self._metrics if m.get('pnn50', 0) >= 0]
         qualities = [m['quality'] for m in self._metrics if m.get('quality', 0) > 0]
+
+        # Properly aggregate ALL RR intervals for true global HRV metrics
+        all_rr_intervals = []
+        for m in self._metrics:
+            if 'rr_intervals_list' in m and m['rr_intervals_list']:
+                all_rr_intervals.extend(m['rr_intervals_list'])
+        
+        all_rr = np.array(all_rr_intervals, dtype=float)
+        if len(all_rr) > 1:
+            global_sdnn = round(float(np.std(all_rr)), 1)
+            diff_rr = np.diff(all_rr)
+            global_rmssd = round(float(np.sqrt(np.mean(diff_rr ** 2))), 1)
+            global_pnn50 = round(float(100.0 * np.sum(np.abs(diff_rr) > 50) / len(diff_rr)), 2)
+        else:
+            global_sdnn = global_rmssd = global_pnn50 = 0.0
 
         # Arrhythmia counts
         arrhy_counts: Dict[str, int] = {}
@@ -291,9 +303,9 @@ class HolterReplayEngine:
             'avg_hr': round(float(np.mean(hr_values)), 1) if hr_values else 0.0,
             'max_hr': round(float(np.max(hr_values)), 1) if hr_values else 0.0,
             'min_hr': round(float(np.min(hr_values)), 1) if hr_values else 0.0,
-            'sdnn': round(float(np.mean(rr_stds)), 1) if rr_stds else 0.0,
-            'rmssd': round(float(np.mean(rmssds)), 1) if rmssds else 0.0,
-            'pnn50': round(float(np.mean(pnn50s)), 2) if pnn50s else 0.0,
+            'sdnn': global_sdnn,
+            'rmssd': global_rmssd,
+            'pnn50': global_pnn50,
             'avg_quality': round(float(np.mean(qualities)), 3) if qualities else 1.0,
             'arrhythmia_counts': arrhy_counts,
             'hourly_hr': hourly_avg,
