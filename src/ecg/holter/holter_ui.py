@@ -828,6 +828,7 @@ class HolterReplayPanel(QWidget):
     seek_requested = pyqtSignal(float)
     lead_changed   = pyqtSignal(int)
     section_requested = pyqtSignal(str)
+    frame_received = pyqtSignal(object)
 
     def __init__(self, parent=None, duration_sec: float = 86400):
         super().__init__(parent)
@@ -864,10 +865,36 @@ class HolterReplayPanel(QWidget):
 
         self._rr_mode = "RR"
         self._time_scope = "whole"
-        self._rr_trend_full = HolterRRTrendCanvas(title="RR interval time scatter plot")
-        self._rr_trend_zoom = HolterRRTrendCanvas(title="RR interval (selected window)")
-        layout.addWidget(self._rr_trend_full)
-        layout.addWidget(self._rr_trend_zoom)
+
+        # ── 48-hour session summary bar (replaces the two RR trend canvases) ──
+        summary_frame = QFrame()
+        summary_frame.setStyleSheet(f"QFrame{{background:{UI_PANEL};border:1px solid {UI_BORDER};border-radius:6px;}}")
+        summary_frame.setFixedHeight(72)
+        summary_layout = QHBoxLayout(summary_frame)
+        summary_layout.setContentsMargins(12, 6, 12, 6)
+        summary_layout.setSpacing(20)
+        self._summary_labels = {}
+        for key, title in [("duration","Duration"),("total_beats","Total Beats"),("avg_hr","Avg HR"),("max_hr","Max HR"),("min_hr","Min HR"),("pauses","Pauses"),("ve","VE Beats"),("sve","SVE Beats"),("sdnn","SDNN"),("rmssd","rMSSD")]:
+            col = QVBoxLayout()
+            col.setSpacing(2)
+            t = QLabel(title)
+            t.setStyleSheet(f"color:{UI_MUTED};font-size:9px;font-weight:600;border:none;")
+            v = QLabel("—")
+            v.setStyleSheet(f"color:{UI_TEXT};font-size:13px;font-weight:700;border:none;")
+            col.addWidget(t)
+            col.addWidget(v)
+            self._summary_labels[key] = v
+            summary_layout.addLayout(col)
+        summary_layout.addStretch()
+        layout.addWidget(summary_frame)
+
+        # ── HR trend mini-chart (40h-48h of data at a glance) ──
+        self._hr_trend_canvas = HolterRRTrendCanvas(title="Heart Rate Trend (full recording)")
+        self._hr_trend_canvas.setFixedHeight(50)
+        layout.addWidget(self._hr_trend_canvas)
+        # Keep these as dummy attrs so update_lorenz doesn't crash
+        self._rr_trend_full = self._hr_trend_canvas
+        self._rr_trend_zoom = self._hr_trend_canvas
 
         time_row = QHBoxLayout()
         self._btn_time_whole = QPushButton("Time-whole")
@@ -936,24 +963,59 @@ class HolterReplayPanel(QWidget):
         ecg_right = QFrame()
         ecg_right.setStyleSheet(f"QFrame{{background:{COL_BLACK};border:1px solid {COL_GREEN_DRK};border-radius:6px;}}")
         ecg_right_layout = QVBoxLayout(ecg_right)
-        ecg_right_layout.setContentsMargins(6, 6, 6, 6)
-        ecg_right_layout.setSpacing(4)
+        ecg_right_layout.setContentsMargins(4, 4, 4, 4)
+        ecg_right_layout.setSpacing(2)
 
-        self._ch_labels = []
-        self._ch_strips = []
-        for i in range(3):
-            lbl = QLabel(f"CH{i+1}")
-            lbl.setStyleSheet(f"color:{COL_WHITE};font-weight:bold;font-size:11px;border:none;")
-            strip = ECGStripCanvas(height=140, color="#00FF00", pen_width=1.0)
+        # ── 12-lead scrollable grid (1 column, 12 rows) ──
+        leads_scroll = QScrollArea()
+        leads_scroll.setWidgetResizable(True)
+        leads_scroll.setFrameShape(QFrame.NoFrame)
+        leads_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        leads_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        leads_scroll.setStyleSheet(f"QScrollArea{{background:{COL_BLACK};border:none;}}")
+        leads_container = QWidget()
+        leads_container.setStyleSheet(f"background:{COL_BLACK};")
+        leads_vbox = QVBoxLayout(leads_container)
+        leads_vbox.setContentsMargins(2, 2, 2, 2)
+        leads_vbox.setSpacing(2)
+
+        self._lead_names_ordered = ["I","II","III","aVR","aVL","aVF","V1","V2","V3","V4","V5","V6"]
+        self._lead_strips = {}   # lead_name -> ECGStripCanvas
+        self._ch_strips = []     # backward-compat list for gain/speed handlers
+        for lead in self._lead_names_ordered:
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(4)
+            lbl = QLabel(lead)
+            lbl.setFixedWidth(34)
+            lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            lbl.setStyleSheet(f"color:{COL_GREEN};font-weight:bold;font-size:10px;border:none;")
+            # Height 60px makes them compact enough to fit well, but scrollable if needed
+            strip = ECGStripCanvas(height=60, color="#00FF00", pen_width=0.9, lead_name=lead)
             strip.set_gain(1.0)
-            self._ch_labels.append(lbl)
+            self._lead_strips[lead] = strip
             self._ch_strips.append(strip)
-            ecg_right_layout.addWidget(lbl)
-            ecg_right_layout.addWidget(strip, 1)
+            row.addWidget(lbl)
+            row.addWidget(strip, 1)
+            leads_vbox.addLayout(row)
 
-        self._mini_strip = ECGStripCanvas(height=48, color="#00AA00", pen_width=0.9)
-        ecg_right_layout.addWidget(self._mini_strip)
+        leads_scroll.setWidget(leads_container)
+        ecg_right_layout.addWidget(leads_scroll, 3)
+
+        # Full-width rhythm strip (Lead II) at bottom
+        rhythm_row = QHBoxLayout()
+        rhythm_row.setSpacing(4)
+        rhythm_lbl = QLabel("II")
+        rhythm_lbl.setFixedWidth(34)
+        rhythm_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        rhythm_lbl.setStyleSheet(f"color:{COL_GREEN};font-weight:bold;font-size:10px;border:none;")
+        self._mini_strip = ECGStripCanvas(height=40, color="#00AA00", pen_width=0.9)
+        rhythm_row.addWidget(rhythm_lbl)
+        rhythm_row.addWidget(self._mini_strip, 1)
+        ecg_right_layout.addLayout(rhythm_row)
+
         top_splitter.addWidget(ecg_right)
+
 
         ov_frame = QFrame()
         ov_frame.setStyleSheet(f"QFrame{{background:{UI_PANEL};border:1px solid {UI_BORDER};border-radius:6px;}}")
@@ -974,7 +1036,7 @@ class HolterReplayPanel(QWidget):
         self._overview_table.setStyleSheet(_table_style())
         ov_layout.addWidget(self._overview_table, 1)
         top_splitter.addWidget(ov_frame)
-        top_splitter.setSizes([360, 980, 300])
+        top_splitter.setSizes([300, 1050, 260])
         layout.addWidget(top_splitter, 2)
 
         # Scrub slider row
@@ -1134,7 +1196,15 @@ class HolterReplayPanel(QWidget):
             if hasattr(self, "_mini_strip"):
                 self._mini_strip.set_paper_speed(int(val))
             if btn: btn.setText(f"Paper speed:{val}mm/s")
-            # In a real app, this would change self.duration_shown or similar
+            # Adjust strip_length_sec so the replay engine delivers the right amount of data.
+            # Reference: 25mm/s = 10s window; scale inversely with speed.
+            self._strip_length_sec = 10.0 * (25.0 / max(1.0, float(val)))
+            # Re-seek to force data reload with the new strip length
+            try:
+                current_pos = float(self._slider.value())
+                self.seek_requested.emit(current_pos)
+            except Exception:
+                pass
             return
         elif "Strip Length" in tool_name:
             lengths = [3, 7, 10, 15, 30]
@@ -1191,10 +1261,37 @@ class HolterReplayPanel(QWidget):
         sec = max(0.0, min(sec, float(self.duration_sec)))
         self.seek_requested.emit(sec)
 
+    def update_summary(self, summary: dict):
+        if hasattr(self, '_summary_labels'):
+            def set_lbl(k, v):
+                if k in self._summary_labels: self._summary_labels[k].setText(str(v))
+            
+            dur = summary.get('duration_sec', 0)
+            h = int(dur // 3600)
+            m = int((dur % 3600) // 60)
+            set_lbl("duration", f"{h:02d}h {m:02d}m")
+            set_lbl("total_beats", summary.get('total_beats', 0))
+            set_lbl("avg_hr", f"{summary.get('avg_hr', 0)} bpm")
+            set_lbl("max_hr", f"{summary.get('max_hr', 0)} bpm")
+            set_lbl("min_hr", f"{summary.get('min_hr', 0)} bpm")
+            set_lbl("pauses", summary.get('pauses', 0))
+            set_lbl("ve", summary.get('ve_beats', 0))
+            set_lbl("sve", summary.get('sve_beats', 0))
+            set_lbl("sdnn", f"{summary.get('sdnn', 0)} ms")
+            set_lbl("rmssd", f"{summary.get('rmssd', 0)} ms")
+
     def set_replay_engine(self, engine):
         self._replay_engine = engine
         self._slider.setRange(0, int(engine.duration_sec))
         engine.set_position_callback(self._on_position_update)
+        
+        # Wire up data callback safely for thread-safe playback updates
+        try:
+            self.frame_received.disconnect()
+        except TypeError:
+            pass
+        self.frame_received.connect(self.set_replay_frame)
+        engine.set_data_callback(lambda data: self.frame_received.emit(data))
 
     def _on_slider(self, value):
         self._pos_label.setText(_sec_to_hms(value))
@@ -1235,14 +1332,18 @@ class HolterReplayPanel(QWidget):
             t0 = float(m.get('t', 0.0) or 0.0)
             if 'rr_intervals_list' in m:
                 rr_list = [float(v) for v in (m.get('rr_intervals_list') or []) if float(v) > 0]
-                rr_all.extend(rr_list)
-                dur = float(m.get('duration', 0.0) or 0.0)
-                step = (dur / max(1, len(rr_list))) if dur > 0 else 0.2
-                for i, rr in enumerate(rr_list):
-                    rr_points.append((t0 + i * step, rr))
-            elif m.get('rr_ms', 0) > 200:
-                # Fallback to average if individual beats missing
-                rr_all.append(m['rr_ms'])
+                if rr_list:
+                    rr_all.extend(rr_list)
+                    dur = float(m.get('duration', 0.0) or 0.0)
+                    step = (dur / max(1, len(rr_list))) if dur > 0 else 0.2
+                    for i, rr in enumerate(rr_list):
+                        rr_points.append((t0 + i * step, rr))
+                    continue  # skip fallback if list data available
+            # Fallback: use single rr_ms value per chunk
+            rr_val = float(m.get('rr_ms', 0) or 0)
+            if rr_val > 200:
+                rr_all.append(rr_val)
+                rr_points.append((t0, rr_val))
                 
         rr_n = [r for r in rr_all if r > 200]
         if len(rr_n) >= 2:
@@ -1256,7 +1357,7 @@ class HolterReplayPanel(QWidget):
         self._update_overview_table(metrics_list, rr_n)
             
     def set_replay_frame(self, data):
-        """Update focused 3-channel strips + template thumbnails."""
+        """Update all 12 lead strips and compute Lorenz from data when no RR metrics."""
         if data is None or data.shape[0] < 12:
             return
 
@@ -1265,33 +1366,87 @@ class HolterReplayPanel(QWidget):
             data = data[:, -strip_len:]
 
         N = data.shape[1]
-        x = np.linspace(0, N/500.0, N) if N > 0 else []
+        x = np.linspace(0, N / 500.0, N) if N > 0 else []
         if N <= 0:
             return
 
-        lead_idx = self._lead_combo.currentIndex() if hasattr(self, "_lead_combo") else 0
-        indices = [lead_idx % 12, (lead_idx + 1) % 12, (lead_idx + 2) % 12]
         lead_names = ["I","II","III","aVR","aVL","aVF","V1","V2","V3","V4","V5","V6"]
-        for i, strip in enumerate(self._ch_strips):
-            src = indices[i]
-            strip.set_data(x, data[src].copy())
-            if i < len(getattr(self, "_ch_labels", [])):
-                self._ch_labels[i].setText(f"CH{i+1} ({lead_names[src]})")
 
-        # Template thumbnails from short beats around recent segment
-        center = N // 2
-        w = min(220, max(80, N // 6))
+        # Ensure data has 12 channels
+        if data.shape[0] < 12:
+            new_data = np.zeros((12, data.shape[1]), dtype=data.dtype)
+            new_data[:data.shape[0], :] = data
+            for i in range(data.shape[0], 12):
+                new_data[i, :] = 2048.0
+            data = new_data
+
+        # --- Force mathematical derivation of augmented limb leads ---
+        # Einthoven's Law dictates these leads are perfectly locked to I and II.
+        # We unconditionally derive them to overwrite any floating hardware noise.
+        I_lead = data[0]
+        II_lead = data[1]
+        
+        data[2] = (II_lead - 2048.0) - (I_lead - 2048.0) + 2048.0  # III = II - I
+        # User wants aVR mapped to 0 to -4096. We synthesize it inverted and centered at -2048.
+        data[3] = -((I_lead - 2048.0) + (II_lead - 2048.0)) / 2.0 - 2048.0
+        data[4] = (I_lead - 2048.0) - (II_lead - 2048.0) / 2.0 + 2048.0  # aVL = I - II/2
+        data[5] = (II_lead - 2048.0) - (I_lead - 2048.0) / 2.0 + 2048.0  # aVF = II - I/2
+
+        # --- Feed all 12 lead strips ---
+        lead_strips = getattr(self, "_lead_strips", {})
+        for idx, lead in enumerate(lead_names):
+            if idx < data.shape[0] and lead in lead_strips:
+                lead_strips[lead].set_data(x, data[idx].copy())
+
+        # Mini strip shows Lead II
+        if hasattr(self, "_mini_strip") and data.shape[0] > 1:
+            self._mini_strip.set_data(x, data[1].copy())
+
+        # Template thumbnails (use first 4 leads: I, II, III, aVR)
         for i, ts in enumerate(getattr(self, "_template_thumbs", [])):
-            c = int(max(0, min(N - 1, center + (i - 1.5) * w)))
-            a = int(max(0, c - w // 2))
-            b = int(min(N, c + w // 2))
-            seg = data[indices[min(i, 2)], a:b] if b > a else data[indices[min(i, 2)], :]
+            src = min(i, data.shape[0] - 1)
+            center = N // 2
+            w = min(220, max(80, N // 6))
+            a = max(0, center - w // 2)
+            b = min(N, center + w // 2)
+            seg = data[src, a:b] if b > a else data[src, :]
             tx = np.linspace(0, len(seg) / 500.0, len(seg)) if len(seg) > 0 else []
-            ts.set_data(tx, seg.copy() if len(seg) > 0 else data[indices[min(i, 2)]].copy())
+            ts.set_data(tx, seg.copy() if len(seg) > 0 else data[src].copy())
 
-        # Mini strip follows selected primary channel
-        if hasattr(self, "_mini_strip"):
-            self._mini_strip.set_data(x, data[indices[0]].copy())
+        # --- On-the-fly Lorenz from data when Lorenz canvas has no data ---
+        lorenz = getattr(self, "_lorenz_canvas", None)
+        if lorenz is not None and (not lorenz._x):  # no RR data loaded from metrics
+            self._compute_lorenz_from_signal(data, N)
+
+    def _compute_lorenz_from_signal(self, data: np.ndarray, N: int):
+        """Detect R-peaks in Lead II and populate the Lorenz scatter from the raw ECG data."""
+        try:
+            from scipy.signal import butter, filtfilt, find_peaks
+            fs = 500.0
+            lead_ii = np.asarray(data[1], dtype=float) if data.shape[0] > 1 else np.asarray(data[0], dtype=float)
+            # Bandpass 5-20 Hz to isolate QRS
+            nyq = fs / 2.0
+            b, a = butter(2, [5.0 / nyq, 20.0 / nyq], btype='band')
+            filtered = filtfilt(b, a, lead_ii)
+            squared = filtered ** 2
+            win = max(1, int(0.15 * fs))
+            mwa = np.convolve(squared, np.ones(win) / win, mode='same')
+            threshold = max(np.mean(mwa) * 0.5, 1e-6)
+            min_dist = max(1, int(0.3 * fs))
+            peaks, _ = find_peaks(mwa, height=threshold, distance=min_dist)
+            if len(peaks) >= 3:
+                rr_ms = np.diff(peaks) / fs * 1000.0
+                rr_valid = [float(r) for r in rr_ms if 250 < r < 2500]
+                if len(rr_valid) >= 2:
+                    rr_x = rr_valid[:-1]
+                    rr_y = rr_valid[1:]
+                    self._lorenz_canvas.set_data(rr_x, rr_y)
+                    if hasattr(self, "_rr_trend_full"):
+                        rr_points = [(i * 0.5, rr) for i, rr in enumerate(rr_valid)]
+                        self._rr_trend_full.set_points(rr_points)
+                        self._rr_trend_zoom.set_points(rr_points[-400:] if len(rr_points) > 400 else rr_points)
+        except Exception:
+            pass
 
     def _update_overview_table(self, metrics_list: list, rr_n: list):
         if not hasattr(self, "_overview_table"):
@@ -1390,11 +1545,12 @@ class LorenzCanvas(QWidget):
 
 class ECGStripCanvas(QWidget):
     """Simple ECG strip renderer with interactive measurement tools."""
-    def __init__(self, parent=None, height: int = 80, color: str = "#00FF00", pen_width: float = 0.7):
+    def __init__(self, parent=None, height: int = 80, color: str = "#00FF00", pen_width: float = 0.7, lead_name: str = ""):
         super().__init__(parent)
         self._data = np.zeros(200)
         self._color = color
         self._pen_width = pen_width
+        self.lead_name = lead_name
         self._gain = 1.0
         self._speed = 25
         self.setFixedHeight(height)
@@ -1461,10 +1617,19 @@ class ECGStripCanvas(QWidget):
     def _get_display_signal(self):
         if self._data.size < 2:
             return np.array([]), 0.0, 1.0
-        mn, mx = 0.0, 4096.0
-        rng = 4096.0
-        d = np.clip(((self._data - 2048.0) * self._gain) + 2048.0, mn, mx)
-        return d, mn, rng
+        sig = np.asarray(self._data, dtype=float)
+        
+        # Apply gain around the median to avoid shifting the DC offset off-screen.
+        baseline = float(np.median(sig))
+        d = (sig - baseline) * self._gain + baseline
+        
+        if self.lead_name == "aVR":
+            # User explicitly requested 0 to -4096 Y-axis mapping for aVR.
+            # aVR data is synthesized to be centered at -2048, so it perfectly fits this range.
+            return d, -4096.0, 4096.0
+        else:
+            # User requested exactly 0 to 4096 Y-axis bounds for all other leads.
+            return d, 0.0, 4096.0
 
     def _x_to_index(self, x: int, width: int, n: int) -> int:
         if n <= 1 or width <= 1:
@@ -1496,7 +1661,14 @@ class ECGStripCanvas(QWidget):
         pen = QPen(QColor(self._color))
         pen.setWidthF(self._pen_width)
         painter.setPen(pen)
-        x_scale = w / (len(d) - 1)
+        # --- Paper speed: control how many samples are visible per screen width ---
+        # At 25mm/s: show all data. At 50mm/s: stretch (show half). At 12.5mm/s: compress (show double).
+        speed_factor = max(0.25, min(float(self._speed) / 25.0, 4.0))
+        n_visible = max(2, int(round(len(d) / speed_factor)))
+        if n_visible < len(d):
+            d = d[-n_visible:]   # show the most recent n_visible samples (stretched)
+        # (if n_visible >= len(d) we show all data, which appears compressed at slow speed)
+        x_scale = w / max(1, len(d) - 1)
         for i in range(1, len(d)):
             x1 = int((i - 1) * x_scale)
             y1 = int(h - (d[i-1] - mn) / rng * h)
@@ -1556,11 +1728,11 @@ class ECGStripCanvas(QWidget):
                 painter.drawLine(inner.left(), gy, inner.right(), gy)
 
             if len(sub) > 1:
-                sub_min = max(mn, float(np.min(sub)))
-                sub_max = min(mn + rng, float(np.max(sub)))
-                pad = max(80.0, (sub_max - sub_min) * 0.35)
-                view_min = max(mn, sub_min - pad)
-                view_max = min(mn + rng, sub_max + pad)
+                sub_min = float(np.min(sub))
+                sub_max = float(np.max(sub))
+                pad = max(20.0, (sub_max - sub_min) * 0.35)
+                view_min = sub_min - pad
+                view_max = sub_max + pad
                 view_rng = max(1.0, view_max - view_min)
 
                 path_pen = QPen(QColor(self._color))
@@ -3521,26 +3693,9 @@ class HolterMainWindow(QDialog):
             self._status_bar.stop_requested.connect(self._stop_recording)
             main_layout.addWidget(self._status_bar)
 
-        # ── Summary KPI cards ──
-        self._summary_cards = HolterSummaryCards()
-        self._summary_cards.update_summary(self._summary)
-        main_layout.addWidget(self._summary_cards)
+        # ── Summary KPI cards ── (hidden to restore image-1 layout; replay panel has its own 12-lead grid)
 
-        # ── Body: 12-lead grid (left) + tabs (right) ──
-        body = QSplitter(Qt.Horizontal)
-        body.setChildrenCollapsible(False)
-        body.setHandleWidth(1)
-        body.setStyleSheet(f"QSplitter{{background:{UI_BG};}} QSplitter::handle{{background:{UI_BORDER};}}")
-
-        # Left: 12-lead wave grid
-        self._wave_panel = HolterWaveGridPanel(
-            parent=self,
-            live_source=self._live_source,
-            replay_engine=self._replay_engine
-        )
-        body.addWidget(self._wave_panel)
-
-        # Right: tabs
+        # ── Body: tabs fill full width (12-lead grid is inside HolterReplayPanel) ──
         right_frame = QFrame()
         right_frame.setStyleSheet(f"QFrame{{background:{UI_BG};}}")
         right_layout = QVBoxLayout(right_frame)
@@ -3599,6 +3754,7 @@ class HolterMainWindow(QDialog):
             self._replay_panel.seek_requested.connect(self._on_seek_requested)
         self._replay_panel.section_requested.connect(self._on_workspace_section_requested)
         self._replay_panel.update_lorenz(self._metrics_list)
+        self._replay_panel.update_summary(self._summary)
         self._tabs.addTab(self._replay_panel, "REPLAY")
 
         # Beat Templates
@@ -3612,8 +3768,7 @@ class HolterMainWindow(QDialog):
         self._hist_panel.update_from_metrics(self._metrics_list)
         self._tabs.addTab(self._hist_panel, "HISTOGRAM")
 
-        # Lorenz (part of Replay, but user wants separate tab if possible)
-        # Dedicated Lorenz workspace (re-using the replay review panel layout).
+        # Dedicated Lorenz workspace
         self._lorenz_panel = HolterReplayPanel(duration_sec=duration)
         if self._replay_engine:
             self._lorenz_panel.set_replay_engine(self._replay_engine)
@@ -3644,8 +3799,8 @@ class HolterMainWindow(QDialog):
         self._edit_strips_panel.load_events(events, self._summary)
         self._tabs.addTab(self._edit_strips_panel, "EDIT STRIPS")
 
-        # Report Tendency (using a trend view)
-        self._report_tendency_panel = HolterSTPanel() # Reusing ST panel for tendency trend
+        # Report Tendency
+        self._report_tendency_panel = HolterSTPanel()
         self._tabs.addTab(self._report_tendency_panel, "REPORT TENDENCY")
 
         # Report Table
@@ -3653,25 +3808,24 @@ class HolterMainWindow(QDialog):
         self._report_table_panel.update_from_metrics(self._metrics_list)
         self._tabs.addTab(self._report_table_panel, "REPORT TABLE")
 
-        # Expert Review (Keep as backup or hide)
+        # Expert Review (available but not in tabs)
         self._expert_panel = HolterExpertReviewPanel()
         self._expert_panel.update_from_metrics(self._metrics_list, self._summary)
         self._expert_panel.seek_requested.connect(self._on_seek_requested)
-        # self._tabs.addTab(self._expert_panel, "Expert Review")
 
         # HRV Analysis
         self._hrv_panel = HolterHRVPanel()
         self._hrv_panel.update_hrv(self._metrics_list, self._summary)
         self._tabs.addTab(self._hrv_panel, "HRV")
 
-        # Record browser / system-wide preview
+        # Record browser
         self._record_mgmt_panel = HolterRecordManagementPanel(
             output_dir=_resolve_recordings_dir(self.session_dir)
         )
         self._record_mgmt_panel.session_selected.connect(self.load_completed_session)
         self._tabs.addTab(self._record_mgmt_panel, "RECORDINGS")
 
-        # Report Preview (insight)
+        # Report Preview
         scroll_insight = QScrollArea()
         scroll_insight.setWidgetResizable(True)
         scroll_insight.setFrameShape(QFrame.NoFrame)
@@ -3696,21 +3850,11 @@ class HolterMainWindow(QDialog):
         self._action_buttons["Delete"].clicked.connect(self._delete_recording)
         for label, btn in self._filter_buttons.items():
             btn.clicked.connect(lambda _, t=label: self._apply_recordings_filter(t))
-        body.addWidget(right_frame)
-        body.setSizes([760, 620])
-        body.setStretchFactor(0, 2)
-        body.setStretchFactor(1, 3)
 
-        body_scroll = QScrollArea()
-        body_scroll.setWidgetResizable(True)
-        body_scroll.setFrameShape(QFrame.NoFrame)
-        body_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        body_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        body_scroll.setStyleSheet(f"QScrollArea{{background:{UI_BG};border:none;}}")
-        body_scroll.setWidget(body)
-        main_layout.addWidget(body_scroll, 1)
+        main_layout.addWidget(right_frame, 1)
         if hasattr(self, '_analysis_state'):
             self._analysis_state.setText(f"Focused view: {self._tabs.tabText(self._tabs.currentIndex())}")
+
 
     # ── Callbacks ──────────────────────────────────────────────────────────────
 
@@ -3718,12 +3862,15 @@ class HolterMainWindow(QDialog):
         if self._replay_engine:
             self._replay_engine.seek(target_sec)
             try:
-                data = self._replay_engine.get_all_leads_data(window_sec=10.0)
+                # Use the replay panel's current strip length (changes with paper speed)
+                window_sec = getattr(getattr(self, '_replay_panel', None), '_strip_length_sec', 10.0) or 10.0
+                data = self._replay_engine.get_all_leads_data(window_sec=float(window_sec))
                 if hasattr(self, '_wave_panel'):
                     self._wave_panel.set_replay_frame(data)
                 self._broadcast_replay_frame(data)
             except Exception:
                 pass
+
 
     def _broadcast_replay_frame(self, data):
         for panel in [getattr(self, p, None) for p in [

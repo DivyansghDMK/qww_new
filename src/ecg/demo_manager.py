@@ -919,16 +919,12 @@ class DemoManager:
                 slice_mean = np.mean(centered_slice[finite_mask])
                 centered_slice = centered_slice - slice_mean
 
-                # --- DEMO MODE Y-AXIS FIX: Offset data to center at 2048 or -2048 ---
-                if lead == 'aVR':
-                    base_offset = -2048
-                    self.ecg_test_page.plot_widgets[i].setYRange(-4096, 0)
-                else:
-                    base_offset = 2048
-                    self.ecg_test_page.plot_widgets[i].setYRange(0, 4096)
+                # --- CLINICAL 12-LEAD Y-AXIS: symmetric around 0 for ALL leads ---
+                # aVR's negative polarity comes from its formula (-(I+II)/2), not axis flip.
+                self.ecg_test_page.plot_widgets[i].setYRange(-2048, 2048)
 
-                # Apply gain only to the wave, not the axis
-                display_data = base_offset + (centered_slice * effective_gain)
+                # Apply gain to the wave; baseline is centred at 0
+                display_data = centered_slice * effective_gain
                 display_data = np.nan_to_num(display_data, copy=False)
                 
                 # Apply stronger smoothing for smooth wave appearance in 12-lead view
@@ -1032,20 +1028,20 @@ class DemoManager:
                                     # Fallback: use max * 1.2
                                     stable_span = max(200.0, float(np.max(abs_display)) * 1.2)
                                 
-                                # Store stable range
+                                # Store stable range (always symmetric around 0)
                                 self._demo_lead_ranges[i] = stable_span
                                 
-                                # Apply range immediately
+                                # Apply symmetric range immediately
                                 try:
                                     self.ecg_test_page.plot_widgets[i].setYRange(-stable_span, stable_span)
                                 except Exception:
                                     pass
                                 continue
                 
-                # Fallback: default range if calculation failed
-                self._demo_lead_ranges[i] = 300.0
+                # Fallback: default symmetric range if calculation failed
+                self._demo_lead_ranges[i] = 2048.0
                 try:
-                    self.ecg_test_page.plot_widgets[i].setYRange(-300.0, 300.0)
+                    self.ecg_test_page.plot_widgets[i].setYRange(-2048, 2048)
                 except Exception:
                     pass
         

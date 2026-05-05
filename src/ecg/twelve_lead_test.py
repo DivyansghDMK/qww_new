@@ -1207,11 +1207,9 @@ class ECGTestPage(QWidget):
             lead_color = lead_colors.get(lead_name, '#000000')
             
             plot_widget.setTitle(self.leads[i], color=lead_color, size='10pt')
-            # Set fixed Y-range: 0-4095 for non-AVR leads (centered at 2048), -4095-0 for AVR (centered at -2048)
-            if lead_name == 'aVR':
-                y_min, y_max = -4095, 0
-            else:
-                y_min, y_max = 0, 4095
+            # Clinical 12-lead: symmetric Y-axis centered at 0 for ALL leads.
+            # aVR is naturally negative from its formula; no axis inversion needed.
+            y_min, y_max = -2048, 2048
             plot_widget.setYRange(y_min, y_max)
             vb = plot_widget.getViewBox()
             if vb is not None:
@@ -4043,12 +4041,9 @@ class ECGTestPage(QWidget):
                 y_max = data_mean + padding
                 print(f" Basic Y-range (fallback): base_padding={base_padding:.1f}, padding={padding:.1f}")
             
-            # Use fixed Y-range: 0-4095 for non-AVR leads (centered at 2048), -4095-0 for AVR (centered at -2048)
-            lead_name = self.leads[plot_index] if plot_index < len(self.leads) else ""
-            if lead_name == 'aVR':
-                y_min, y_max = -4095, 0
-            else:
-                y_min, y_max = 0, 4095
+            # Clinical 12-lead ECG: symmetric Y-axis centred at 0 for ALL leads.
+            # aVR's negative polarity comes from the formula (-(I+II)/2), not a flipped axis.
+            y_min, y_max = -2048, 2048
             
             # Update the plot's Y-range (fixed, no auto-scaling)
             self.plot_widgets[plot_index].setYRange(y_min, y_max, padding=0)
@@ -5648,15 +5643,10 @@ class ECGTestPage(QWidget):
                 data_center = 0.0
                 peak_deviation = 0.0
             
-            # Fixed Y-range: 0-4095 for non-AVR leads (centered at 2048), -4095-0 for AVR (centered at -2048)
-            # This ensures waves are always centered appropriately and visible in the outer window frame
-            lead_name = self.leads[plot_index] if plot_index < len(self.leads) else ""
-            if lead_name == 'aVR':
-                y_min, y_max = -4095, 0
-                center_str = "-2048"
-            else:
-                y_min, y_max = 0, 4095
-                center_str = "2048"
+            # Clinical 12-lead ECG: symmetric Y-axis centred at 0 for ALL leads.
+            # aVR's negative polarity comes from the formula (-(I+II)/2), not a flipped axis.
+            y_min, y_max = -2048, 2048
+            center_str = "0"
             
             # OPTIMIZED: Reduce Y-range print frequency for better performance
             if not hasattr(self, '_y_range_print_count'):
@@ -8887,13 +8877,9 @@ class ECGTestPage(QWidget):
                                     resampled = np.interp(x_dst, x_src, src)
                                 # --------------------------------------
                             
-                            # Center the wave: baseline stays at 2048/-2048, only variations (peaks) grow with gain
-                            # Apply offset AFTER gain so baseline position is fixed, only amplitude variations scale
-                            lead_name = self.leads[i] if i < len(self.leads) else ""
-                            if lead_name == 'aVR':
-                                resampled = resampled - 2048  # Center baseline at -2048 for AVR
-                            else:
-                                resampled = resampled + 2048  # Center baseline at 2048 for other leads
+                            # Signal is already zero-centred by the baseline subtraction above.
+                            # Y-axis is symmetric (-2048 to +2048) for ALL leads — no offset needed.
+                            # aVR will naturally sit below baseline due to its formula (-(I+II)/2).
 
                             # Generate X-axis to ensure correct time scaling on the 0-10s plot
                             # We map the data to [0, seconds_to_show]
@@ -9348,12 +9334,9 @@ class ECGTestPage(QWidget):
                             
                             time_axis = np.arange(n, dtype=float) / sampling_rate
                             
-                            # Center the wave: add 2048 for non-AVR leads, add -2048 for AVR
-                            lead_name = self.leads[i] if i < len(self.leads) else ""
-                            if lead_name == 'aVR':
-                                scaled_data = scaled_data - 2048  # Center at -2048 for AVR
-                            else:
-                                scaled_data = scaled_data + 2048  # Center at 2048 for other leads
+                            # Signal is already zero-centred by the baseline subtraction above.
+                            # Y-axis is symmetric (-2048 to +2048) for ALL leads — no offset needed.
+                            # aVR will naturally sit below baseline due to its formula (-(I+II)/2).
                             
                             # INSTANT DISPLAY: Update plot immediately, even with minimal data
                             # Avoid cropping: small padding and explicit x-range

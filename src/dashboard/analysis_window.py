@@ -195,8 +195,10 @@ class InteractiveLeadCanvas(FigureCanvas):
             self._draw_caliper_preview(self._caliper_x[0], xd)
 
         if tool == TOOL_MAGNIFY:
-            self._mag_pos = QPoint(int(event.x), self.height() - int(event.y))
-            self.update()
+            # The Qt mouseMoveEvent keeps the magnifier position in widget
+            # coordinates. Avoid redrawing the Matplotlib canvas here because
+            # it can race with the overlay paint pass and cause flicker.
+            return
 
         self.draw_idle()
 
@@ -481,20 +483,32 @@ class InteractiveLeadCanvas(FigureCanvas):
         x_span = max(1e-6, (x_max - x_min) / max(zoom, 1))
         y_span = max(1.0, abs(y_max - y_min) / max(zoom, 1))
 
-        view_x0 = max(x_min, xd - x_span / 2.0)
-        view_x1 = min(x_max, xd + x_span / 2.0)
-        if view_x1 <= view_x0:
-            view_x0, view_x1 = x_min, x_max
+        def _centered_window(center, span, lo, hi):
+            """Keep the window span stable while clamping it to the bounds."""
+            if hi <= lo:
+                return lo, hi
+            span = min(span, hi - lo)
+            left = center - span / 2.0
+            right = center + span / 2.0
+            if left < lo:
+                right += lo - left
+                left = lo
+            if right > hi:
+                left -= right - hi
+                right = hi
+            left = max(lo, left)
+            right = min(hi, right)
+            if right <= left:
+                return lo, hi
+            return left, right
+
+        view_x0, view_x1 = _centered_window(xd, x_span, x_min, x_max)
 
         center_y = yd
         if self.lead_name == 'aVR':
-            view_y0 = max(min(y_min, y_max), center_y - y_span / 2.0)
-            view_y1 = min(max(y_min, y_max), center_y + y_span / 2.0)
+            view_y0, view_y1 = _centered_window(center_y, y_span, min(y_min, y_max), max(y_min, y_max))
         else:
-            view_y0 = max(0.0, center_y - y_span / 2.0)
-            view_y1 = min(4096.0, center_y + y_span / 2.0)
-        if view_y1 <= view_y0:
-            view_y0, view_y1 = min(y_min, y_max), max(y_min, y_max)
+            view_y0, view_y1 = _centered_window(center_y, y_span, 0.0, 4096.0)
 
         grid_pen = QPen(QColor(36, 68, 36, 160), 1)
         painter.setPen(grid_pen)

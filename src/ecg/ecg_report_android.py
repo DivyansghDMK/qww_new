@@ -923,6 +923,46 @@ def _prepare_report_waveform(samples, width_mm, target_samples=None):
     except Exception:
         pass
 
+    if work.size > core_n:
+        chosen_start = work.size - core_n
+        try:
+            from ecg.pan_tompkins import pan_tompkins
+        except Exception:
+            try:
+                from src.ecg.pan_tompkins import pan_tompkins
+            except Exception:
+                pan_tompkins = None
+
+        if pan_tompkins is not None:
+            try:
+                r_peaks = np.asarray(pan_tompkins(work, fs=float(ECG_FS)), dtype=int)
+            except Exception:
+                r_peaks = np.asarray([], dtype=int)
+
+            if r_peaks.size >= 2:
+                rr_samples = int(np.median(np.diff(r_peaks)))
+                edge_guard = max(
+                    12,
+                    min(
+                        int(0.25 * rr_samples),
+                        int(0.35 * float(ECG_FS)),
+                        max(12, core_n // 12),
+                    ),
+                )
+                max_start = max(0, work.size - core_n)
+                step = max(1, edge_guard // 2)
+                for start in range(max_start, -1, -step):
+                    end = start + core_n
+                    peaks_in = r_peaks[(r_peaks >= start) & (r_peaks < end)]
+                    if peaks_in.size == 0:
+                        chosen_start = start
+                        break
+                    if np.all((peaks_in - start >= edge_guard) & ((end - 1 - peaks_in) >= edge_guard)):
+                        chosen_start = start
+                        break
+
+        work = work[chosen_start:chosen_start + core_n]
+
     # Demo-only: remove residual baseline slope so the strip starts at the baseline.
     # This keeps demo PDFs from showing an initial drifting baseline even when the
     # dummycsv segment begins mid-cycle.

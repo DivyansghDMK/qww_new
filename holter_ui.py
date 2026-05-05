@@ -1509,6 +1509,260 @@ class HolterWaveGridPanel(QFrame):
             plot.setXRange(0, max(1, signal.size - 1), padding=0)
 
 
+class _LeadClickPlot(pg.PlotWidget):
+    clicked = pyqtSignal(int, str)
+
+    def __init__(self, lead_index: int, lead_name: str, parent=None):
+        super().__init__(parent)
+        self._lead_index = lead_index
+        self._lead_name = lead_name
+
+    def mousePressEvent(self, ev):
+        self.clicked.emit(self._lead_index, self._lead_name)
+        super().mousePressEvent(ev)
+
+
+class HolterDenseWavePanel(QFrame):
+    """Dense 12-lead ECG board with a cluster overview and clickable enlargement."""
+
+    LEADS = ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"]
+
+    def __init__(self, parent=None, live_source=None, replay_engine=None):
+        super().__init__(parent)
+        self.live_source = live_source
+        self.replay_engine = replay_engine
+        self.window_sec = 10.0
+        self._replay_buffer = None
+        self._latest_lead_data = None
+        self._selected_lead = 1
+        self._selected_label = None
+        self._selected_detail = None
+        self._cluster_plot = None
+        self._cluster_curves = []
+        self._detail_curve = None
+        self._detail_plot = None
+        self.setStyleSheet(
+            f"background: {COL_SURFACE}; border: 1px solid {COL_BORDER}; border-radius: 10px;"
+        )
+        self._build_ui()
+
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self.refresh_waveforms)
+        self._timer.start(150)
+
+    def _make_plot(self, background=COL_BG, grid_alpha=0.18, show_axes=False, y_range=(-1.5, 1.5)):
+        plot = pg.PlotWidget()
+        plot.setMenuEnabled(False)
+        plot.setMouseEnabled(x=False, y=False)
+        plot.hideButtons()
+        plot.setBackground(background)
+        plot.showGrid(x=True, y=True, alpha=grid_alpha)
+        plot.getAxis('left').setStyle(showValues=show_axes)
+        plot.getAxis('bottom').setStyle(showValues=show_axes)
+        plot.setYRange(y_range[0], y_range[1], padding=0)
+        plot.setContentsMargins(0, 0, 0, 0)
+        return plot
+
+    def _build_ui(self):
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        hdr = QFrame()
+        hdr.setFixedHeight(40)
+        hdr.setStyleSheet(f"background: {COL_BG}; border-bottom: 1px solid {COL_BORDER};")
+        hdr_l = QHBoxLayout(hdr)
+        hdr_l.setContentsMargins(12, 0, 12, 0)
+        title = QLabel("TIME CLUSTER OVERVIEW")
+        title.setStyleSheet(
+            f"color: {COL_MUTED}; font-size: 10px; font-weight: 700; letter-spacing: 1px;"
+        )
+        hdr_l.addWidget(title)
+        hdr_l.addStretch()
+        self._selected_label = QLabel("Lead II")
+        self._selected_label.setStyleSheet(
+            f"color: {COL_TEXT}; font-size: 11px; font-weight: 700;"
+        )
+        hdr_l.addWidget(self._selected_label)
+        helper = QLabel("click any channel to enlarge")
+        helper.setStyleSheet(f"color: {COL_MUTED}; font-size: 10px;")
+        hdr_l.addWidget(helper)
+        outer.addWidget(hdr)
+
+        if pg is None:
+            fb = QLabel("pyqtgraph unavailable — cannot render waveforms.")
+            fb.setStyleSheet(f"color: {COL_RED}; padding: 16px; font-size: 12px;")
+            outer.addWidget(fb)
+            return
+
+        pg.setConfigOptions(antialias=True, background=COL_BG, foreground=COL_GREEN)
+
+        self._cluster_plot = self._make_plot(background=COL_BG, grid_alpha=0.12, show_axes=True, y_range=(-0.5, 11.5))
+        self._cluster_plot.setMinimumHeight(180)
+        self._cluster_plot.setMaximumHeight(220)
+        self._cluster_plot.getAxis('left').setWidth(42)
+        self._cluster_plot.getAxis('left').setTicks([[(i, lead) for i, lead in enumerate(reversed(self.LEADS))]])
+        self._cluster_plot.getAxis('left').setTextPen(pg.mkPen(COL_MUTED))
+        self._cluster_plot.getAxis('bottom').setTextPen(pg.mkPen(COL_MUTED))
+        cluster_colors = [
+            (0, 255, 127, 180),
+            (46, 196, 182, 170),
+            (76, 201, 240, 170),
+            (67, 97, 238, 170),
+            (255, 159, 28, 170),
+            (255, 99, 132, 170),
+            (72, 149, 239, 170),
+            (29, 185, 84, 170),
+            (144, 190, 109, 170),
+            (181, 23, 158, 170),
+            (255, 214, 10, 170),
+            (120, 220, 190, 170),
+        ]
+        for idx in range(len(self.LEADS)):
+            self._cluster_curves.append(
+                self._cluster_plot.plot(pen=pg.mkPen(color=cluster_colors[idx], width=0.8))
+            )
+        outer.addWidget(self._cluster_plot, 2)
+
+        detail_hdr = QLabel("FOCUSED LEAD")
+        detail_hdr.setStyleSheet(
+            f"color: {COL_MUTED}; font-size: 10px; font-weight: 700; letter-spacing: 1px; padding: 0 12px;"
+        )
+        outer.addWidget(detail_hdr)
+
+        detail_card = QFrame()
+        detail_card.setStyleSheet(
+            f"background: {COL_BG}; border: 1px solid {COL_BORDER}; border-radius: 10px;"
+        )
+        detail_l = QVBoxLayout(detail_card)
+        detail_l.setContentsMargins(8, 8, 8, 8)
+        detail_l.setSpacing(4)
+        self._selected_detail = QLabel("Lead II enlarged")
+        self._selected_detail.setStyleSheet(f"color: {COL_TEXT}; font-size: 12px; font-weight: 700;")
+        detail_l.addWidget(self._selected_detail)
+        self._detail_plot = self._make_plot(background=COL_BG, grid_alpha=0.20, show_axes=True, y_range=(-1.6, 1.6))
+        self._detail_plot.setMinimumHeight(320)
+        self._detail_plot.getAxis('left').setWidth(42)
+        self._detail_plot.getAxis('left').setTextPen(pg.mkPen(COL_MUTED))
+        self._detail_plot.getAxis('bottom').setTextPen(pg.mkPen(COL_MUTED))
+        self._detail_curve = self._detail_plot.plot(pen=pg.mkPen(color=(0, 255, 127), width=1.15))
+        detail_l.addWidget(self._detail_plot, 1)
+        outer.addWidget(detail_card, 5)
+
+        lead_row = QWidget()
+        lead_row_l = QHBoxLayout(lead_row)
+        lead_row_l.setContentsMargins(10, 0, 10, 8)
+        lead_row_l.setSpacing(6)
+        for idx, lead in enumerate(self.LEADS):
+            btn = QPushButton(lead)
+            btn.setCheckable(True)
+            btn.setChecked(idx == self._selected_lead)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setStyleSheet(
+                f"""
+                QPushButton {{
+                    background: {COL_BG};
+                    color: {COL_TEXT};
+                    border: 1px solid {COL_BORDER};
+                    border-radius: 8px;
+                    padding: 6px 10px;
+                    font-size: 10px;
+                    font-weight: 700;
+                }}
+                QPushButton:checked {{
+                    border: 1px solid {COL_GREEN};
+                    color: {COL_GREEN};
+                }}
+                QPushButton:hover {{
+                    border: 1px solid {COL_GREEN};
+                }}
+                """
+            )
+            btn.clicked.connect(lambda checked=False, i=idx, l=lead: self._select_lead(i, l))
+            lead_row_l.addWidget(btn)
+        lead_row_l.addStretch()
+        outer.addWidget(lead_row)
+
+        self._select_lead(1, self.LEADS[1])
+
+    def _select_lead(self, lead_index: int, lead_name: str):
+        self._selected_lead = lead_index
+        if self._selected_label is not None:
+            self._selected_label.setText(f"Lead {lead_name}")
+        if self._selected_detail is not None:
+            self._selected_detail.setText(f"Lead {lead_name} enlarged")
+        self.refresh_waveforms()
+
+    def set_replay_engine(self, replay_engine):
+        self.replay_engine = replay_engine
+
+    def set_live_source(self, live_source):
+        self.live_source = live_source
+
+    def set_replay_frame(self, data):
+        self._replay_buffer = data
+        self.refresh_waveforms()
+
+    def _normalize_signal(self, signal):
+        arr = np.asarray(signal, dtype=float).flatten()
+        if arr.size == 0:
+            return np.zeros(400, dtype=float)
+        arr = arr[-max(300, int(500 * self.window_sec)):]
+        arr = np.nan_to_num(arr, nan=0.0)
+        arr = arr - np.median(arr)
+        peak = float(np.percentile(np.abs(arr), 95)) if arr.size else 1.0
+        peak = peak if peak > 1e-6 else 1.0
+        return arr / peak
+
+    def _get_live_data(self):
+        source_data = getattr(self.live_source, "data", None)
+        if not source_data:
+            return None
+        leads = []
+        for idx in range(min(len(self.LEADS), len(source_data))):
+            leads.append(self._normalize_signal(source_data[idx]))
+        while len(leads) < len(self.LEADS):
+            leads.append(np.zeros(400, dtype=float))
+        return leads
+
+    def refresh_waveforms(self):
+        if not self._cluster_curves or self._detail_curve is None:
+            return
+
+        if self._replay_buffer is not None:
+            lead_data = [self._normalize_signal(sig) for sig in self._replay_buffer]
+        elif self.replay_engine is not None:
+            try:
+                data = self.replay_engine.get_all_leads_data(window_sec=self.window_sec)
+                lead_data = [self._normalize_signal(sig) for sig in data]
+            except Exception:
+                lead_data = None
+        else:
+            lead_data = self._get_live_data()
+
+        if not lead_data:
+            return
+
+        self._latest_lead_data = lead_data
+
+        cluster_len = max((len(sig) for sig in lead_data), default=400)
+        x = np.arange(cluster_len, dtype=float)
+        for idx, signal in enumerate(lead_data[:len(self.LEADS)]):
+            if signal.size < cluster_len:
+                signal = np.pad(signal, (0, cluster_len - signal.size), mode='edge')
+            y = signal * 0.35 + (len(self.LEADS) - idx - 1)
+            if idx < len(self._cluster_curves):
+                self._cluster_curves[idx].setData(x, y)
+        self._cluster_plot.setXRange(0, max(1, cluster_len - 1), padding=0)
+        self._cluster_plot.setYRange(-0.5, len(self.LEADS) - 0.5, padding=0)
+
+        focus_idx = min(max(self._selected_lead, 0), len(self.LEADS) - 1)
+        focus_signal = lead_data[focus_idx] if focus_idx < len(lead_data) else np.zeros(400, dtype=float)
+        fx = np.arange(focus_signal.size, dtype=float)
+        self._detail_curve.setData(fx, focus_signal)
+        self._detail_plot.setXRange(0, max(1, focus_signal.size - 1), padding=0)
+
+
 class HolterInsightPanel(QFrame):
     """Narrative summary that turns the metrics into a clinical-style report preview."""
 
@@ -2058,7 +2312,7 @@ class HolterMainWindow(QDialog):
         splitter.addWidget(left_panel)
 
         # ── CENTER: Full-width parallel 12-lead strips ───────────────────
-        self._wave_panel = HolterWaveGridPanel(
+        self._wave_panel = HolterDenseWavePanel(
             live_source=self._live_source,
             replay_engine=self._replay_engine
         )

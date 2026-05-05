@@ -44,6 +44,7 @@ class HolterReplayEngine:
         # Metrics
         self._metrics: List[dict] = []
         self._arrhythmia_events: List[Tuple[float, str]] = []
+        self._structured_events: List[dict] = []
         self._load_metrics(ecgh_path)
 
         # Callbacks
@@ -68,8 +69,26 @@ class HolterReplayEngine:
                         # Extract arrhythmia events
                         for a in m.get('arrhythmias', []):
                             self._arrhythmia_events.append((m['t'], a))
+                            self._structured_events.append({
+                                'timestamp': float(m.get('t', 0.0) or 0.0),
+                                'type': str(a),
+                                'label': str(a),
+                                'source': 'arrhythmia',
+                            })
+                        for ev in (m.get('classified_events', []) or []):
+                            ts = float(ev.get('timestamp', m.get('t', 0.0)) or 0.0)
+                            event_type = str(ev.get('template_label') or ev.get('label') or 'Event')
+                            self._structured_events.append({
+                                'timestamp': ts,
+                                'type': event_type,
+                                'label': str(ev.get('label') or event_type),
+                                'template_label': event_type,
+                                'source': 'classified',
+                            })
         except Exception as e:
             print(f"[Replay] Could not load metrics: {e}")
+
+        self._structured_events.sort(key=lambda item: float(item.get('timestamp', 0.0) or 0.0))
 
     # ── Callbacks ─────────────────────────────────────────────────────────────
 
@@ -99,8 +118,16 @@ class HolterReplayEngine:
         direction: 'next' or 'prev'
         Returns the timestamp jumped to, or current if not found.
         """
-        events = [(t, a) for t, a in self._arrhythmia_events
-                  if event_type.lower() in a.lower()]
+        needle = str(event_type or "").strip().lower()
+        events = [
+            (float(item.get('timestamp', 0.0) or 0.0), str(item.get('label', '')))
+            for item in self._structured_events
+            if needle and (
+                needle in str(item.get('type', '')).lower()
+                or needle in str(item.get('label', '')).lower()
+                or needle in str(item.get('template_label', '')).lower()
+            )
+        ]
         if not events:
             return self._current_sec
 
@@ -122,11 +149,15 @@ class HolterReplayEngine:
     def get_events_list(self) -> List[dict]:
         """Returns all detected arrhythmia events for the event navigator."""
         result = []
-        for t, label in self._arrhythmia_events:
+        for item in self._structured_events:
+            ts = float(item.get('timestamp', 0.0) or 0.0)
             result.append({
-                'timestamp': t,
-                'label': label,
-                'time_str': self._sec_to_hms(t),
+                'timestamp': ts,
+                'label': str(item.get('label', item.get('type', 'Event'))),
+                'type': str(item.get('type', item.get('label', 'Event'))),
+                'template_label': str(item.get('template_label', item.get('type', 'Event'))),
+                'time_str': self._sec_to_hms(ts),
+                'source': item.get('source', ''),
             })
         return result
 

@@ -815,6 +815,24 @@ class ExpandedLeadView(QDialog):
         """)
         control_layout.addWidget(info_label)
 
+        # Lorenz Plot button
+        lorenz_btn = QPushButton("Lorenz Plot")
+        lorenz_btn.setMinimumSize(100, 35)
+        lorenz_btn.setStyleSheet("""
+            QPushButton {
+                background: #8e44ad;
+                color: white;
+                border-radius: 6px;
+                padding: 5px 10px;
+                font-weight: bold;
+                font-size: 10pt;
+                border: 2px solid #7d3c98;
+            }
+            QPushButton:hover { background: #7d3c98; }
+        """)
+        lorenz_btn.clicked.connect(self.show_lorenz_plot)
+        control_layout.addWidget(lorenz_btn)
+
         # Toggles (display-only UX)
         self.clean_view_toggle = QCheckBox("Clean display")
         self.clean_view_toggle.setChecked(False)  # Default to unchecked
@@ -2211,6 +2229,21 @@ class ExpandedLeadView(QDialog):
         except Exception as e:
             print(f"Error updating plot: {e}")
     
+    def show_lorenz_plot(self):
+        """Open the Lorenz (Poincaré) plot for the current lead."""
+        try:
+            from ecg.lorenz_plot import LorenzPlotDialog
+            dlg = LorenzPlotDialog(
+                ecg_signal=self.ecg_data,
+                fs=float(self.sampling_rate),
+                lead_name=self.lead_name,
+                parent=self,
+            )
+            dlg.exec_()
+        except Exception as e:
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Lorenz Plot", f"Could not open Lorenz plot: {e}")
+
     def closeEvent(self, event):
         """Handle window close event"""
         self.stop_live_mode()

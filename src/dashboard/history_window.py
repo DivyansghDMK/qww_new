@@ -46,9 +46,6 @@ PUBLIC_REVIEWED_REPORTS_URL = os.getenv(
     "REVIEWED_REPORTS_API_URL",
     "https://6jhix49qt6.execute-api.us-east-1.amazonaws.com/api/public/reviewed-reports",
 ).strip()
-PUBLIC_REVIEWED_REPORTS_API_KEY = (
-    os.getenv("PUBLIC_API_KEY") or os.getenv("REVIEWED_REPORTS_API_KEY", "")
-).strip()
 
 
 def _normalize_owner(value: str) -> str:
@@ -60,8 +57,22 @@ def _normalize_owner(value: str) -> str:
 
 def _reviewed_reports_headers() -> dict:
     headers = {}
-    if PUBLIC_REVIEWED_REPORTS_API_KEY:
-        headers["x-api-key"] = PUBLIC_REVIEWED_REPORTS_API_KEY
+    try:
+        uploader = get_cloud_uploader()
+        api_key = (
+            getattr(uploader, "reviewed_reports_api_key", "")
+            or os.getenv("PUBLIC_API_KEY", "")
+            or os.getenv("REVIEWED_REPORTS_API_KEY", "")
+        ).strip()
+        if api_key:
+            headers["x-api-key"] = api_key
+    except Exception:
+        api_key = (
+            os.getenv("PUBLIC_API_KEY", "")
+            or os.getenv("REVIEWED_REPORTS_API_KEY", "")
+        ).strip()
+        if api_key:
+            headers["x-api-key"] = api_key
     return headers
 
 # ── pymupdf (fitz) optional import ─────────────────────────────────────────
@@ -1077,9 +1088,12 @@ class HistoryWindow(QDialog):
         self.rev_status_lbl.setText(f"Fetching reports for '{doc_name}' from cloud...")
         QApplication.processEvents()
         try:
+            # The backend Lambda expects `doctor`, not `doctorName`.
+            # Keep both for compatibility with any older deployments.
+            params = {"doctor": doc_name, "doctorName": doc_name}
             resp = requests.get(
                 PUBLIC_REVIEWED_REPORTS_URL,
-                params={"doctorName": doc_name},
+                params=params,
                 headers=_reviewed_reports_headers(),
                 timeout=12,
             )
@@ -1115,7 +1129,7 @@ class HistoryWindow(QDialog):
                     str(entry.get("time", "")),
                     str(entry.get("patient", entry.get("name", ""))),
                     str(entry.get("report_type", entry.get("type", ""))),
-                    str(entry.get("doctorName", entry.get("doctor", doc_name))),
+                    str(entry.get("doctor", entry.get("doctorName", doc_name))),
                     purl,
                 ]
                 r = self.rev_table.rowCount()
@@ -2222,9 +2236,10 @@ class ReviewedReportsDialog(QDialog):
         dname = self.doctor_combo.currentText().strip()
         rows = []
         try:
+            params = {"doctor": dname, "doctorName": dname} if dname else {}
             resp = requests.get(
                 PUBLIC_REVIEWED_REPORTS_URL,
-                params={"doctorName": dname} if dname else {},
+                params=params,
                 headers=_reviewed_reports_headers(),
                 timeout=10,
             )
