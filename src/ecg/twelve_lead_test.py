@@ -814,6 +814,17 @@ class ECGTestPage(QWidget):
         self._lead_last_valid_value = {lead: 0.0 for lead in self.leads}
         self._last_off_leads_signature = None
         self._lead_data_received = False
+        # Lead-off stability: latch a "Leads Off" state when the firmware chatters
+        # (commonly observed when RL/DRL is removed). This prevents UI/BPM flicker.
+        self._lead_off_latched = False
+        self._lead_off_latch_on_count = 0
+        self._lead_off_latch_off_count = 0
+        # Tune conservatively: require a few consecutive packets before latching/unlatching.
+        # (At 500 pkt/s, 5 packets ≈ 10 ms, 50 packets ≈ 100 ms.)
+        self._LEAD_OFF_LATCH_ON_PACKETS = 5
+        self._LEAD_OFF_LATCH_OFF_PACKETS = 50
+        # Consider "global lead-off" when most leads are off.
+        self._LEAD_OFF_GLOBAL_THRESHOLD = 10
         self._prev_p_axis = None  # Track P-axis for safety assertions
         self._prev_qrs_axis = None
         self._prev_t_axis = None
@@ -5892,6 +5903,10 @@ class ECGTestPage(QWidget):
         self._lead_last_valid_value = {lead: 0.0 for lead in self.leads}
         self._last_off_leads_signature = None
         self._lead_data_received = False
+        # Reset lead-off latch state for a fresh session.
+        self._lead_off_latched = False
+        self._lead_off_latch_on_count = 0
+        self._lead_off_latch_off_count = 0
         self._set_lead_status_idle()
 
         # --- START HOLTER SESSION IF ENABLED ---
@@ -6203,6 +6218,21 @@ class ECGTestPage(QWidget):
         """
         try:
             if self._bpm_ctrl is None or not self._bpm_ctrl.is_running:
+                return
+
+            # If leads are globally OFF (e.g., RL/DRL removed) we must not display a
+            # stale BPM from the controller. Force BPM to 0 while latched.
+            if getattr(self, "_lead_off_latched", False):
+                try:
+                    self.last_rr_interval = 0
+                except Exception:
+                    pass
+                try:
+                    self.last_heart_rate = 0
+                except Exception:
+                    pass
+                if hasattr(self, "metric_labels") and "heart_rate" in self.metric_labels:
+                    self.metric_labels["heart_rate"].setText("  0")
                 return
 
             rr_ms = getattr(self, 'last_rr_interval', 0)
@@ -8969,9 +8999,42 @@ class ECGTestPage(QWidget):
                         # Map packet dict to our lead order
                         lead_order = ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"]
 
+                        # ---------------- Lead-off latch / debouncer ----------------
+                        # Some firmware chatters the per-lead "connected" bit when RL/DRL is removed,
+                        # causing the "Leads:" banner (and downstream BPM/metrics) to flicker.
+                        # Latch into a stable global OFF state when most leads are off for a few
+                        # consecutive packets, and only unlatch after a sustained all-connected run.
+                        try:
+                            raw_off_count = sum(1 for ld in lead_order if packet.get(ld) is None)
+                        except Exception:
+                            raw_off_count = 0
+
+                        global_threshold = int(getattr(self, "_LEAD_OFF_GLOBAL_THRESHOLD", 10))
+                        if raw_off_count >= global_threshold:
+                            self._lead_off_latch_on_count = int(getattr(self, "_lead_off_latch_on_count", 0)) + 1
+                        else:
+                            self._lead_off_latch_on_count = 0
+
+                        latch_on_packets = int(getattr(self, "_LEAD_OFF_LATCH_ON_PACKETS", 5))
+                        latch_off_packets = int(getattr(self, "_LEAD_OFF_LATCH_OFF_PACKETS", 50))
+
+                        if not getattr(self, "_lead_off_latched", False):
+                            if self._lead_off_latch_on_count >= latch_on_packets:
+                                self._lead_off_latched = True
+                                self._lead_off_latch_off_count = 0
+                        else:
+                            if raw_off_count == 0:
+                                self._lead_off_latch_off_count = int(getattr(self, "_lead_off_latch_off_count", 0)) + 1
+                            else:
+                                self._lead_off_latch_off_count = 0
+                            if self._lead_off_latch_off_count >= latch_off_packets:
+                                self._lead_off_latched = False
+                                self._lead_off_latch_on_count = 0
+                                self._lead_off_latch_off_count = 0
+
                         # ── Feed packet to HolterBPMController (fast, non-blocking) ───────
                         try:
-                            if self._bpm_ctrl is not None:
+                            if self._bpm_ctrl is not None and not getattr(self, "_lead_off_latched", False):
                                 self._bpm_ctrl.push(packet)
                             
                             # ── Feed packet to HolterStreamWriter (fast, non-blocking) ─────
@@ -8983,7 +9046,8 @@ class ECGTestPage(QWidget):
                         for i, lead_name in enumerate(lead_order):
                             try:
                                 if i < len(self.data) and lead_name in packet:
-                                    value = packet[lead_name]
+                                    # While latched, force all leads to OFF to stop flicker.
+                                    value = None if getattr(self, "_lead_off_latched", False) else packet[lead_name]
                                     was_connected = self._lead_connection_state.get(lead_name, True)
                                     if value is None:
                                         self._lead_connection_state[lead_name] = False
@@ -9004,7 +9068,10 @@ class ECGTestPage(QWidget):
                                 continue
 
                         # Top status label: show all disconnected leads (no popup).
-                        off_leads = [ld for ld in lead_order if not self._lead_connection_state.get(ld, True)]
+                        if getattr(self, "_lead_off_latched", False):
+                            off_leads = list(lead_order)
+                        else:
+                            off_leads = [ld for ld in lead_order if not self._lead_connection_state.get(ld, True)]
                         self._set_lead_status_label(off_leads)
 
                         # Publish a multi-lead snapshot for fusion detectors.
