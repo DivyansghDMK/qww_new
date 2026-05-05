@@ -4516,7 +4516,7 @@ class Dashboard(QWidget):
             whatsapp = os.getenv("SUPPORT_CONTACT_WHATSAPP", "").strip()
 
             if not (email or phone or whatsapp):
-                msg = QLabel("Contact details are not configured.")
+                msg = QLabel("Sorry Bhai, jiska koi nahi hota uska koi bhi nahi hota.")
                 msg.setObjectName("supportHint")
                 msg.setWordWrap(True)
                 lay.addWidget(msg)
