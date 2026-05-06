@@ -2901,6 +2901,84 @@ class Dashboard(QWidget):
 
 
 
+    def _dashboard_has_respiration_baseline_drift(self, signal: np.ndarray, fs: float) -> bool:
+        """
+        Display-only detector for respiration/motion baseline drift for the dashboard mini chart.
+
+        Uses the same concept as the 12-lead live view: when the <0.5 Hz component
+        is a meaningful fraction of variance in the visible window, the trace can
+        "float" during acquisition.
+        """
+        try:
+            arr = np.asarray(signal, dtype=float)
+            if arr.size < 250 or float(fs) <= 5.0:
+                return False
+
+            dc = float(np.nanmean(arr)) if arr.size else 0.0
+            if np.isfinite(dc):
+                arr = arr - dc
+            arr = np.nan_to_num(arr, copy=False)
+
+            from scipy.signal import butter, filtfilt
+
+            nyq = float(fs) / 2.0
+            if nyq <= 0.0:
+                return False
+
+            cutoff_hz = min(0.5, 0.45 * nyq)
+            if cutoff_hz <= 0.0 or cutoff_hz >= nyq:
+                return False
+
+            b, a = butter(2, cutoff_hz / nyq, btype="low")
+            baseline = filtfilt(b, a, arr)
+            baseline_var = float(np.var(baseline))
+            total_var = float(np.var(arr))
+            if total_var <= 1e-9:
+                return False
+
+            return (baseline_var / total_var) > 0.10
+        except Exception:
+            return False
+
+    def _dashboard_apply_realtime_dft_highpass(self, signal: np.ndarray, fs: float, cutoff_hz: float) -> np.ndarray:
+        """
+        Streaming-safe high-pass for the dashboard Lead II mini-chart.
+
+        Avoids `filtfilt` edge transients on sliding windows (visible "wobble")
+        by using a causal IIR and preserving state across frames.
+        """
+        try:
+            arr = np.asarray(signal, dtype=float)
+            if arr.size < 3:
+                return arr
+            fs = float(fs)
+            if fs <= 5.0:
+                return arr
+            cutoff_hz = float(cutoff_hz)
+            if cutoff_hz <= 0.0 or cutoff_hz >= (fs / 2.0):
+                return arr
+
+            if not hasattr(self, "_dashboard_dft_hp_state"):
+                self._dashboard_dft_hp_state = {}
+
+            state_key = (float(fs), float(cutoff_hz))
+            state = self._dashboard_dft_hp_state.get(state_key)
+
+            from scipy.signal import butter, sosfilt, sosfilt_zi
+
+            if state is None:
+                sos = butter(2, cutoff_hz / (fs / 2.0), btype="high", output="sos")
+                zi = sosfilt_zi(sos) * (arr[0] if np.isfinite(arr[0]) else 0.0)
+                state = {"sos": sos, "zi": zi}
+                self._dashboard_dft_hp_state[state_key] = state
+
+            x = np.nan_to_num(arr, copy=False)
+            y, zi = sosfilt(state["sos"], x, zi=state["zi"])
+            state["zi"] = zi
+            return y
+        except Exception:
+            return np.asarray(signal, dtype=float)
+
     def update_ecg(self, frame):
         try:
             # Try to get data from ECG test page if available
@@ -2980,6 +3058,20 @@ class Dashboard(QWidget):
                     # Mirror the stable 12-lead live view pipeline.
                     try:
                         raw_data = np.asarray(original_data, dtype=float)
+
+                        # If acquisition restarts (buffer length drops), reset dashboard display state
+                        # so stale filter memory/anchors don't create a visible drift jump.
+                        try:
+                            prev_len = int(getattr(self, "_dashboard_prev_lead2_len", 0) or 0)
+                            curr_len = int(raw_data.size)
+                            if prev_len and curr_len and curr_len < prev_len:
+                                self._dashboard_lead2_baseline_anchor = None
+                                if hasattr(self, "_dashboard_dft_hp_state"):
+                                    self._dashboard_dft_hp_state = {}
+                            self._dashboard_prev_lead2_len = curr_len
+                        except Exception:
+                            pass
+
                         non_zero_indices = np.where(raw_data != 0)[0]
                         if len(non_zero_indices) > 0:
                             recent_data = raw_data[int(non_zero_indices[0]):]
@@ -3001,10 +3093,33 @@ class Dashboard(QWidget):
                         if not hasattr(self, '_dashboard_lead2_baseline_anchor'):
                             self._dashboard_lead2_baseline_anchor = None
                         try:
+                            # Apply DFT (baseline HP) BEFORE the baseline anchor when enabled.
+                            # Use streaming-safe path at 0.5 Hz to prevent acquisition "wobble"
+                            # on sliding windows.
+                            try:
+                                from ecg.ecg_filters import apply_dft_filter
+                                dft_setting = str(settings_src.get_setting("filter_dft", "off")).strip()
+                                if dft_setting and dft_setting not in ("off", ""):
+                                    if str(dft_setting).strip() == "0.5":
+                                        filtered_slice = self._dashboard_apply_realtime_dft_highpass(
+                                            filtered_slice, float(actual_sampling_rate), 0.5
+                                        )
+                                    else:
+                                        filtered_slice = apply_dft_filter(filtered_slice, float(actual_sampling_rate), dft_setting)
+                            except Exception:
+                                pass
+
                             baseline_estimate = extract_low_frequency_baseline(filtered_slice, float(actual_sampling_rate))
                             if self._dashboard_lead2_baseline_anchor is None:
                                 self._dashboard_lead2_baseline_anchor = baseline_estimate
+                            # Dashboard chart is short-window and very sensitive to baseline "float".
+                            # Track baseline a bit faster when DFT=0.5Hz is active.
                             baseline_alpha = 0.0005
+                            try:
+                                if str(settings_src.get_setting("filter_dft", "off")).strip() == "0.5":
+                                    baseline_alpha = 0.002
+                            except Exception:
+                                pass
                             self._dashboard_lead2_baseline_anchor = (
                                 (1.0 - baseline_alpha) * self._dashboard_lead2_baseline_anchor
                                 + baseline_alpha * baseline_estimate
