@@ -269,6 +269,7 @@ class SendEmailDialog(QDialog):
         super().__init__(parent)
         self.report_path = report_path
         self.setWindowTitle("Send Report by Email")
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         self.setMinimumSize(500, 480)
         self.setStyleSheet("""
             QDialog{background:#ffffff;}
