@@ -4055,8 +4055,10 @@ class Dashboard(QWidget):
                 if rhythm_clean not in ignore_values:
                     abnormal_rhythm_keywords = (
                         "block", "fibrillation", "flutter", "tachycardia", "bradycardia",
-                        "pvc", "pac", "wide qrs", "lvh", "prolonged", "short", "asystole"
+                        "pvc", "pac", "asystole"
                     )
+                    # NOTE: LVH, Wide QRS, Prolonged QTc, ST changes are MORPHOLOGICAL findings,
+                    # not rhythm abnormalities — they coexist with Normal Sinus Rhythm.
                     is_normal_rhythm = any(
                         keyword in rhythm_clean.lower()
                         for keyword in ["normal sinus", "none detected", "sinus rhythm"]
@@ -4171,6 +4173,23 @@ class Dashboard(QWidget):
                     "</p></div>"
                 )
                 findings.append("Normal Sinus Rhythm")
+
+                # ── Also collect morphological findings (LVH, ST, BBB) from
+                # ArrhythmiaEngine — these coexist with Normal Sinus Rhythm.
+                try:
+                    if hasattr(self, 'ecg_test_page') and self.ecg_test_page:
+                        _last1 = getattr(self.ecg_test_page, '_last_analysis', None) or {}
+                        _engine_dx1 = _last1.get('arrhythmias', [])
+                        _rhythm_only_labels = {
+                            "Normal Sinus Rhythm", "Sinus Bradycardia", "Sinus Tachycardia",
+                            "Bradycardia (non-sinus)", "Tachycardia (non-sinus)",
+                            "Rhythm Undetermined",
+                        }
+                        _morph_dx = [x for x in _engine_dx1 if x not in _rhythm_only_labels]
+                        if _morph_dx:
+                            findings.extend(_morph_dx)
+                except Exception:
+                    pass
 
             else:
                 # ── CASE 2: Abnormal rhythm OR any metric abnormal → show everything
@@ -4349,12 +4368,14 @@ class Dashboard(QWidget):
                             if label and label not in clean_findings:
                                 clean_findings.append(label)
 
-                    abnormal_keywords = (
+                    # Only strip "Normal Sinus Rhythm" when a true RHYTHM abnormality is present.
+                    # Morphological findings (LVH, ST elevation, Wide QRS, QTc) are independent
+                    # and can legitimately coexist with Normal Sinus Rhythm.
+                    rhythm_abnormal_keywords = (
                         "Block", "Fibrillation", "Flutter", "Tachycardia", "Bradycardia",
-                        "PVC", "PAC", "Wide QRS", "LVH", "Prolonged", "Short", "Asystole",
-                        "Ventricular"
+                        "PVC", "PAC", "Asystole", "Ventricular"
                     )
-                    if any(any(k.lower() in f.lower() for k in abnormal_keywords) for f in clean_findings):
+                    if any(any(k.lower() in f.lower() for k in rhythm_abnormal_keywords) for f in clean_findings):
                         clean_findings = [f for f in clean_findings if f != "Normal Sinus Rhythm"]
 
                     clean_recommendations = []

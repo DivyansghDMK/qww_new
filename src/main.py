@@ -1364,9 +1364,40 @@ def main():
         threading.Thread(target=_prewarm, daemon=True, name="Prewarm").start()
         # ──────────────────────────────────────────────────────────────
 
+        # ── License Gate ─────────────────────────────────────────────────────
+        # Validate license BEFORE showing login. On success the result is cached
+        # locally (HMAC-protected) so subsequent starts are instant / offline.
+        try:
+            from utils.license_manager import check_license, load_stored_key
+            from utils.license_dialog import LicenseDialog
+
+            _stored_key = load_stored_key()
+            _license_ok = False
+
+            if _stored_key:
+                _res = check_license(_stored_key)
+                _license_ok = bool(_res.get("valid"))
+                if _license_ok:
+                    logger.info(
+                        f"[License] Valid — tier={_res.get('tier',0)}, "
+                        f"source={_res.get('source','?')}"
+                    )
+
+            if not _license_ok:
+                _dlg = LicenseDialog()
+                if _dlg.exec_() != QDialog.Accepted:
+                    logger.info("[License] Activation cancelled — exiting.")
+                    sys.exit(0)
+                logger.info(f"[License] Activated — {_dlg.get_license_result()}")
+
+        except Exception as _lic_err:
+            # If license system fails to import (e.g. first install), log and continue.
+            logger.warning(f"[License] Check skipped due to error: {_lic_err}")
+        # ─────────────────────────────────────────────────────────────────────
+
         # Initialize login dialog
         login = LoginRegisterDialog()
-        
+
         # Main application loop
         while True:
             try:
