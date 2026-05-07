@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -36,8 +37,34 @@ def _data_sep() -> str:
     return ";" if os.name == "nt" else ":"
 
 
-def _add_data_args(project_root: Path) -> list[str]:
+def _stage_runtime_file(src: Path, staging_dir: Path, dst_name: str | None = None) -> Path | None:
+    """Copy a runtime file into a staging dir so build steps never mutate the repo."""
+    if not src.exists():
+        return None
+    staging_dir.mkdir(parents=True, exist_ok=True)
+    target = staging_dir / (dst_name or src.name)
+    try:
+        shutil.copy2(src, target)
+    except Exception:
+        return None
+    return target
+
+
+def _stage_json_placeholder(staging_dir: Path, dst_name: str) -> Path:
+    """Create a minimal JSON file in the staging dir for missing optional runtime data."""
+    staging_dir.mkdir(parents=True, exist_ok=True)
+    target = staging_dir / dst_name
+    if not target.exists():
+        try:
+            target.write_text("{}", encoding="utf-8")
+        except Exception:
+            pass
+    return target
+
+
+def _add_data_args(project_root: Path, build_root: Path) -> list[str]:
     sep = _data_sep()
+    staging_dir = build_root / "_staging"
     pairs: list[tuple[Path, str]] = []
 
     # Assets used by PDF/report UI
@@ -54,12 +81,11 @@ def _add_data_args(project_root: Path) -> list[str]:
         "ecg_auth_session.json",
     ]:
         file_path = project_root / filename
-        if not file_path.exists() and filename.endswith('.json'):
-            try:
-                file_path.write_text('{}', encoding='utf-8')
-            except Exception:
-                pass
-        pairs.append((file_path, "."))
+        staged = _stage_runtime_file(file_path, staging_dir)
+        if staged is None and filename.endswith(".json"):
+            staged = _stage_json_placeholder(staging_dir, filename)
+        if staged is not None:
+            pairs.append((staged, "."))
 
     # Some deployments use src-side settings files as fallbacks
     for filename in [
@@ -68,12 +94,11 @@ def _add_data_args(project_root: Path) -> list[str]:
         "src/ecg_auth_session.json",
     ]:
         file_path = project_root / filename
-        if not file_path.exists():
-            try:
-                file_path.write_text('{}', encoding='utf-8')
-            except Exception:
-                pass
-        pairs.append((file_path, "src"))
+        staged = _stage_runtime_file(file_path, staging_dir, Path(filename).name)
+        if staged is None:
+            staged = _stage_json_placeholder(staging_dir, Path(filename).name)
+        if staged is not None:
+            pairs.append((staged, "src"))
 
     args: list[str] = []
     for src, dst in pairs:
@@ -89,20 +114,22 @@ def build_args(project_root: Path, name: str, onefile: bool, console: bool) -> l
 
     build_dir = project_root / "build"
     build_dir.mkdir(parents=True, exist_ok=True)
+    dist_dir = project_root / "dist"
+    dist_dir.mkdir(parents=True, exist_ok=True)
 
     args: list[str] = [
         str(main_script),
         f"--name={name}",
         "--noconfirm",
         "--clean",
-        "--runtime-tmpdir=.",
         "--windowed" if not console else "--console",
         "--onedir" if not onefile else "--onefile",
-        "--uac-admin",
         # FIX: src/ on path so PyInstaller finds organization.py and all src modules
         f"--paths={project_root / 'src'}",
         # FIX: write spec to build/ so stale local spec is never used on CI
         f"--specpath={build_dir}",
+        f"--workpath={build_dir / 'work'}",
+        f"--distpath={dist_dir}",
         # Imported dynamically via importlib in src/main.py
         "--hidden-import=organization",
         # `importlib` is stdlib, but include explicitly for deterministic PyInstaller analysis.
@@ -153,7 +180,7 @@ def build_args(project_root: Path, name: str, onefile: bool, console: bool) -> l
         "--exclude-module=jinja2",
         "--exclude-module=IPython",
     ]
-    args.extend(_add_data_args(project_root))
+    args.extend(_add_data_args(project_root, build_dir))
     return args
 
 
@@ -164,6 +191,7 @@ def main() -> int:
     parser.add_argument("--name", default="ECGMonitor", help="Output application name")
     parser.add_argument("--onefile", action="store_true", help="Build as onefile (not recommended)")
     parser.add_argument("--console", action="store_true", help="Build with console for debugging")
+    parser.add_argument("--admin", action="store_true", help="Request admin rights in the packaged app")
     ns = parser.parse_args()
 
     project_root = Path(__file__).resolve().parent
@@ -174,12 +202,15 @@ def main() -> int:
     print(f"Project root : {project_root}")
     print(f"Mode         : {'onefile' if ns.onefile else 'onedir (recommended)'}")
     print(f"Console      : {'ON' if ns.console else 'OFF'}")
+    print(f"Admin        : {'ON' if ns.admin else 'OFF'}")
     print("=" * 70)
     print("PyInstaller args:")
     for a in args:
         print(f"  {a}")
 
     try:
+        if ns.admin:
+            args.append("--uac-admin")
         PyInstaller.__main__.run(args)
     except Exception as exc:
         print(f"\nBuild failed: {exc}")

@@ -1,4 +1,4 @@
-"""
+﻿"""
 utils/license_dialog.py
 =======================
 PyQt5 License Activation Dialog for CardioX.
@@ -18,7 +18,7 @@ from PyQt5.QtGui import QFont, QPixmap, QColor, QPainter
 from PyQt5.QtWidgets import (
     QApplication, QDialog, QDialogButtonBox, QFrame, QHBoxLayout,
     QLabel, QLineEdit, QMessageBox, QPushButton, QSizePolicy,
-    QVBoxLayout, QWidget,
+    QScrollArea, QVBoxLayout, QWidget,
 )
 
 try:
@@ -29,6 +29,7 @@ try:
         format_key,
         get_hardware_fingerprint,
         load_stored_key,
+        remember_valid_license,
         save_stored_key,
         tier_name,
         SOFTWARE_VERSION,
@@ -41,13 +42,14 @@ except ImportError:
         format_key,
         get_hardware_fingerprint,
         load_stored_key,
+        remember_valid_license,
         save_stored_key,
         tier_name,
         SOFTWARE_VERSION,
     )
 
 
-# ── Background validation worker ──────────────────────────────────────────────
+# â”€â”€ Background validation worker â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class _ValidateWorker(QThread):
     result = pyqtSignal(dict)
@@ -58,50 +60,80 @@ class _ValidateWorker(QThread):
 
     def run(self):
         try:
-            res = check_license(self._key)
+            fingerprint = get_hardware_fingerprint()
+            # First try activation. If the key is already bound to this machine,
+            # the server may still accept it; otherwise fall back to validation.
+            res = activate_with_server(self._key, fingerprint)
+            if res.get("success"):
+                res["valid"] = True
+                res["source"] = "server"
+                res["message"] = res.get("message", "License activated.")
+            else:
+                # Already-activated or activation-rejected keys should still be
+                # checked through the normal validation path.
+                res = check_license(self._key)
         except Exception as e:
             res = {"valid": False, "message": str(e)}
         self.result.emit(res)
 
 
-# ── License Dialog ─────────────────────────────────────────────────────────────
+# â”€â”€ License Dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class LicenseDialog(QDialog):
     """
     Full-screen license activation dialog.
-    Accepted  → license is valid, store it, proceed to app.
-    Rejected  → user cancelled / quit.
+    Accepted  â†’ license is valid, store it, proceed to app.
+    Rejected  â†’ user cancelled / quit.
     """
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("CardioX — License Activation")
+        self.setWindowTitle("CardioX â€” License Activation")
         self.setWindowFlags(
             Qt.Window
             | Qt.WindowMinimizeButtonHint
             | Qt.WindowCloseButtonHint
         )
-        self.setMinimumSize(620, 460)
-        self.resize(680, 520)
+        self.setMinimumSize(560, 420)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         self._worker: Optional[_ValidateWorker] = None
         self._license_result: dict = {}
 
         self._build_ui()
+        self._fit_to_screen()
 
         # Pre-fill stored key if available
         stored = load_stored_key()
         if stored:
             self._key_input.setText(format_key(stored))
 
-    # ── UI construction ────────────────────────────────────────────────────────
+    def _fit_to_screen(self):
+        """Size the dialog to the active screen so it never gets clipped."""
+        try:
+            screen = QApplication.primaryScreen()
+            if screen is None:
+                self.resize(680, 520)
+                return
+            geom = screen.availableGeometry()
+            width = min(max(int(geom.width() * 0.70), self.minimumWidth()), 900)
+            height = min(max(int(geom.height() * 0.72), self.minimumHeight()), 700)
+            self.resize(width, height)
+            self.move(
+                geom.left() + max(0, (geom.width() - width) // 2),
+                geom.top() + max(0, (geom.height() - height) // 2),
+            )
+        except Exception:
+            self.resize(680, 520)
+
+    # â”€â”€ UI construction â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _build_ui(self):
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # ── Header bar ──────────────────────────────────────────────────────
+        # â”€â”€ Header bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         header = QWidget()
         header.setFixedHeight(72)
         header.setStyleSheet(
@@ -111,7 +143,7 @@ class LicenseDialog(QDialog):
         h_layout = QHBoxLayout(header)
         h_layout.setContentsMargins(28, 0, 28, 0)
 
-        logo_lbl = QLabel("🫀 CardioX")
+        logo_lbl = QLabel("ðŸ«€ CardioX")
         logo_lbl.setFont(QFont("Arial", 20, QFont.Bold))
         logo_lbl.setStyleSheet("color: #ff8c00; background: transparent;")
 
@@ -124,17 +156,25 @@ class LicenseDialog(QDialog):
         h_layout.addWidget(ver_lbl)
         root.addWidget(header)
 
-        # ── Main card ────────────────────────────────────────────────────────
+        # â”€â”€ Main card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+
         card = QWidget()
         card.setStyleSheet("background: #f5f6fa;")
+        card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         c_layout = QVBoxLayout(card)
-        c_layout.setContentsMargins(48, 36, 48, 28)
-        c_layout.setSpacing(18)
+        c_layout.setContentsMargins(40, 30, 40, 24)
+        c_layout.setSpacing(16)
 
         # Title
         title = QLabel("Software License Activation")
         title.setFont(QFont("Arial", 18, QFont.Bold))
         title.setStyleSheet("color: #1a1a2e;")
+        title.setWordWrap(True)
         c_layout.addWidget(title)
 
         # Subtitle
@@ -184,14 +224,14 @@ class LicenseDialog(QDialog):
         # System info (shown to user for transparency)
         fp = get_hardware_fingerprint()
         sys_info = QLabel(
-            f"Machine ID: {fp[:12]}…  |  "
-            f"OS: {platform.system()} {platform.release()}  |  "
-            f"Host: {platform.node()}"
+            f"Machine ID:\n{fp}\n"
+            f"OS: {platform.system()} {platform.release()}  |  Host: {platform.node()}"
         )
-        sys_info.setStyleSheet("color: #999; font-size: 10px;")
+        sys_info.setWordWrap(True)
+        sys_info.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        sys_info.setStyleSheet("color: #999; font-size: 10px; line-height: 1.2;")
         sys_info.setAlignment(Qt.AlignCenter)
         c_layout.addWidget(sys_info)
-
         # Status label (feedback)
         self._status = QLabel("")
         self._status.setAlignment(Qt.AlignCenter)
@@ -248,17 +288,19 @@ class LicenseDialog(QDialog):
         # Help link
         help_lbl = QLabel(
             "Need a license key? Contact "
-            "<a href='mailto:support@deckmount.io' style='color:#ff8c00;'>"
-            "support@deckmount.io</a>"
+            "<a href='mailto:cardiocare@deckmount.in' style='color:#ff8c00;'>"
+            "cardiocare@deckmount.in</a>"
         )
         help_lbl.setOpenExternalLinks(True)
         help_lbl.setAlignment(Qt.AlignCenter)
-        help_lbl.setStyleSheet("color: #aaa; font-size: 11px;")
+        help_lbl.setWordWrap(True)
+        help_lbl.setStyleSheet("color: #aaa; font-size: 11px; margin-top: 4px;")
         c_layout.addWidget(help_lbl)
 
-        root.addWidget(card, 1)
+        scroll.setWidget(card)
+        root.addWidget(scroll, 1)
 
-    # ── Slots ──────────────────────────────────────────────────────────────────
+    # â”€â”€ Slots â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _on_key_typed(self, text: str):
         """Auto-format key as user types: insert hyphens every 5 chars."""
@@ -288,10 +330,10 @@ class LicenseDialog(QDialog):
         key_text = self._key_input.text().strip().upper().replace(" ", "")
         clean = key_text.replace("-", "")
         if len(clean) != 20:
-            self._set_status("⚠ Please enter a complete 20-character license key.", "#e67e22")
+            self._set_status("âš  Please enter a complete 20-character license key.", "#e67e22")
             return
 
-        self._set_status("🔄 Contacting license server…", "#2980b9")
+        self._set_status("ðŸ”„ Contacting license serverâ€¦", "#2980b9")
         self._activate_btn.setEnabled(False)
         self._quit_btn.setEnabled(False)
 
@@ -310,17 +352,27 @@ class LicenseDialog(QDialog):
             exp_str = "Perpetual" if exp == 0 else __import__("datetime").datetime.fromtimestamp(exp).strftime("%Y-%m-%d")
 
             self._set_status(
-                f"✅ Activated — {tier_name(tier)} License  |  Expires: {exp_str}",
+                f"âœ… Activated â€” {tier_name(tier)} License  |  Expires: {exp_str}",
                 "#27ae60",
             )
-            save_stored_key(self._key_input.text().strip())
+            key_text = self._key_input.text().strip()
+            save_stored_key(key_text)
+            remember_valid_license(key_text, get_hardware_fingerprint(), result)
 
             # Brief pause so user sees success message, then accept
             from PyQt5.QtCore import QTimer
             QTimer.singleShot(1200, self.accept)
         else:
             msg = result.get("message", "Validation failed.")
-            self._set_status(f"✗ {msg}", "#e74c3c")
+            if result.get("revoked") or "revoked" in msg.lower():
+                QMessageBox.critical(
+                    self,
+                    "License Revoked",
+                    f"{msg}\n\nContact support to restore access.",
+                )
+                self.reject()
+                return
+            self._set_status(f"âœ— {msg}", "#e74c3c")
 
     def get_license_result(self) -> dict:
         return self._license_result
@@ -329,7 +381,7 @@ class LicenseDialog(QDialog):
         return self._key_input.text().strip()
 
 
-# ── Standalone test ────────────────────────────────────────────────────────────
+# â”€â”€ Standalone test â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
@@ -339,3 +391,5 @@ if __name__ == "__main__":
     else:
         print("Cancelled.")
     sys.exit(0)
+
+

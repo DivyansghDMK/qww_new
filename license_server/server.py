@@ -39,6 +39,12 @@ from datetime import datetime, timezone
 from functools import wraps
 from pathlib import Path
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 from flask import Flask, jsonify, request, abort
 from dotenv import find_dotenv, load_dotenv
 
@@ -57,7 +63,7 @@ DB_FILE: Path      = Path(os.getenv("LICENSE_DB", "license_db.json"))
 _B32_ALPHA = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
 TIER_NAMES = {0: "Trial", 1: "Standard", 2: "Professional", 3: "Enterprise"}
-MAX_ACTIVATIONS = {0: 1, 1: 1, 2: 3, 3: 10}  # activations per tier
+MAX_ACTIVATIONS = {0: 1, 1: 2, 2: 3, 3: 10}  # Allow 2 activations for Standard tier
 
 app = Flask(__name__)
 

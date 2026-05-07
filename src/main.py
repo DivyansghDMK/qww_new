@@ -168,6 +168,58 @@ def get_dashboard_module():
         logger.error(ERROR_MESSAGES["import_error"].format(e))
         return None
 
+
+def _recover_license_in_place(app, window=None, reason: str = "", title: str = "License Invalid") -> bool:
+    """
+    Disable current features, reopen the license dialog, and keep the app alive
+    if reactivation succeeds.
+    """
+    message = reason or "License key is revoked. Contact support."
+    try:
+        if window is not None:
+            window.setEnabled(False)
+    except Exception:
+        pass
+
+    try:
+        QMessageBox.critical(
+            window,
+            title,
+            f"{message}\n\nYou will be returned to the license activation page.",
+        )
+    except Exception:
+        pass
+
+    try:
+        from utils.license_manager import clear_license_cache, clear_stored_key
+        from utils.license_dialog import LicenseDialog
+
+        clear_stored_key()
+        clear_license_cache()
+
+        dlg = LicenseDialog(parent=window)
+        accepted = dlg.exec_() == QDialog.Accepted
+        if accepted:
+            try:
+                if window is not None:
+                    window.setEnabled(True)
+            except Exception:
+                pass
+            return True
+    except Exception as e:
+        logger.warning(f"Could not reopen license dialog after revocation: {e}")
+
+    try:
+        if window is not None:
+            window.close()
+    except Exception:
+        pass
+    try:
+        app.quit()
+    except Exception:
+        pass
+    return False
+
 # Import ECG modules with fallback
 def get_ecg_modules():
     try:
@@ -1368,22 +1420,36 @@ def main():
         # Validate license BEFORE showing login. On success the result is cached
         # locally (HMAC-protected) so subsequent starts are instant / offline.
         try:
-            from utils.license_manager import check_license, load_stored_key
+            from utils.license_manager import check_license, clear_license_cache, clear_stored_key, load_stored_key
             from utils.license_dialog import LicenseDialog
 
+            clear_license_cache()
             _stored_key = load_stored_key()
             _license_ok = False
+            _license_result = {}
 
             if _stored_key:
-                _res = check_license(_stored_key)
-                _license_ok = bool(_res.get("valid"))
+                _license_result = check_license(_stored_key)
+                _license_ok = bool(_license_result.get("valid"))
+                if _license_result.get("revoked"):
+                    if not _recover_license_in_place(
+                        app,
+                        None,
+                        _license_result.get("message", "License key is revoked. Contact support."),
+                        "License Revoked",
+                    ):
+                        return
+                    _license_ok = True
                 if _license_ok:
                     logger.info(
-                        f"[License] Valid — tier={_res.get('tier',0)}, "
-                        f"source={_res.get('source','?')}"
+                        f"[License] Valid — tier={_license_result.get('tier',0)}, "
+                        f"source={_license_result.get('source','?')}"
                     )
 
             if not _license_ok:
+                if _stored_key:
+                    clear_stored_key()
+                    clear_license_cache()
                 _dlg = LicenseDialog()
                 if _dlg.exec_() != QDialog.Accepted:
                     logger.info("[License] Activation cancelled — exiting.")
@@ -1494,6 +1560,49 @@ def main():
                             pass
 
                     dashboard.show()
+
+                    # Periodic license re-validation so revocations take effect during runtime.
+                    try:
+                        from utils.license_manager import check_license, load_stored_key
+
+                        _license_timer = QTimer(dashboard)
+                        _license_timer.setInterval(60 * 1000)
+
+                        def _revalidate_license():
+                            try:
+                                stored_key = load_stored_key()
+                                if not stored_key:
+                                    return
+                                res = check_license(stored_key, force_server=True)
+                                if res.get("revoked"):
+                                    _license_timer.stop()
+                                    if _recover_license_in_place(
+                                        app,
+                                        dashboard,
+                                        res.get("message", "License key is revoked. Contact support."),
+                                        "License Revoked",
+                                    ):
+                                        try:
+                                            dashboard.closed_by_sign_out = True
+                                        except Exception:
+                                            pass
+                                        app.quit()
+                                    return
+                                if not res.get("valid"):
+                                    logger.warning(
+                                        "License validation returned non-valid but not revoked; "
+                                        "keeping current session active."
+                                    )
+                                    return
+                            except Exception as lic_err:
+                                logger.warning(f"Periodic license check failed: {lic_err}")
+
+                        _license_timer.timeout.connect(_revalidate_license)
+                        _license_timer.start()
+                        dashboard._license_timer = _license_timer
+                        QTimer.singleShot(1500, _revalidate_license)
+                    except Exception as e:
+                        logger.warning(f"Could not start license watchdog: {e}")
 
                     # Run application
                     app.exec_()

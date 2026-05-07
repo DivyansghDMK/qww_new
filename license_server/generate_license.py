@@ -36,6 +36,12 @@ from dotenv import find_dotenv, load_dotenv
 # Load .env from the project tree so the generator matches the server secret.
 load_dotenv(find_dotenv(usecwd=True), override=False)
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 # ── Config ────────────────────────────────────────────────────────────────────
 HMAC_SECRET: bytes = os.getenv(
     "LICENSE_HMAC_SECRET", "CHANGE_ME_32_BYTES_RANDOM_SECRET!"
