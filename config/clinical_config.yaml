@@ -1,0 +1,40 @@
+# Clinical thresholds for the Holter / Comprehensive ECG pipeline.
+#
+# Keep this file aligned with the Python defaults in
+# `src/ecg/holter/clinical_config.py`.
+
+sampling_rate_hz: 500
+
+signal:
+  min_signal_seconds: 2.0
+  primary_detection_leads:
+    - II
+    - V5
+  quality_threshold: 0.6
+  bandpass_low_hz: 0.5
+  bandpass_high_hz: 40.0
+  notch_hz: 50.0
+
+quality:
+  flatline_std: 0.05
+  saturation_mv: 4.5
+  saturation_ratio: 0.01
+  baseline_wander_ratio: 0.30
+  hf_noise_ratio: 0.40
+  regularity_cv: 0.8
+
+arrhythmia:
+  tachy_threshold_bpm: 100.0
+  brady_threshold_bpm: 60.0
+  pause_threshold_ms: 2000.0
+  qrs_detection_window_ms: 150.0
+  qrs_detection_refractory_ms: 120.0
+  qrs_refine_radius_ms: 80.0
+  threshold_scale: 0.25
+
+qrs_validator:
+  min_width_ms: 40.0
+  max_width_ms: 200.0
+  min_amplitude: 0.08
+
+template_similarity_threshold: 0.90

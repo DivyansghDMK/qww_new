@@ -20,6 +20,8 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 import numpy as np
 from scipy.signal import butter, filtfilt, iirnotch
 
+from .clinical_config import ClinicalConfig, load_clinical_config
+
 
 def _safe_array(signal: Optional[Sequence[float]]) -> np.ndarray:
     if signal is None:
@@ -93,6 +95,9 @@ def _median_absolute_deviation(signal: np.ndarray) -> float:
 
 @dataclass
 class HolterConfig:
+    sampling_rate_hz: float = 500.0
+    min_signal_seconds: float = 2.0
+    primary_detection_leads: Tuple[str, ...] = ("II", "V5")
     tachy_threshold_bpm: float = 100.0
     brady_threshold_bpm: float = 60.0
     pause_threshold_ms: float = 2000.0
@@ -100,6 +105,55 @@ class HolterConfig:
     bandpass_low_hz: float = 0.5
     bandpass_high_hz: float = 40.0
     notch_hz: float = 50.0
+    signal_flatline_std: float = 0.05
+    signal_saturation_mv: float = 4.5
+    signal_saturation_ratio: float = 0.01
+    signal_baseline_wander_ratio: float = 0.30
+    signal_hf_noise_ratio: float = 0.40
+    signal_regularity_cv: float = 0.8
+    qrs_validator_min_width_ms: float = 40.0
+    qrs_validator_max_width_ms: float = 200.0
+    qrs_validator_min_amplitude: float = 0.08
+    template_similarity_threshold: float = 0.90
+    qrs_detection_window_ms: float = 150.0
+    qrs_detection_refractory_ms: float = 120.0
+    qrs_refine_radius_ms: float = 80.0
+    qrs_detection_threshold_scale: float = 0.25
+
+    @classmethod
+    def from_mapping(cls, data: Optional[Dict[str, object]] = None) -> "HolterConfig":
+        cfg = ClinicalConfig.from_mapping(data or {})
+        return cls(
+            sampling_rate_hz=cfg.sampling_rate_hz,
+            min_signal_seconds=cfg.min_signal_seconds,
+            primary_detection_leads=cfg.primary_detection_leads,
+            tachy_threshold_bpm=cfg.tachy_threshold_bpm,
+            brady_threshold_bpm=cfg.brady_threshold_bpm,
+            pause_threshold_ms=cfg.pause_threshold_ms,
+            sqi_min=cfg.signal_quality_threshold,
+            bandpass_low_hz=cfg.bandpass_low_hz,
+            bandpass_high_hz=cfg.bandpass_high_hz,
+            notch_hz=cfg.notch_hz,
+            signal_flatline_std=cfg.signal_flatline_std,
+            signal_saturation_mv=cfg.signal_saturation_mv,
+            signal_saturation_ratio=cfg.signal_saturation_ratio,
+            signal_baseline_wander_ratio=cfg.signal_baseline_wander_ratio,
+            signal_hf_noise_ratio=cfg.signal_hf_noise_ratio,
+            signal_regularity_cv=cfg.signal_regularity_cv,
+            qrs_validator_min_width_ms=cfg.qrs_validator_min_width_ms,
+            qrs_validator_max_width_ms=cfg.qrs_validator_max_width_ms,
+            qrs_validator_min_amplitude=cfg.qrs_validator_min_amplitude,
+            template_similarity_threshold=cfg.template_similarity_threshold,
+            qrs_detection_window_ms=cfg.qrs_detection_window_ms,
+            qrs_detection_refractory_ms=cfg.qrs_detection_refractory_ms,
+            qrs_refine_radius_ms=cfg.qrs_refine_radius_ms,
+            qrs_detection_threshold_scale=cfg.qrs_detection_threshold_scale,
+        )
+
+    @classmethod
+    def from_clinical_config(cls, clinical_config: Optional[ClinicalConfig] = None) -> "HolterConfig":
+        cfg = clinical_config or load_clinical_config()
+        return cls.from_mapping(cfg.to_dict())
 
 
 class SignalPreprocessor:
@@ -137,27 +191,28 @@ class SignalPreprocessor:
 
 
 class SignalQuality:
-    def __init__(self, fs: float = 500.0):
+    def __init__(self, fs: float = 500.0, config: Optional[HolterConfig] = None):
         self.fs = float(fs or 500.0)
+        self.config = config or HolterConfig()
 
     def compute_sqi(self, signal: Sequence[float], r_peaks: Optional[Sequence[int]] = None) -> float:
         arr = _safe_array(signal)
-        if arr.size < int(self.fs * 2.0):
+        if arr.size < int(self.fs * max(self.config.min_signal_seconds, 0.5)):
             return 0.0
         if not np.any(arr):
             return 0.0
 
         signal_std = float(np.std(arr))
-        if signal_std < 0.02:
+        if signal_std < self.config.signal_flatline_std:
             return 0.0
 
-        baseline = _lowpass(arr, self.fs, 0.5, order=2)
+        baseline = _lowpass(arr, self.fs, self.config.bandpass_low_hz, order=2)
         drift_energy = float(np.var(baseline) / max(np.var(arr), 1e-9))
-        drift_score = max(0.0, 1.0 - min(1.0, drift_energy))
+        drift_score = max(0.0, 1.0 - min(1.0, drift_energy / max(self.config.signal_baseline_wander_ratio, 1e-6)))
 
-        high_freq = _highpass(arr, self.fs, 40.0, order=2)
+        high_freq = _highpass(arr, self.fs, self.config.bandpass_high_hz, order=2)
         noise_energy = float(np.var(high_freq) / max(np.var(arr), 1e-9))
-        noise_score = max(0.0, 1.0 - min(1.0, noise_energy * 1.4))
+        noise_score = max(0.0, 1.0 - min(1.0, noise_energy / max(self.config.signal_hf_noise_ratio, 1e-6)))
 
         stability_score = 0.5
         if r_peaks is not None:
@@ -167,9 +222,12 @@ class SignalQuality:
                 mean_rr = float(np.mean(rr))
                 if mean_rr > 0:
                     cv = float(np.std(rr) / mean_rr)
-                    stability_score = max(0.0, 1.0 - min(1.0, cv))
+                    stability_score = max(0.0, 1.0 - min(1.0, cv / max(self.config.signal_regularity_cv, 1e-6)))
 
-        amplitude_score = max(0.0, min(1.0, float(np.ptp(arr)) / 5.0))
+        amplitude_score = max(
+            0.0,
+            min(1.0, float(np.ptp(arr)) / max(self.config.signal_saturation_mv, 1e-6)),
+        )
         sqi = float(np.clip(np.mean([drift_score, noise_score, stability_score, amplitude_score]), 0.0, 1.0))
         return sqi
 
@@ -179,7 +237,7 @@ class MultiLeadSelector:
         self.fs = float(fs or 500.0)
         self.config = config or HolterConfig()
         self._preprocessor = SignalPreprocessor(self.fs, self.config)
-        self._quality = SignalQuality(self.fs)
+        self._quality = SignalQuality(self.fs, self.config)
 
     def select_best_lead(self, leads: Dict[str, Sequence[float]]) -> Tuple[Optional[str], np.ndarray, Dict[str, float]]:
         scores: Dict[str, float] = {}
@@ -202,6 +260,15 @@ class QRSValidator:
         self.min_width_ms = float(min_width_ms)
         self.max_width_ms = float(max_width_ms)
         self.min_amplitude = float(min_amplitude)
+
+    @classmethod
+    def from_config(cls, config: Optional[HolterConfig] = None) -> "QRSValidator":
+        cfg = config or HolterConfig()
+        return cls(
+            min_width_ms=cfg.qrs_validator_min_width_ms,
+            max_width_ms=cfg.qrs_validator_max_width_ms,
+            min_amplitude=cfg.qrs_validator_min_amplitude,
+        )
 
     def is_valid(self, beat: Dict[str, float]) -> bool:
         width = float(beat.get("width_ms", 0.0) or beat.get("qrs_ms", 0.0) or 0.0)

@@ -17,10 +17,13 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 import numpy as np
 from scipy.signal import butter, filtfilt, find_peaks, savgol_filter
 
+from ecg.holter.clinical_config import ClinicalConfig, load_clinical_config
 
-DEFAULT_FS = 500
-MIN_SIGNAL_SECONDS = 2.0
-PRIMARY_DETECTION_LEADS = ("II", "V5")
+
+_CLINICAL_CONFIG = load_clinical_config()
+DEFAULT_FS = int(_CLINICAL_CONFIG.sampling_rate_hz)
+MIN_SIGNAL_SECONDS = float(_CLINICAL_CONFIG.min_signal_seconds)
+PRIMARY_DETECTION_LEADS = tuple(_CLINICAL_CONFIG.primary_detection_leads)
 ORDERED_LEADS = ("I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6")
 
 
@@ -158,11 +161,15 @@ def _signal_quality_score(signal: np.ndarray, fs: float) -> float:
     return float(max(0.0, min(1.0, (snr - 1.0) / 8.0)))
 
 
-def _select_detection_lead(leads_dict: Dict[str, Sequence[float]], fs: float) -> Tuple[Optional[str], np.ndarray, float]:
+def _select_detection_lead(
+    leads_dict: Dict[str, Sequence[float]],
+    fs: float,
+    preferred_leads: Optional[Sequence[str]] = None,
+) -> Tuple[Optional[str], np.ndarray, float]:
     best_name = None
     best_signal = np.array([], dtype=float)
     best_quality = -1.0
-    for lead_name in PRIMARY_DETECTION_LEADS:
+    for lead_name in tuple(preferred_leads or PRIMARY_DETECTION_LEADS):
         signal = _safe_array(leads_dict.get(lead_name))
         quality = _signal_quality_score(signal, fs)
         if quality > best_quality:
@@ -1114,20 +1121,31 @@ def _cornell_index(signal_dict: Dict[str, Sequence[float]], beats: Sequence[Dict
     return float(np.median(ravl_values)) + float(np.median(sv3_values)) if ravl_values and sv3_values else 0.0
 
 
-def analyze_ecg(leads_dict: Dict[str, Sequence[float]], fs: float = DEFAULT_FS, patient_gender: str = "M", external_metrics: Optional[Dict[str, float]] = None) -> Dict[str, object]:
-    fs = float(fs or DEFAULT_FS)
+def analyze_ecg(
+    leads_dict: Dict[str, Sequence[float]],
+    fs: float = DEFAULT_FS,
+    patient_gender: str = "M",
+    external_metrics: Optional[Dict[str, float]] = None,
+    clinical_config: Optional[ClinicalConfig] = None,
+) -> Dict[str, object]:
+    clinical_config = clinical_config or _CLINICAL_CONFIG
+    fs = float(fs or clinical_config.sampling_rate_hz or DEFAULT_FS)
     cleaned_leads = {lead: _safe_array(sig) for lead, sig in (leads_dict or {}).items()}
     if not cleaned_leads:
         return {"arrhythmias": [], "reason": "No leads provided", "confidence": 0.0}
 
     lead_lengths = [sig.size for sig in cleaned_leads.values() if sig.size]
-    if not lead_lengths or min(lead_lengths) < int(fs * MIN_SIGNAL_SECONDS):
+    if not lead_lengths or min(lead_lengths) < int(fs * clinical_config.min_signal_seconds):
         return {"arrhythmias": [], "reason": "Signal too short (< 2 seconds)", "confidence": 0.0}
 
     if all(not np.any(sig) for sig in cleaned_leads.values()):
         return {"arrhythmias": [], "reason": "All-zero signal", "confidence": 0.0}
 
-    detection_lead_name, detection_signal, detection_quality = _select_detection_lead(cleaned_leads, fs)
+    detection_lead_name, detection_signal, detection_quality = _select_detection_lead(
+        cleaned_leads,
+        fs,
+        preferred_leads=clinical_config.primary_detection_leads,
+    )
     if detection_signal.size == 0:
         return {"arrhythmias": [], "reason": "No usable detection lead", "confidence": 0.0}
 
@@ -1568,8 +1586,9 @@ class ArrhythmiaDetector:
     The public methods intentionally preserve the existing signatures.
     """
 
-    def __init__(self, sampling_rate: float = DEFAULT_FS, counts_per_mv: float = 1.0):
-        self.fs = float(sampling_rate or DEFAULT_FS)
+    def __init__(self, sampling_rate: float = DEFAULT_FS, counts_per_mv: float = 1.0, clinical_config: Optional[ClinicalConfig] = None):
+        self.clinical_config = clinical_config or _CLINICAL_CONFIG
+        self.fs = float(sampling_rate or self.clinical_config.sampling_rate_hz or DEFAULT_FS)
         self.counts_per_mv = float(counts_per_mv or 1.0)
         import collections
         self.diagnosis_buffer = collections.deque(maxlen=5)
@@ -1598,7 +1617,12 @@ class ArrhythmiaDetector:
         if "II" not in lead_signals and primary_signal.size:
             lead_signals["II"] = primary_signal
 
-        results = analyze_ecg(lead_signals, fs=self.fs, external_metrics=analysis)
+        results = analyze_ecg(
+            lead_signals,
+            fs=self.fs,
+            external_metrics=analysis,
+            clinical_config=self.clinical_config,
+        )
 
         import collections
 

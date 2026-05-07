@@ -25,6 +25,7 @@ from datetime import datetime
 from typing import Optional, List, Dict
 
 from .file_format import ECGHFileWriter, LEAD_NAMES
+from .session_store import ensure_events_db, write_session_metadata
 
 # Analysis chunk cadence for live Holter updates.
 CHUNK_SECONDS = 5
@@ -43,7 +44,8 @@ class HolterStreamWriter:
                  fs: int = FS_DEFAULT,
                  on_chunk_ready=None,
                  on_arrhythmia=None,
-                 chunk_seconds: int = CHUNK_SECONDS):
+                 chunk_seconds: int = CHUNK_SECONDS,
+                 analysis_worker=None):
         """
         Args:
             output_dir: Directory to save .ecgh + .jsonl files
@@ -57,6 +59,7 @@ class HolterStreamWriter:
         self.output_dir = output_dir
         self.on_chunk_ready = on_chunk_ready
         self.on_arrhythmia = on_arrhythmia
+        self._analysis_worker = analysis_worker
         self.chunk_seconds = max(5, int(chunk_seconds))
 
         # State
@@ -66,6 +69,8 @@ class HolterStreamWriter:
         self._session_dir = ""
         self._ecgh_path = ""
         self._jsonl_path = ""
+        self._session_json_path = ""
+        self._events_db_path = ""
 
         # File writer (created on start)
         self._writer: Optional[ECGHFileWriter] = None
@@ -127,6 +132,19 @@ class HolterStreamWriter:
 
         self._ecgh_path = os.path.join(self._session_dir, "recording.ecgh")
         self._jsonl_path = os.path.join(self._session_dir, "metrics.jsonl")
+        self._session_json_path = os.path.join(self._session_dir, "session.json")
+        self._events_db_path = ensure_events_db(self._session_dir)
+        write_session_metadata(self._session_dir, {
+            "session_dir": self._session_dir,
+            "patient_info": dict(self.patient_info or {}),
+            "fs": self.fs,
+            "chunk_seconds": self.chunk_seconds,
+            "output_dir": self.output_dir,
+            "ecgh_path": self._ecgh_path,
+            "jsonl_path": self._jsonl_path,
+            "events_db_path": self._events_db_path,
+            "status": "recording",
+        })
 
         self._writer = ECGHFileWriter(
             path=self._ecgh_path,
@@ -202,6 +220,23 @@ class HolterStreamWriter:
             summary = self._writer.finalize()
             summary['session_dir'] = self._session_dir
             summary['jsonl_path'] = self._jsonl_path
+            summary['session_json_path'] = self._session_json_path
+            summary['events_db_path'] = self._events_db_path
+            try:
+                write_session_metadata(self._session_dir, {
+                    "session_dir": self._session_dir,
+                    "patient_info": dict(self.patient_info or {}),
+                    "fs": self.fs,
+                    "chunk_seconds": self.chunk_seconds,
+                    "output_dir": self.output_dir,
+                    "ecgh_path": self._ecgh_path,
+                    "jsonl_path": self._jsonl_path,
+                    "events_db_path": self._events_db_path,
+                    "status": "stopped",
+                    "summary": dict(summary),
+                })
+            except Exception:
+                pass
         with self._lock:
             summary.update(dict(self._summary_cache))
             summary['patient_info'] = dict(self.patient_info or {})
@@ -213,8 +248,22 @@ class HolterStreamWriter:
         except queue.Full:
             pass
 
+        if self._analysis_worker is not None:
+            try:
+                self._analysis_worker.stop(wait=True, timeout=5.0)
+            except Exception:
+                pass
+
         print(f"[Holter] Recording stopped. Duration: {self.elapsed_seconds:.1f}s")
         return summary
+
+    def attach_analysis_worker(self, analysis_worker) -> None:
+        self._analysis_worker = analysis_worker
+
+    def close(self, wait_for_analysis: bool = True) -> dict:
+        if not wait_for_analysis:
+            return self.stop()
+        return self.stop()
 
     # ── Main push method (called 500× per second) ──────────────────────────────
 

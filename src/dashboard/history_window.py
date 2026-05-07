@@ -24,6 +24,11 @@ import requests
 import webbrowser
 
 try:
+    from dotenv import load_dotenv
+except Exception:
+    load_dotenv = None
+
+try:
     from utils.cloud_uploader import get_cloud_uploader
 except ImportError:
     sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
@@ -36,6 +41,14 @@ from matplotlib.figure import Figure
 import numpy as np
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if load_dotenv is not None:
+    for candidate in (
+        os.path.join(BASE_DIR, ".env"),
+        os.path.join(os.path.dirname(BASE_DIR), ".env"),
+    ):
+        if os.path.exists(candidate):
+            load_dotenv(candidate, override=False)
+            break
 HISTORY_FILE = os.path.join(BASE_DIR, "ecg_history.json")
 ECG_DATA_FILE = os.path.join(BASE_DIR, "ecg_data.txt")
 REPORTS_INDEX_FILE = os.path.join(BASE_DIR, "reports", "index.json")
@@ -74,6 +87,16 @@ def _reviewed_reports_headers() -> dict:
         if api_key:
             headers["x-api-key"] = api_key
     return headers
+
+
+def _history_email_defaults() -> dict:
+    """Load locked email-sender settings from environment/config."""
+    return {
+        "smtp_host": os.getenv("EMAIL_SMTP_HOST", "smtp.gmail.com").strip(),
+        "smtp_port": os.getenv("EMAIL_SMTP_PORT", "587").strip(),
+        "sender_email": os.getenv("EMAIL_SENDER", "").strip(),
+        "sender_password": os.getenv("EMAIL_PASSWORD", "").strip(),
+    }
 
 # ── pymupdf (fitz) optional import ─────────────────────────────────────────
 try:
@@ -268,61 +291,93 @@ class SendEmailDialog(QDialog):
     def __init__(self, report_path: str, patient_name: str = "", parent=None):
         super().__init__(parent)
         self.report_path = report_path
+        self._email_cfg = _history_email_defaults()
+        self._smtp_host = self._email_cfg["smtp_host"] or "smtp.gmail.com"
+        self._smtp_port = self._email_cfg["smtp_port"] or "587"
+        self._sender_email = self._email_cfg["sender_email"]
+        self._sender_password = self._email_cfg["sender_password"]
         self.setWindowTitle("Send Report by Email")
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
-        self.setMinimumSize(500, 480)
+        self.setMinimumSize(520, 420)
         self.setStyleSheet("""
-            QDialog{background:#ffffff;}
-            QLabel{font-weight:bold;color:#111111;}
-            QLineEdit,QTextEdit{border:1px solid #ced4da;border-radius:5px;padding:6px;background:#fff;}
-            QPushButton{border-radius:5px;padding:8px 18px;font-weight:bold;color:#fff;background:#111111;border:none;}
-            QPushButton:hover{background:#000000;}
-            QPushButton#cancel{background:#444444;}
-            QPushButton#cancel:hover{background:#222222;}
+            QDialog{background:#fffaf4;color:#1f2937;}
+            QLabel{color:#1f2937;}
+            QLineEdit,QTextEdit{
+                border:1px solid #f7c58b;
+                border-radius:10px;
+                padding:10px 12px;
+                background:#ffffff;
+                color:#1f2937;
+                font-size:13px;
+            }
+            QTextEdit{selection-background-color:#fed7aa;}
+            QPushButton{
+                border-radius:10px;
+                padding:10px 18px;
+                font-weight:700;
+                color:#ffffff;
+                background:#ff7a00;
+                border:none;
+                min-width:92px;
+            }
+            QPushButton:hover{background:#ff8a1f;}
+            QPushButton#cancel{background:#4b5563;}
+            QPushButton#cancel:hover{background:#374151;}
         """)
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(12)
 
-        title = QLabel("📧  Send ECG Report by Email")
-        title.setStyleSheet("font-size:15px;font-weight:bold;color:#111111;margin-bottom:8px;")
+        title = QLabel("Send ECG Report by Email")
+        title.setStyleSheet("font-size:18px;font-weight:800;color:#111827;")
         layout.addWidget(title)
 
-        form = QFormLayout()
-        form.setSpacing(10)
+        subtitle = QLabel("Compose the message and choose who should receive the report.")
+        subtitle.setStyleSheet("color:#7c2d12;font-size:11px;font-weight:600;")
+        layout.addWidget(subtitle)
 
-        self.smtp_host = QLineEdit("smtp.gmail.com")
-        self.smtp_port = QLineEdit("587")
-        self.smtp_user = QLineEdit()
-        self.smtp_user.setPlaceholderText("sender@example.com")
-        self.smtp_pass = QLineEdit()
-        self.smtp_pass.setEchoMode(QLineEdit.Password)
-        self.smtp_pass.setPlaceholderText("App password / SMTP password")
+        form = QFormLayout()
+        form.setSpacing(12)
+        form.setLabelAlignment(Qt.AlignRight)
+
         self.to_field = QLineEdit()
         self.to_field.setPlaceholderText("recipient@example.com")
         self.cc_field = QLineEdit()
         self.cc_field.setPlaceholderText("Optional CC addresses, comma-separated")
-        self.subject = QLineEdit(f"ECG Report — {patient_name}")
+        self.subject = QLineEdit(f"ECG Report — {patient_name}".strip(" —"))
         self.body = QTextEdit()
         self.body.setPlainText(
             f"Dear Doctor,\n\nPlease find attached the ECG report for patient: {patient_name}.\n\n"
             f"Regards,\nECG Monitor"
         )
-        self.body.setFixedHeight(100)
+        self.body.setFixedHeight(120)
 
-        form.addRow("SMTP Host:", self.smtp_host)
-        form.addRow("Port:", self.smtp_port)
-        form.addRow("Your Email:", self.smtp_user)
-        form.addRow("Password:", self.smtp_pass)
         form.addRow("To:", self.to_field)
         form.addRow("CC:", self.cc_field)
         form.addRow("Subject:", self.subject)
         form.addRow("Body:", self.body)
         layout.addLayout(form)
 
+        info_row = QFrame()
+        info_row.setStyleSheet("QFrame{background:#fff3e6;border:1px solid #ffd199;border-radius:10px;}")
+        info_layout = QHBoxLayout(info_row)
+        info_layout.setContentsMargins(12, 8, 12, 8)
+        info_layout.setSpacing(8)
+        if self._sender_email:
+            sender_text = f"Sending from {self._sender_email}"
+        else:
+            sender_text = "Sender account is not configured"
+        info_lbl = QLabel(sender_text)
+        info_lbl.setStyleSheet("color:#9a3412;font-size:11px;font-weight:600;")
+        info_layout.addWidget(info_lbl)
+        info_layout.addStretch()
+        layout.addWidget(info_row)
+
         # Attachment label
         fname = os.path.basename(report_path) if report_path else "—"
         att_lbl = QLabel(f"📎 Attachment: {fname}")
-        att_lbl.setStyleSheet("color:#333333;font-weight:normal;margin-top:4px;")
+        att_lbl.setStyleSheet("color:#6b7280;font-weight:600;margin-top:2px;")
         layout.addWidget(att_lbl)
 
         # Buttons
@@ -342,8 +397,14 @@ class SendEmailDialog(QDialog):
         if not to_addr:
             QMessageBox.warning(self, "Missing", "Please enter a recipient email address.")
             return
-        if not self.smtp_user.text().strip():
-            QMessageBox.warning(self, "Missing", "Please enter your email address.")
+        sender_email = self._sender_email
+        sender_password = self._sender_password
+        if not sender_email or not sender_password:
+            QMessageBox.warning(
+                self,
+                "Missing Sender Config",
+                "Sender email credentials are not configured. Set EMAIL_SENDER and EMAIL_PASSWORD in .env.",
+            )
             return
         if not os.path.exists(self.report_path):
             QMessageBox.warning(self, "File Missing", "Report PDF not found.")
@@ -351,7 +412,7 @@ class SendEmailDialog(QDialog):
 
         # Build message
         msg = MIMEMultipart()
-        msg["From"] = self.smtp_user.text().strip()
+        msg["From"] = sender_email
         msg["To"] = to_addr
         cc_list = [x.strip() for x in self.cc_field.text().split(",") if x.strip()]
         if cc_list:
@@ -368,10 +429,10 @@ class SendEmailDialog(QDialog):
         msg.attach(part)
 
         try:
-            port = int(self.smtp_port.text().strip() or "587")
-            server = smtplib.SMTP(self.smtp_host.text().strip(), port, timeout=15)
+            port = int(self._smtp_port or "587")
+            server = smtplib.SMTP(self._smtp_host, port, timeout=15)
             server.starttls()
-            server.login(self.smtp_user.text().strip(), self.smtp_pass.text())
+            server.login(sender_email, sender_password)
             all_recipients = [to_addr] + cc_list
             server.sendmail(msg["From"], all_recipients, msg.as_string())
             server.quit()

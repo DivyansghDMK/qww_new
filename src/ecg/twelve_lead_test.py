@@ -8691,6 +8691,7 @@ class ECGTestPage(QWidget):
             on_chunk_done=self._holter_writer.update_live_analysis,
             fs=500
         )
+        self._holter_writer.attach_analysis_worker(self._holter_worker)
         self._holter_worker.start()
         
         # Show Holter badge
@@ -8713,7 +8714,7 @@ class ECGTestPage(QWidget):
             
             # Stop the worker thread
             if self._holter_worker:
-                self._holter_worker.stop()
+                self._holter_worker.stop(wait=True)
             
             # Show dialog to collect patient info AFTER recording
             dialog = HolterStartDialog(self, patient_info=summary.get('patient_info', {}), output_dir=self._holter_output_dir)

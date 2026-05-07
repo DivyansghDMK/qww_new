@@ -28,6 +28,10 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(_THIS_DIR)))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
+from ecg.holter.session_store import append_events, append_metric
+
+from ecg.holter.clinical_config import ClinicalConfig, load_clinical_config
+
 
 class HolterAnalysisWorker(threading.Thread):
     """
@@ -39,12 +43,14 @@ class HolterAnalysisWorker(threading.Thread):
                  analysis_queue: queue.Queue,
                  on_chunk_done: Optional[Callable] = None,
                  on_arrhythmia: Optional[Callable] = None,
-                 fs: int = 500):
+                 fs: int = 500,
+                 clinical_config: Optional[ClinicalConfig] = None):
         super().__init__(daemon=True, name="HolterAnalysisWorker")
         self.analysis_queue = analysis_queue
         self.on_chunk_done = on_chunk_done    # callback(chunk_result_dict)
         self.on_arrhythmia = on_arrhythmia    # callback(arrhythmia_list, timestamp)
         self.fs = fs
+        self.clinical_config = clinical_config or load_clinical_config()
         self._stop_event = threading.Event()
 
         # Import existing ECG analysis modules
@@ -62,7 +68,7 @@ class HolterAnalysisWorker(threading.Thread):
 
         try:
             from ecg.arrhythmia_detector import ArrhythmiaDetector
-            self._arrhythmia_detector = ArrhythmiaDetector(sampling_rate=self.fs)
+            self._arrhythmia_detector = ArrhythmiaDetector(sampling_rate=self.fs, clinical_config=self.clinical_config)
         except Exception as e:
             print(f"[HolterWorker] WARNING: could not import ArrhythmiaDetector: {e}")
 
@@ -83,12 +89,12 @@ class HolterAnalysisWorker(threading.Thread):
                 TemplateCluster,
                 clean_rr,
             )
-            self._pipeline_config = HolterConfig()
+            self._pipeline_config = HolterConfig.from_clinical_config(self.clinical_config)
             self._preprocessor = SignalPreprocessor(fs=self.fs, config=self._pipeline_config)
-            self._signal_quality = SignalQuality(fs=self.fs)
+            self._signal_quality = SignalQuality(fs=self.fs, config=self._pipeline_config)
             self._lead_selector = MultiLeadSelector(fs=self.fs, config=self._pipeline_config)
-            self._qrs_validator = QRSValidator()
-            self._template_cluster = TemplateCluster(similarity_threshold=0.90)
+            self._qrs_validator = QRSValidator.from_config(self._pipeline_config)
+            self._template_cluster = TemplateCluster(similarity_threshold=self._pipeline_config.template_similarity_threshold)
             self._clean_rr = clean_rr
             self._rule_arrhythmia_detector = RuleArrhythmiaDetector(config=self._pipeline_config)
         except Exception as e:
@@ -113,26 +119,31 @@ class HolterAnalysisWorker(threading.Thread):
     def run(self):
         print("[HolterWorker] Analysis thread started")
         while not self._stop_event.is_set():
+            item = None
             try:
                 item = self.analysis_queue.get(timeout=2.0)
             except queue.Empty:
                 continue
 
-            if item is None:    # sentinel → stop
-                break
-
             try:
+                if item is None:    # sentinel → stop
+                    break
                 self._process_chunk(item)
             except Exception as e:
                 print(f"[HolterWorker] Chunk analysis error: {e}")
                 traceback.print_exc()
-
-            self.analysis_queue.task_done()
+            finally:
+                try:
+                    self.analysis_queue.task_done()
+                except Exception:
+                    pass
 
         print("[HolterWorker] Analysis thread stopped")
 
-    def stop(self):
+    def stop(self, wait: bool = False, timeout: float = 5.0):
         self._stop_event.set()
+        if wait and threading.current_thread() is not self:
+            self.join(timeout=timeout)
 
     # ── Chunk processing ───────────────────────────────────────────────────────
 
@@ -233,6 +244,12 @@ class HolterAnalysisWorker(threading.Thread):
                     f.write(json.dumps(result) + "\n")
             except Exception as e:
                 print(f"[HolterWorker] JSONL write error: {e}")
+            try:
+                session_dir = os.path.dirname(jsonl_path)
+                if session_dir:
+                    append_metric(session_dir, result)
+            except Exception as e:
+                print(f"[HolterWorker] SQLite append error: {e}")
             if self.on_chunk_done:
                 try:
                     self.on_chunk_done(result)
@@ -274,7 +291,8 @@ class HolterAnalysisWorker(threading.Thread):
                 nn50 = int(np.sum(np.abs(diff_rr) > 50))
                 result["pnn50"] = round(100.0 * nn50 / len(diff_rr), 2) if len(diff_rr) > 0 else 0.0
                 result["longest_rr"] = round(float(np.max(rr_intervals)), 1)
-                result["pauses"] = int(np.sum(rr_intervals > 2000))
+                pause_threshold_ms = float(getattr(self._pipeline_config, "pause_threshold_ms", 2000.0)) if self._pipeline_config is not None else 2000.0
+                result["pauses"] = int(np.sum(rr_intervals > pause_threshold_ms))
             else:
                 result["rr_std"] = result["rmssd"] = result["pnn50"] = 0.0
                 result["longest_rr"] = 0.0
@@ -308,8 +326,10 @@ class HolterAnalysisWorker(threading.Thread):
 
         result["arrhythmias"] = arrhythmias
         result["n_beats"] = len(r_peaks)
-        result["brady_beats"] = int(np.sum(rr_intervals > 1500)) if len(rr_intervals) else 0
-        result["tachy_beats"] = int(np.sum(rr_intervals < 400)) if len(rr_intervals) else 0
+        brady_threshold_ms = 60000.0 / float(getattr(self._pipeline_config, "brady_threshold_bpm", 60.0)) if self._pipeline_config is not None else 1000.0
+        tachy_threshold_ms = 60000.0 / float(getattr(self._pipeline_config, "tachy_threshold_bpm", 100.0)) if self._pipeline_config is not None else 600.0
+        result["brady_beats"] = int(np.sum(rr_intervals > brady_threshold_ms)) if len(rr_intervals) else 0
+        result["tachy_beats"] = int(np.sum(rr_intervals < tachy_threshold_ms)) if len(rr_intervals) else 0
         try:
             beat_classes, template_summary, classified_events, all_beats = self._classify_beats(
                 lead_ii=best_signal,
@@ -347,7 +367,27 @@ class HolterAnalysisWorker(threading.Thread):
                 f.write(json.dumps(result) + "\n")
         except Exception as e:
             print(f"[HolterWorker] JSONL write error: {e}")
-
+        try:
+            session_dir = os.path.dirname(jsonl_path)
+            if session_dir:
+                append_metric(session_dir, result)
+                timeline_events = []
+                for label in result.get("arrhythmias", []) or []:
+                    timeline_events.append({
+                        "timestamp": float(start_sec),
+                        "label": str(label),
+                        "event_type": str(label),
+                        "source": "analysis",
+                        "confidence": float(result.get("quality", 0.0) or 0.0),
+                    })
+                for ev in result.get("classified_events", []) or []:
+                    ev_copy = dict(ev)
+                    ev_copy.setdefault("source", "analysis")
+                    ev_copy.setdefault("confidence", float(result.get("quality", 0.0) or 0.0))
+                    timeline_events.append(ev_copy)
+                append_events(session_dir, timeline_events)
+        except Exception as e:
+            print(f"[HolterWorker] SQLite append error: {e}")
         if self.on_chunk_done:
             try:
                 self.on_chunk_done(result)
@@ -378,20 +418,30 @@ class HolterAnalysisWorker(threading.Thread):
         # 3. Squaring to emphasize large differences and make all positive
         squared = diff ** 2
         
-        # 4. Moving window integration (150ms window)
-        window = int(0.15 * fs)
+        # 4. Moving window integration (configurable window)
+        window_ms = 150.0
+        refractory_ms = 250.0
+        search_ms = 60.0
+        threshold_scale = 0.5
+        if self._pipeline_config is not None:
+            window_ms = float(getattr(self._pipeline_config, "qrs_detection_window_ms", window_ms))
+            refractory_ms = float(getattr(self._pipeline_config, "qrs_detection_refractory_ms", refractory_ms))
+            search_ms = float(getattr(self._pipeline_config, "qrs_refine_radius_ms", search_ms))
+            threshold_scale = float(getattr(self._pipeline_config, "qrs_detection_threshold_scale", threshold_scale))
+
+        window = int(max(1, round(window_ms * fs / 1000.0)))
         kernel = np.ones(window) / window
         mwa = np.convolve(squared, kernel, mode='same')
         
         # 5. Adaptive thresholding
-        threshold = np.mean(mwa) + 0.5 * np.std(mwa)
-        min_dist = int(0.25 * fs)  # 250ms refractory period (~240 bpm max)
+        threshold = np.mean(mwa) + threshold_scale * np.std(mwa)
+        min_dist = int(max(1, round(refractory_ms * fs / 1000.0)))
         
         mwa_peaks, _ = find_peaks(mwa, height=threshold, distance=min_dist)
         
         # 6. Refine peaks to the actual R-wave maximum on the original signal for perfect template alignment
         refined_peaks = []
-        search_win = int(0.06 * fs) # Search +/- 60ms around MWA peak
+        search_win = int(max(1, round(search_ms * fs / 1000.0))) # Search around MWA peak
         for p in mwa_peaks:
             i0 = max(0, p - search_win)
             i1 = min(len(lead_ii), p + search_win)

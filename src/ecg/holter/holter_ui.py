@@ -40,10 +40,10 @@ from PyQt5.QtWidgets import (
     QDialog, QLineEdit, QComboBox, QSlider, QGroupBox, QFrame,
     QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView,
     QSizePolicy, QScrollArea, QGridLayout, QSpinBox, QMessageBox,
-    QFileDialog, QApplication, QProgressBar, QSplitter, QTextEdit, QInputDialog,
+    QFileDialog, QApplication, QProgressBar, QSplitter, QTextEdit, QInputDialog, QDoubleSpinBox,
     QAbstractItemView, QToolButton, QButtonGroup
 )
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread, QPointF, QRect
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread, QPoint, QPointF, QRect
 from PyQt5.QtGui import QFont, QColor, QPalette, QPainter, QPen, QBrush, QPixmap
 
 try:
@@ -145,6 +145,7 @@ try:
         tool_specs,
         tooltip as tool_tooltip,
     )
+    from .session_store import append_annotation, load_annotations, load_events, load_metrics, read_session_metadata
 except ImportError:
     from ecg.holter.theme import (
         ADC_TO_MV,
@@ -185,6 +186,7 @@ except ImportError:
         tool_specs,
         tooltip as tool_tooltip,
     )
+    from ecg.holter.session_store import append_annotation, load_annotations, load_events, load_metrics, read_session_metadata
 
 # Professional UI palette (kept separate from signal colors).
 UI_BG = "#0B1220"
@@ -736,7 +738,7 @@ class HolterHRVPanel(QWidget):
         tab_row.addStretch()
         layout.addLayout(tab_row)
 
-        cols = ["Type", "Start at", "Duration", "Mean NN", "SDNN", "SDANN", "TRIIDX", "pNN50", "Status"]
+        cols = ["Type", "Start at", "Duration", "Mean NN", "SDNN", "SDANN", "TRIIDX", "pNN50", "LF", "HF", "LF/HF", "Status"]
         self._table = QTableWidget(0, len(cols))
         self._table.setHorizontalHeaderLabels(cols)
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
@@ -753,7 +755,8 @@ class HolterHRVPanel(QWidget):
         stats_layout.setContentsMargins(12, 8, 12, 8)
         self._summary_labels = {}
         stat_defs = [("NNs", "nns"), ("Mean NN", "mean_nn"), ("SDNN", "sdnn"), ("SDANN", "sdann"),
-                     ("rMSSD", "rmssd"), ("pNN50", "pnn50"), ("TRIIDX", "triidx"), ("SDNNIDX", "sdnnidx")]
+                     ("rMSSD", "rmssd"), ("pNN50", "pnn50"), ("TRIIDX", "triidx"), ("SDNNIDX", "sdnnidx"),
+                     ("VLF", "vlf"), ("LF", "lf"), ("HF", "hf"), ("LF/HF", "lf_hf_ratio")]
         for i, (label, key) in enumerate(stat_defs):
             row, col = divmod(i, 4)
             lbl = QLabel(f"{label}:")
@@ -785,21 +788,29 @@ class HolterHRVPanel(QWidget):
         all_rr = [m.get('rr_ms', 0) for m in metrics_list if m.get('rr_ms', 0) > 0]
         if all_rr:
             total_duration_sec = int(_metrics_duration_sec(metrics_list))
+            from .hrv_metrics import compute_hrv_summary
+            hrv = compute_hrv_summary(all_rr)
             rows.append(("Entire", "—", f"{total_duration_sec//60:02d}:{total_duration_sec%60:02d}",
-                         f"{int(np.mean(all_rr))}ms", f"{summary.get('sdnn', 0):.0f}ms",
-                         f"{summary.get('sdnn', 0)*0.82:.0f}ms", f"{27:.2f}",
-                         f"{summary.get('pnn50', 0):.2f}%", ""))
+                         f"{int(np.mean(all_rr))}ms", f"{hrv.get('sdnn', summary.get('sdnn', 0)):.0f}ms",
+                         f"{hrv.get('sdnn', summary.get('sdnn', 0))*0.82:.0f}ms", f"{hrv.get('triangular_index', 0.0):.2f}",
+                         f"{hrv.get('pnn50', summary.get('pnn50', 0)):.2f}%",
+                         f"{hrv.get('lf', 0.0):.3f}", f"{hrv.get('hf', 0.0):.3f}",
+                         f"{hrv.get('lf_hf_ratio', 0.0):.3f}", ""))
         for h in sorted(hourly.keys()):
             chunks = hourly[h]
             rr_vals = [c.get('rr_ms', 0) for c in chunks if c.get('rr_ms', 0) > 0]
             rr_stds = [c.get('rr_std', 0) for c in chunks if c.get('rr_std', 0) > 0]
             pnn50s = [c.get('pnn50', 0) for c in chunks]
             if not rr_vals: continue
+            from .hrv_metrics import compute_hrv_summary
+            hrv = compute_hrv_summary(rr_vals)
             rows.append(("Hour", f"{h:02d}:00", "01:00",
                          f"{int(np.mean(rr_vals))}ms",
-                         f"{int(np.mean(rr_stds))}ms" if rr_stds else "—",
-                         "—", "—",
-                         f"{np.mean(pnn50s):.2f}%" if pnn50s else "—", ""))
+                         f"{hrv.get('sdnn', int(np.mean(rr_stds)) if rr_stds else 0):.0f}ms" if rr_stds else "—",
+                         "—", f"{hrv.get('triangular_index', 0.0):.2f}",
+                         f"{hrv.get('pnn50', np.mean(pnn50s) if pnn50s else 0.0):.2f}%",
+                         f"{hrv.get('lf', 0.0):.3f}", f"{hrv.get('hf', 0.0):.3f}",
+                         f"{hrv.get('lf_hf_ratio', 0.0):.3f}", ""))
 
         self._table.setRowCount(len(rows))
         for i, row in enumerate(rows):
@@ -815,7 +826,12 @@ class HolterHRVPanel(QWidget):
                           ("sdann", f"{s.get('sdnn', 0)*0.82:.0f}ms"),
                           ("rmssd", f"{s.get('rmssd', 0):.0f}ms"),
                           ("pnn50", f"{s.get('pnn50', 0):.2f}%"),
-                          ("triidx", "—"), ("sdnnidx", "—")]:
+                          ("triidx", f"{s.get('triidx', 0.0):.2f}" if s.get('triidx', 0) else "—"),
+                          ("sdnnidx", "—"),
+                          ("vlf", f"{s.get('vlf_power', 0.0):.3f}" if s.get('vlf_power', 0) else "—"),
+                          ("lf", f"{s.get('lf_power', 0.0):.3f}" if s.get('lf_power', 0) else "—"),
+                          ("hf", f"{s.get('hf_power', 0.0):.3f}" if s.get('hf_power', 0) else "—"),
+                          ("lf_hf_ratio", f"{s.get('lf_hf_ratio', 0.0):.3f}" if s.get('lf_hf_ratio', 0) else "—")]:
             if key in self._summary_labels:
                 self._summary_labels[key].setText(fmt)
 
@@ -838,6 +854,9 @@ class HolterReplayPanel(QWidget):
         self._replay_engine = None
         self._tool_engine = ECGToolEngine()
         self._build_ui()
+        self._magnifier_overlay = MagnifierOverlay(self)
+        self._magnifier_overlay.setGeometry(self.rect())
+        self._magnifier_overlay.hide()
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -1140,6 +1159,20 @@ class HolterReplayPanel(QWidget):
         )
         toolbar_layout.addStretch()
         layout.addWidget(toolbar)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "_magnifier_overlay") and self._magnifier_overlay is not None:
+            self._magnifier_overlay.setGeometry(self.rect())
+
+    def set_magnifier_focus(self, source_widget, payload: dict, focus_pos: QPoint):
+        if hasattr(self, "_magnifier_overlay") and self._magnifier_overlay is not None:
+            self._magnifier_overlay.setGeometry(self.rect())
+            self._magnifier_overlay.set_focus(source_widget, payload, focus_pos)
+
+    def clear_magnifier_focus(self, source_widget=None):
+        if hasattr(self, "_magnifier_overlay") and self._magnifier_overlay is not None:
+            self._magnifier_overlay.clear_focus(source_widget)
 
     def _set_tool_mode(self, tool_name: str, btn: QPushButton = None):
         if "Goto Template" in tool_name:
@@ -1575,7 +1608,26 @@ class ECGStripCanvas(QWidget):
         self._start_pos = None
         self._curr_pos = None
         self._hover_pos = None
+        self._magnify_locked = False
+        self._magnify_pos = None
         self._fs = 500.0
+
+    def _find_magnifier_host(self):
+        parent = self.parentWidget()
+        while parent is not None:
+            if hasattr(parent, "set_magnifier_focus") and hasattr(parent, "clear_magnifier_focus"):
+                return parent
+            parent = parent.parentWidget()
+        return None
+
+    def _magnifier_source_payload(self):
+        return {
+            "data": np.asarray(self._data, dtype=float).copy(),
+            "speed": float(self._speed),
+            "gain": float(self._gain),
+            "lead_name": getattr(self, "lead_name", ""),
+            "fs": float(self._fs),
+        }
 
     def set_gain(self, gain: float):
         self._gain = gain
@@ -1586,10 +1638,15 @@ class ECGStripCanvas(QWidget):
         self.update()
 
     def set_mode(self, mode: str):
+        host = self._find_magnifier_host()
+        if host is not None and self._mode == TOOL_MAGNIFY and canonical_tool(mode) != TOOL_MAGNIFY:
+            host.clear_magnifier_focus(self)
         self._mode = canonical_tool(mode)
         self._start_pos = None
         self._curr_pos = None
         self._hover_pos = None
+        self._magnify_locked = False
+        self._magnify_pos = None
         self.update()
 
     def set_data(self, *args, beat_annotations=None, start_sec=0.0):
@@ -1602,6 +1659,18 @@ class ECGStripCanvas(QWidget):
         self.update()
 
     def mousePressEvent(self, event):
+        if self._mode == TOOL_MAGNIFY and event.button() == Qt.LeftButton:
+            # Click-to-lock magnifier: each click moves the zoom lens to that point.
+            # Switching away from the tool clears the lock.
+            self._magnify_locked = True
+            self._magnify_pos = event.pos()
+            self._hover_pos = event.pos()
+            host = self._find_magnifier_host()
+            if host is not None:
+                host.set_magnifier_focus(self, self._magnifier_source_payload(), event.pos())
+            self.update()
+            return
+
         if self._mode != TOOL_SELECT:
             self._start_pos = event.pos()
             self._curr_pos = event.pos()
@@ -1609,17 +1678,27 @@ class ECGStripCanvas(QWidget):
             self.update()
 
     def mouseMoveEvent(self, event):
-        self._hover_pos = event.pos()
         if self._mode == TOOL_MAGNIFY:
+            if self._magnify_locked:
+                if event.buttons() & Qt.LeftButton:
+                    self._magnify_pos = event.pos()
+                    host = self._find_magnifier_host()
+                    if host is not None:
+                        host.set_magnifier_focus(self, self._magnifier_source_payload(), event.pos())
+                self.update()
+                return
+            self._hover_pos = event.pos()
             self.update()
             return
+        self._hover_pos = event.pos()
         if self._mode != TOOL_SELECT and self._start_pos is not None:
             self._curr_pos = event.pos()
             self.update()
 
     def mouseReleaseEvent(self, event):
         if self._mode == TOOL_MAGNIFY:
-            self._hover_pos = event.pos()
+            if not self._magnify_locked:
+                self._hover_pos = event.pos()
             self.update()
             return
         if self._mode != TOOL_SELECT:
@@ -1627,7 +1706,8 @@ class ECGStripCanvas(QWidget):
             self.update()
 
     def leaveEvent(self, event):
-        self._hover_pos = None
+        if not self._magnify_locked:
+            self._hover_pos = None
         self.update()
         super().leaveEvent(event)
 
@@ -1745,9 +1825,15 @@ class ECGStripCanvas(QWidget):
             dx = abs(self._curr_pos.x() - self._start_pos.x())
             ms = interval_ms_from_pixels(dx, max(1, w), len(d), self._fs)
             painter.drawText(min(self._start_pos.x(), self._curr_pos.x()) + dx//2, 12, caliper_label(ms))
-        elif self._mode == TOOL_MAGNIFY and self._hover_pos is not None:
-            hover_x = max(0, min(self._hover_pos.x(), w - 1))
-            hover_y = max(0, min(self._hover_pos.y(), h - 1))
+        elif self._mode == TOOL_MAGNIFY:
+            host = self._find_magnifier_host()
+            if host is not None and hasattr(host, "_magnifier_overlay"):
+                return
+            focus_pos = self._magnify_pos if self._magnify_locked else self._hover_pos
+            if focus_pos is None:
+                return
+            hover_x = max(0, min(focus_pos.x(), w - 1))
+            hover_y = max(0, min(focus_pos.y(), h - 1))
             src_center = self._x_to_index(hover_x, w, len(d))
             span = max(12, int(len(d) / max(2.0, self._speed / 12.5) / max(2, getattr(self.parent(), "_curr_length_idx", 1) + 2)))
             half = max(8, int(span / max(2, self._gain * 1.5)))
@@ -1810,7 +1896,165 @@ class ECGStripCanvas(QWidget):
                 painter.drawLine(inner.left(), focus_y, inner.right(), focus_y)
 
             painter.setPen(QPen(QColor(COL_WHITE)))
-            painter.drawText(panel_rect.left() + 10, panel_rect.bottom() - 10, f"{getattr(self.parent(), '_curr_gain_idx', 1) + 2}x")
+            painter.drawText(
+                panel_rect.left() + 10,
+                panel_rect.bottom() - 10,
+                f"{getattr(self.parent(), '_curr_gain_idx', 1) + 2}x {'locked' if self._magnify_locked else 'hover'}"
+            )
+
+
+class MagnifierOverlay(QWidget):
+    """Shared magnifier popup for the replay panel so zoom is never clipped by strip bounds."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WA_NoSystemBackground, True)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self._visible = False
+        self._panel_rect = QRect()
+        self._inner_rect = QRect()
+        self._data = None
+        self._focus_idx = 0
+        self._focus_pos = QPoint(0, 0)
+        self._gain = 1.0
+        self._speed = 25.0
+        self._fs = 500.0
+        self._lead_name = ""
+        self._source_widget = None
+        self.hide()
+
+    def set_focus(self, source_widget, payload: dict, focus_pos: QPoint):
+        if payload is None or payload.get("data") is None:
+            self.hide()
+            return
+        self._source_widget = source_widget
+        self._data = np.asarray(payload.get("data"), dtype=float)
+        self._gain = float(payload.get("gain", 1.0))
+        self._speed = float(payload.get("speed", 25.0))
+        self._fs = float(payload.get("fs", 500.0))
+        self._lead_name = str(payload.get("lead_name", ""))
+        self._focus_pos = QPoint(focus_pos)
+        if self.parentWidget() is None:
+            self.hide()
+            return
+        host = self.parentWidget()
+        self.setGeometry(host.rect())
+        self.raise_()
+        self._visible = True
+        self.show()
+        self.update()
+
+    def clear_focus(self, source_widget=None):
+        if source_widget is not None and self._source_widget is not None and source_widget is not self._source_widget:
+            return
+        self._visible = False
+        self._data = None
+        self._source_widget = None
+        self.hide()
+        self.update()
+
+    def paintEvent(self, event):
+        if not self._visible or self._data is None or self._source_widget is None:
+            return
+        d = np.asarray(self._data, dtype=float)
+        if d.size < 2:
+            return
+
+        host = self.parentWidget()
+        if host is None:
+            return
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+
+        # Convert the focus point from source-widget coordinates into overlay coordinates.
+        try:
+            focus_pt = self._source_widget.mapTo(host, self._focus_pos)
+        except Exception:
+            focus_pt = self._focus_pos
+        hover_x = max(0, min(int(focus_pt.x()), max(0, host.width() - 1)))
+        hover_y = max(0, min(int(focus_pt.y()), max(0, host.height() - 1)))
+
+        w, h = host.width(), host.height()
+        source_w = max(1, int(self._source_widget.width()))
+        local_x = max(0, min(int(self._focus_pos.x()), source_w - 1))
+        src_center = int(round((local_x / float(max(1, source_w - 1))) * (len(d) - 1)))
+        span = max(12, int(len(d) / max(2.0, self._speed / 12.5) / 2.0))
+        half = max(8, int(span / max(2, self._gain * 1.5)))
+        i0 = max(0, src_center - half)
+        i1 = min(len(d), src_center + half)
+        sub = d[i0:i1]
+        if len(sub) < 2:
+            return
+
+        panel_w = min(360, max(240, int(w * 0.34)))
+        panel_h = min(220, max(140, int(h * 0.28)))
+        panel_x = hover_x + 24
+        panel_y = hover_y - panel_h - 18
+        if panel_x + panel_w > w - 8:
+            panel_x = hover_x - panel_w - 24
+        if panel_x < 8:
+            panel_x = 8
+        if panel_y < 8:
+            panel_y = hover_y + 18
+        if panel_y + panel_h > h - 8:
+            panel_y = max(8, h - panel_h - 8)
+        self._panel_rect = QRect(panel_x, panel_y, panel_w, panel_h)
+        self._inner_rect = self._panel_rect.adjusted(12, 12, -12, -12)
+
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(0, 0, 0, 220))
+        painter.drawRoundedRect(self._panel_rect, 12, 12)
+        painter.setBrush(Qt.NoBrush)
+        painter.setPen(QPen(QColor(COL_YELLOW), 3))
+        painter.drawRoundedRect(self._panel_rect, 12, 12)
+
+        painter.setPen(QPen(QColor(COL_GRID_MINOR), 1))
+        for frac in (0.25, 0.5, 0.75):
+            gx = int(self._inner_rect.left() + self._inner_rect.width() * frac)
+            gy = int(self._inner_rect.top() + self._inner_rect.height() * frac)
+            painter.drawLine(gx, self._inner_rect.top(), gx, self._inner_rect.bottom())
+            painter.drawLine(self._inner_rect.left(), gy, self._inner_rect.right(), gy)
+
+        sub_min = float(np.min(sub))
+        sub_max = float(np.max(sub))
+        base_val = float(np.median(sub))
+        max_dev = max(abs(sub_max - base_val), abs(sub_min - base_val))
+        pad = max(20.0, max_dev * 0.35)
+        view_min = base_val - max_dev - pad
+        view_max = base_val + max_dev + pad
+        view_rng = max(1.0, view_max - view_min)
+
+        path_pen = QPen(QColor("#22FF44"))
+        path_pen.setWidthF(2.0)
+        painter.setPen(path_pen)
+        x_scale_sub = self._inner_rect.width() / max(1, len(sub) - 1)
+        prev = None
+        for i in range(len(sub)):
+            xx = self._inner_rect.left() + i * x_scale_sub
+            yy = self._inner_rect.bottom() - ((sub[i] - view_min) / view_rng) * self._inner_rect.height()
+            if prev is not None:
+                painter.drawLine(QPointF(prev[0], prev[1]), QPointF(xx, yy))
+            prev = (xx, yy)
+
+        focus_x = int(self._inner_rect.left() + ((src_center - i0) / max(1, len(sub) - 1)) * self._inner_rect.width())
+        focus_y = int(self._inner_rect.bottom() - ((d[src_center] - view_min) / view_rng) * self._inner_rect.height())
+        painter.setPen(QPen(QColor("#ffffff"), 1))
+        painter.drawLine(focus_x, self._inner_rect.top(), focus_x, self._inner_rect.bottom())
+        painter.drawLine(self._inner_rect.left(), focus_y, self._inner_rect.right(), focus_y)
+
+        painter.setPen(QPen(QColor(COL_WHITE)))
+        painter.drawText(
+            self._panel_rect.left() + 10,
+            self._panel_rect.top() + 18,
+            f"{self._lead_name or 'Lead'}  {self._gain:.1f}x"
+        )
+        painter.drawText(
+            self._panel_rect.left() + 10,
+            self._panel_rect.bottom() - 10,
+            "click another wave to move"
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2027,6 +2271,8 @@ class HolterEventsPanel(QWidget):
         super().__init__(parent)
         self.setStyleSheet(f"background:{COL_BG};")
         self._events = []
+        self._session_dir = ""
+        self._selected_payload = {}
         self._build_ui()
 
     def _build_ui(self):
@@ -2043,7 +2289,7 @@ class HolterEventsPanel(QWidget):
         ev_title.setStyleSheet(f"color:{COL_BLACK};font-size:13px;font-weight:bold;background:{COL_GREEN};padding:5px;border-radius:4px;")
         left_layout.addWidget(ev_title)
 
-        cols = ["Event name", "Start Time", "Chan.", "Print Len."]
+        cols = ["Event name", "Start Time", "Chan.", "Print Len.", "Source", "Conf."]
         self._ev_table = QTableWidget(0, len(cols))
         self._ev_table.setHorizontalHeaderLabels(cols)
         self._ev_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
@@ -2093,7 +2339,9 @@ class HolterEventsPanel(QWidget):
         self._ev_table.setRowCount(len(events))
         for i, ev in enumerate(events):
             t_str = _sec_to_hms(ev['timestamp'])
-            for j, val in enumerate([ev['label'], t_str, "3", "7s"]):
+            source = ev.get("source", "analysis")
+            conf = ev.get("confidence", 0.0)
+            for j, val in enumerate([ev['label'], t_str, "3", "7s", source, f"{float(conf or 0.0):.2f}"]):
                 item = QTableWidgetItem(val)
                 item.setForeground(QColor(COL_WHITE))
                 self._ev_table.setItem(i, j, item)
@@ -2724,6 +2972,7 @@ class HolterHistogramPanel(QWidget):
         super().__init__(parent)
         self.setStyleSheet(f"background:{COL_BG};")
         self._metrics = []
+        self._rank_mode = "rri"
         self._build_ui()
 
     def _build_ui(self):
@@ -2745,9 +2994,13 @@ class HolterHistogramPanel(QWidget):
 
         # Mode buttons
         btn_row = QHBoxLayout()
-        for lbl in ["RRI Ranking", "Time Ranking", "Prematurity Ranking", "Similarity Ranking"]:
+        self._rank_buttons = {}
+        for lbl, mode in [("RRI Ranking", "rri"), ("Time Ranking", "time"),
+                          ("Prematurity Ranking", "prematurity"), ("Similarity Ranking", "similarity")]:
             btn = QPushButton(lbl)
             btn.setStyleSheet(_style_btn())
+            btn.clicked.connect(lambda _, m=mode: self._set_rank_mode(m))
+            self._rank_buttons[mode] = btn
             btn_row.addWidget(btn)
         btn_row.addStretch()
         layout.addLayout(btn_row)
@@ -2780,21 +3033,50 @@ class HolterHistogramPanel(QWidget):
         # ECG strip
         self._strip = ECGStripCanvas(height=60)
         layout.addWidget(self._strip)
+        self._set_rank_mode("rri")
+
+    def _set_rank_mode(self, mode: str):
+        self._rank_mode = mode
+        for key, btn in getattr(self, "_rank_buttons", {}).items():
+            active = key == mode
+            btn.setStyleSheet(_style_active_btn() if active else _style_btn())
+        self._draw()
 
     def update_from_metrics(self, metrics_list: list):
         self._metrics = metrics_list
         self._draw()
 
     def _draw(self):
-        rr_all = []
+        rr_points = []
         for m in self._metrics:
+            t0 = float(m.get('t', 0.0) or 0.0)
             if 'rr_intervals_list' in m:
-                rr_all.extend(m['rr_intervals_list'])
+                rr_list = [float(v) for v in (m.get('rr_intervals_list') or []) if float(v) > 200]
+                if rr_list:
+                    dur = float(m.get('duration', 0.0) or 0.0)
+                    step = (dur / max(1, len(rr_list))) if dur > 0 else 0.2
+                    for i, rr in enumerate(rr_list):
+                        rr_points.append((t0 + i * step, rr))
             elif m.get('rr_ms', 0) > 200:
-                rr_all.append(m['rr_ms'])
-                
-        rr_vals = [r for r in rr_all if r > 200]
-        self._hist_canvas.set_data(rr_vals)
+                rr_points.append((t0, float(m['rr_ms'])))
+
+        rr_vals = [rr for _, rr in rr_points if rr > 200]
+        mode = self._rank_mode
+        ranked = []
+        if rr_points:
+            rr_arr = np.array(rr_vals) if rr_vals else np.array([])
+            median_rr = float(np.median(rr_arr)) if rr_arr.size else 0.0
+            mean_rr = float(np.mean(rr_arr)) if rr_arr.size else 0.0
+            if mode == "time":
+                ranked = sorted(rr_points, key=lambda x: x[0])
+            elif mode == "prematurity":
+                ranked = sorted(rr_points, key=lambda x: max(0.0, mean_rr - x[1]), reverse=True)
+            elif mode == "similarity":
+                ranked = sorted(rr_points, key=lambda x: abs(x[1] - median_rr))
+            else:
+                ranked = sorted(rr_points, key=lambda x: x[1], reverse=True)
+        self._hist_canvas.set_ranked_data(ranked, mode=mode)
+
         if rr_vals:
             arr = np.array(rr_vals)
             self._hist_stats["nns"].setText(str(len(arr)))
@@ -2814,11 +3096,18 @@ class HistogramCanvas(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._data = []
+        self._mode = "rri"
         self.setMinimumHeight(150)
         self.setStyleSheet(f"background:{COL_BLACK};border:none;")
 
     def set_data(self, rr_values):
-        self._data = rr_values
+        self._mode = "rri"
+        self._data = [(idx, float(v)) for idx, v in enumerate(rr_values or [])]
+        self.update()
+
+    def set_ranked_data(self, ranked_points, mode: str = "rri"):
+        self._mode = mode
+        self._data = list(ranked_points or [])
         self.update()
 
     def paintEvent(self, event):
@@ -2833,35 +3122,67 @@ class HistogramCanvas(QWidget):
         for gy in [h//4, h//2, 3*h//4]:
             painter.drawLine(0, gy, w, gy)
 
-        if not self._data or len(self._data) < 2:
+        if not self._data or len(self._data) < 1:
             painter.setPen(QPen(QColor(COL_GREEN_DRK)))
             painter.drawText(self.rect(), Qt.AlignCenter, "No RR data")
             return
 
-        arr = np.array(self._data)
-        mn, mx = int(arr.min()), int(arr.max())
-        n_bins = min(30, (mx - mn) // 20 + 1) if mx > mn else 10
-        counts, edges = np.histogram(arr, bins=n_bins, range=(mn, mx))
-        if counts.max() == 0: return
+        values = [float(item[1]) for item in self._data]
+        mn, mx = float(min(values)), float(max(values))
+        if mx <= mn:
+            mx = mn + 1.0
 
-        bar_w = max(1, w // n_bins - 2)
-        x_scale = w / (mx - mn + 1)
-        y_scale = (h - 20) / counts.max()
+        if self._mode == "time":
+            x_label_left = "early"
+            x_label_right = "late"
+        elif self._mode == "prematurity":
+            x_label_left = "less premature"
+            x_label_right = "more premature"
+        elif self._mode == "similarity":
+            x_label_left = "less similar"
+            x_label_right = "more similar"
+        else:
+            x_label_left = "low RR"
+            x_label_right = "high RR"
 
-        brush = QBrush(QColor("#4466AA"))
-        painter.setBrush(brush)
-        pen = QPen(QColor("#6688CC"))
-        pen.setWidth(1)
-        painter.setPen(pen)
-        for i, count in enumerate(counts):
-            bx = int((edges[i] - mn) * x_scale)
-            bh = int(count * y_scale)
-            painter.drawRect(bx, h - bh - 10, bar_w, bh)
+        n = len(self._data)
+        bar_gap = 2
+        bar_w = max(2, int((w - 20) / max(1, n)) - bar_gap)
+        usable_h = max(30, h - 20)
+        max_val = max(values)
+        min_val = min(values)
+        rng = max(max_val - min_val, 1.0)
 
-        # Axis labels
+        # baseline grid
+        painter.setPen(QPen(QColor("#001100")))
+        for gy in [h//4, h//2, 3*h//4]:
+            painter.drawLine(0, gy, w, gy)
+
+        for idx, (_t, rr) in enumerate(self._data[:min(n, 100)]):
+            x = 10 + idx * (bar_w + bar_gap)
+            bar_h = int(((rr - min_val) / rng) * usable_h)
+            y = h - 12 - bar_h
+            if self._mode == "prematurity":
+                # emphasize short RR intervals
+                bar_color = QColor("#ff7a00")
+            elif self._mode == "similarity":
+                bar_color = QColor("#7a66ff")
+            elif self._mode == "time":
+                bar_color = QColor("#33d6ff")
+            else:
+                bar_color = QColor("#4466AA")
+            painter.setBrush(QBrush(bar_color))
+            painter.setPen(QPen(QColor(bar_color.lighter(130)), 1))
+            painter.drawRect(x, y, bar_w, bar_h)
+            if n <= 24 or idx % max(1, n // 12) == 0:
+                painter.setPen(QPen(QColor(COL_GREEN_DRK)))
+                painter.drawText(x, h - 2, str(idx + 1))
+
         painter.setPen(QPen(QColor(COL_GREEN_DRK)))
-        painter.drawText(5, h - 2, f"{mn}ms")
-        painter.drawText(w - 60, h - 2, f"{mx}ms")
+        painter.drawText(5, 12, x_label_left)
+        painter.drawText(w - 110, 12, x_label_right)
+        painter.drawText(5, h - 2, f"{mn:.0f}ms")
+        painter.drawText(w - 60, h - 2, f"{mx:.0f}ms")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -3129,6 +3450,8 @@ class HolterEditEventPanel(QWidget):
         super().__init__(parent)
         self.setStyleSheet(f"background:{COL_BG};")
         self._events = []
+        self._session_dir = ""
+        self._selected_payload = {}
         self._build_ui()
 
     def _build_ui(self):
@@ -3142,7 +3465,7 @@ class HolterEditEventPanel(QWidget):
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(4)
 
-        cols = ["Event name", "Start Time", "Chan.", "Print Len."]
+        cols = ["Event name", "Start Time", "Chan.", "Print Len.", "Source", "Conf."]
         self._ev_table = QTableWidget(0, len(cols))
         self._ev_table.setHorizontalHeaderLabels(cols)
         self._ev_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
@@ -3209,6 +3532,56 @@ class HolterEditEventPanel(QWidget):
         self._mini = ECGStripCanvas(height=40, color="#00AA00")
         right_layout.addWidget(self._mini)
 
+        annot_box = QFrame()
+        annot_box.setStyleSheet(f"QFrame{{background:{COL_BLACK};border:1px solid {COL_GREEN_DRK};border-radius:6px;}}")
+        annot_layout = QGridLayout(annot_box)
+        annot_layout.setContentsMargins(8, 6, 8, 6)
+        annot_layout.setSpacing(6)
+        annot_title = QLabel("Beat Annotation Editor")
+        annot_title.setStyleSheet(f"color:{COL_GREEN};font-size:12px;font-weight:bold;border:none;")
+        annot_layout.addWidget(annot_title, 0, 0, 1, 2)
+        self._annot_event_id = QLineEdit()
+        self._annot_event_id.setPlaceholderText("beat_id / event id")
+        self._annot_event_id.setStyleSheet(f"QLineEdit{{background:{COL_DARK};color:{COL_GREEN};border:1px solid {COL_GREEN_DRK};padding:5px;border-radius:4px;}}")
+        self._annot_auto = QLineEdit()
+        self._annot_auto.setPlaceholderText("auto label")
+        self._annot_auto.setStyleSheet(self._annot_event_id.styleSheet())
+        self._annot_clin = QComboBox()
+        self._annot_clin.addItems(["", "N", "S", "V", "AF", "Pause", "Tachy", "Brady", "Other"])
+        self._annot_clin.setStyleSheet(f"QComboBox{{background:{COL_DARK};color:{COL_GREEN};border:1px solid {COL_GREEN_DRK};padding:5px;border-radius:4px;}}")
+        self._annot_conf = QDoubleSpinBox()
+        self._annot_conf.setRange(0.0, 1.0)
+        self._annot_conf.setSingleStep(0.05)
+        self._annot_conf.setDecimals(2)
+        self._annot_conf.setValue(0.0)
+        self._annot_conf.setStyleSheet(f"QDoubleSpinBox{{background:{COL_DARK};color:{COL_GREEN};border:1px solid {COL_GREEN_DRK};padding:5px;border-radius:4px;}}")
+        self._annot_editor = QTextEdit()
+        self._annot_editor.setPlaceholderText("Optional note or reviewer context")
+        self._annot_editor.setFixedHeight(56)
+        self._annot_editor.setStyleSheet(f"QTextEdit{{background:{COL_DARK};color:{COL_WHITE};border:1px solid {COL_GREEN_DRK};padding:5px;border-radius:4px;}}")
+        self._annot_save_btn = QPushButton("Save Annotation")
+        self._annot_save_btn.setStyleSheet(_style_active_btn())
+        self._annot_save_btn.clicked.connect(self._save_annotation)
+        annot_lbl = QLabel("Beat ID:")
+        annot_lbl.setStyleSheet(f"color:{COL_GREEN_DRK};border:none;")
+        annot_layout.addWidget(annot_lbl, 1, 0)
+        annot_layout.addWidget(self._annot_event_id, 1, 1)
+        annot_lbl = QLabel("Auto label:")
+        annot_lbl.setStyleSheet(f"color:{COL_GREEN_DRK};border:none;")
+        annot_layout.addWidget(annot_lbl, 2, 0)
+        annot_layout.addWidget(self._annot_auto, 2, 1)
+        annot_lbl = QLabel("Clinician label:")
+        annot_lbl.setStyleSheet(f"color:{COL_GREEN_DRK};border:none;")
+        annot_layout.addWidget(annot_lbl, 3, 0)
+        annot_layout.addWidget(self._annot_clin, 3, 1)
+        annot_lbl = QLabel("Confidence:")
+        annot_lbl.setStyleSheet(f"color:{COL_GREEN_DRK};border:none;")
+        annot_layout.addWidget(annot_lbl, 4, 0)
+        annot_layout.addWidget(self._annot_conf, 4, 1)
+        annot_layout.addWidget(self._annot_editor, 5, 0, 1, 2)
+        annot_layout.addWidget(self._annot_save_btn, 6, 0, 1, 2)
+        right_layout.addWidget(annot_box)
+
         nav_row = QHBoxLayout()
         for lbl in ["⟵ Prev Event", "Next Event ⟶", "Remove All", "Remove"]:
             btn = QPushButton(lbl)
@@ -3221,9 +3594,20 @@ class HolterEditEventPanel(QWidget):
         self._events = events
         self._ev_table.setRowCount(len(events))
         for i, ev in enumerate(events):
-            for j, val in enumerate([ev['label'], _sec_to_hms(ev['timestamp']), "3", "7s"]):
+            source = str(ev.get("source", "analysis"))
+            conf = float(ev.get("confidence", 0.0) or 0.0)
+            for j, val in enumerate([ev['label'], _sec_to_hms(ev['timestamp']), "3", "7s", source, f"{conf:.2f}"]):
                 item = QTableWidgetItem(val)
                 item.setForeground(QColor(COL_WHITE))
+                if j == 0:
+                    item.setData(Qt.UserRole, {
+                        "beat_id": str(ev.get("beat_id", ev.get("template_label", ev.get("label", "")))),
+                        "auto_label": str(ev.get("template_label", ev.get("label", ""))),
+                        "clinician_label": str(ev.get("label", "")),
+                        "confidence": conf,
+                        "timestamp": float(ev.get("timestamp", 0.0) or 0.0),
+                        "source": source,
+                    })
                 self._ev_table.setItem(i, j, item)
         s = summary
         for key, fmt in [("hr",f"{s.get('avg_hr',0):.0f} bpm"),
@@ -3241,6 +3625,44 @@ class HolterEditEventPanel(QWidget):
     def _on_click(self, row, col):
         if row < len(self._events):
             self.seek_requested.emit(self._events[row]['timestamp'])
+            item = self._ev_table.item(row, 0)
+            if item:
+                payload = item.data(Qt.UserRole) or {}
+                self._selected_payload = dict(payload)
+                self._annot_event_id.setText(str(payload.get("beat_id", "")))
+                self._annot_auto.setText(str(payload.get("auto_label", "")))
+                self._annot_clin.setCurrentText(str(payload.get("clinician_label", "")))
+                self._annot_conf.setValue(float(payload.get("confidence", 0.0) or 0.0))
+                self._annot_editor.setPlainText(
+                    f"Source: {payload.get('source', '')}\n"
+                    f"Timestamp: {_sec_to_hms(float(payload.get('timestamp', 0.0) or 0.0))}"
+                )
+
+    def set_session_dir(self, session_dir: str):
+        self._session_dir = session_dir or ""
+
+    def _save_annotation(self):
+        if not self._session_dir:
+            QMessageBox.information(self, "Annotation", "No session directory is available for saving.")
+            return
+        beat_id = self._annot_event_id.text().strip()
+        if not beat_id:
+            QMessageBox.information(self, "Annotation", "Select an event or enter a beat ID first.")
+            return
+        annotation = {
+            "beat_id": beat_id,
+            "auto_label": self._annot_auto.text().strip(),
+            "clinician_label": self._annot_clin.currentText().strip() or self._annot_auto.text().strip(),
+            "confidence": float(self._annot_conf.value()),
+            "edited_by": "clinician",
+            "timestamp": float(self._selected_payload.get("timestamp", self._events[0].get("timestamp", 0.0) if self._events else 0.0)),
+            "note": self._annot_editor.toPlainText().strip(),
+        }
+        try:
+            append_annotation(self._session_dir, annotation)
+            QMessageBox.information(self, "Annotation", "Annotation saved to session database.")
+        except Exception as e:
+            QMessageBox.warning(self, "Annotation", f"Could not save annotation: {e}")
 
     def set_replay_frame(self, data):
         if data is None or data.shape[0] < 3: return
@@ -3537,8 +3959,16 @@ class HolterMainWindow(QDialog):
 
     def _load_session(self):
         self._metrics_list = []
+        metadata = read_session_metadata(self.session_dir) if self.session_dir else {}
+        if metadata:
+            session_patient = metadata.get("patient_info") or {}
+            if isinstance(session_patient, dict) and session_patient:
+                self.patient_info = dict(session_patient)
+        layered_metrics = load_metrics(self.session_dir) if self.session_dir else []
+        if layered_metrics:
+            self._metrics_list = layered_metrics
         jsonl_path = os.path.join(self.session_dir, 'metrics.jsonl') if self.session_dir else ''
-        if os.path.exists(jsonl_path):
+        if not self._metrics_list and os.path.exists(jsonl_path):
             try:
                 with open(jsonl_path) as f:
                     for line in f:
@@ -3560,6 +3990,8 @@ class HolterMainWindow(QDialog):
                 self._summary = self._build_summary_from_metrics()
         else:
             self._summary = self._build_summary_from_metrics()
+        if metadata and isinstance(metadata.get("summary"), dict):
+            self._summary = dict(metadata.get("summary") or self._summary)
 
     def _build_summary_from_metrics(self) -> dict:
         if not self._metrics_list:
@@ -3907,6 +4339,14 @@ class HolterMainWindow(QDialog):
         self._af_panel.update_from_metrics(self._metrics_list, duration)
         self._tabs.addTab(self._af_panel, "AF ANALYSIS")
 
+        events = self._build_linked_events()
+
+        # Event timeline
+        self._events_panel = HolterEventsPanel()
+        self._events_panel.load_events(events, self._summary)
+        self._events_panel.seek_requested.connect(self._on_seek_requested)
+        self._tabs.addTab(self._events_panel, "EVENTS")
+
         # ST Tendency
         self._st_panel = HolterSTPanel()
         self._st_panel.update_from_metrics(self._metrics_list)
@@ -3914,7 +4354,7 @@ class HolterMainWindow(QDialog):
 
         # Edit Event
         self._edit_event_panel = HolterEditEventPanel()
-        events = self._build_linked_events()
+        self._edit_event_panel.set_session_dir(self.session_dir)
         self._edit_event_panel.load_events(events, self._summary)
         self._edit_event_panel.seek_requested.connect(self._on_seek_requested)
         self._tabs.addTab(self._edit_event_panel, "EDIT EVENT")
@@ -4139,10 +4579,25 @@ class HolterMainWindow(QDialog):
         if hasattr(self, '_analysis_state') and hasattr(self, '_tabs'):
             self._analysis_state.setText(f"Focused view: {self._tabs.tabText(self._tabs.currentIndex())}")
 
+    def _finalize_live_writer(self) -> dict:
+        summary = {}
+        if not self._writer:
+            return summary
+        try:
+            stop_fn = getattr(self._writer, "stop", None)
+            if callable(stop_fn):
+                summary = stop_fn() or {}
+            else:
+                close_fn = getattr(self._writer, "close", None)
+                if callable(close_fn):
+                    summary = close_fn() or {}
+        finally:
+            self._writer = None
+        return summary
+
     def _stop_recording(self):
         if self._writer:
-            summary = self._writer.stop()
-            self._writer = None
+            summary = self._finalize_live_writer()
             if hasattr(self, '_status_bar') and self._status_bar is not None:
                 self._status_bar.setVisible(False)
                 if hasattr(self._status_bar, 'cleanup'):
@@ -4250,6 +4705,8 @@ class HolterMainWindow(QDialog):
             self.session_dir = session_dir
         if patient_info:
             self.patient_info = patient_info
+        if hasattr(self, '_edit_event_panel'):
+            self._edit_event_panel.set_session_dir(self.session_dir)
         if writer and not hasattr(self, '_status_bar'):
             self._status_bar = HolterStatusBar(self, target_hours=self._duration_hours)
             self._status_bar.stop_requested.connect(self._stop_recording)
@@ -4266,6 +4723,8 @@ class HolterMainWindow(QDialog):
         self._last_live_seq = -1
         if patient_info:
             self.patient_info = patient_info
+        if hasattr(self, '_edit_event_panel'):
+            self._edit_event_panel.set_session_dir(self.session_dir)
         self._writer = None
         self._load_session()
         if hasattr(self, '_record_mgmt_panel'):
@@ -4285,6 +4744,11 @@ class HolterMainWindow(QDialog):
             self._tabs.setCurrentIndex(0)
 
     def closeEvent(self, event):
+        if self._writer:
+            try:
+                self._finalize_live_writer()
+            except Exception:
+                pass
         if self._replay_engine:
             try:
                 self._replay_engine.close()

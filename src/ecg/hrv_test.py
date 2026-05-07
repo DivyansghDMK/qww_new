@@ -1070,8 +1070,6 @@ class HRVTestWindow(QWidget):
             except Exception:
                 data["QTc_Fridericia"] = 0
 
-            scaled_captured_data = [{'time': d['time'], 'value': float(d['value'])} for d in self.captured_data]
-
             from utils.pdf_process_runner import PDFProcessRunner
 
             _patient_snap = patient.copy() if patient else {}
@@ -1164,7 +1162,7 @@ class HRVTestWindow(QWidget):
             self._pdf_runner = PDFProcessRunner(parent_widget=self)
             started = self._pdf_runner.start_hrv_report(
                 filename=_filepath_snap,
-                captured_data=scaled_captured_data,
+                captured_data=self.captured_data,
                 data=data,
                 patient=_patient_snap,
                 settings_manager=self.settings_manager,

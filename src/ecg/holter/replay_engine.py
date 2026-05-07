@@ -18,6 +18,8 @@ import numpy as np
 from typing import Optional, List, Dict, Tuple
 
 from .file_format import ECGHFileReader, LEAD_NAMES
+from .session_store import load_events, load_metrics, read_session_metadata
+from .hrv_metrics import compute_hrv_summary
 
 
 class HolterReplayEngine:
@@ -45,7 +47,10 @@ class HolterReplayEngine:
         self._metrics: List[dict] = []
         self._arrhythmia_events: List[Tuple[float, str]] = []
         self._structured_events: List[dict] = []
+        self._summary: Dict[str, object] = {}
         self._load_metrics(ecgh_path)
+        self._load_layered_store()
+        self._load_session_metadata()
 
         # Callbacks
         self._on_data: Optional[callable] = None        # (lead_idx, data_array)
@@ -89,6 +94,48 @@ class HolterReplayEngine:
             print(f"[Replay] Could not load metrics: {e}")
 
         self._structured_events.sort(key=lambda item: float(item.get('timestamp', 0.0) or 0.0))
+
+    def _load_layered_store(self):
+        session_dir = os.path.dirname(self.ecgh_path)
+        try:
+            layered_metrics = load_metrics(session_dir)
+            if layered_metrics:
+                self._metrics = layered_metrics
+        except Exception as e:
+            print(f"[Replay] Could not load layered metrics: {e}")
+        try:
+            layered_events = load_events(session_dir)
+            if layered_events:
+                self._structured_events = []
+                self._arrhythmia_events = []
+                for item in layered_events:
+                    ts = float(item.get("timestamp", item.get("t", 0.0)) or 0.0)
+                    label = str(item.get("label", item.get("event_type", "Event")))
+                    self._structured_events.append({
+                        "timestamp": ts,
+                        "type": str(item.get("event_type", label)),
+                        "label": label,
+                        "template_label": str(item.get("template_label", item.get("event_type", label))),
+                        "source": str(item.get("source", "analysis")),
+                        "confidence": float(item.get("confidence", 0.0) or 0.0),
+                    })
+                    if "arrhythmia" in str(item.get("source", "")).lower() or "analysis" in str(item.get("source", "")).lower():
+                        self._arrhythmia_events.append((ts, label))
+                self._structured_events.sort(key=lambda item: float(item.get('timestamp', 0.0) or 0.0))
+        except Exception as e:
+            print(f"[Replay] Could not load layered events: {e}")
+
+    def _load_session_metadata(self):
+        session_dir = os.path.dirname(self.ecgh_path)
+        try:
+            metadata = read_session_metadata(session_dir)
+            if metadata:
+                if isinstance(metadata.get("patient_info"), dict) and metadata["patient_info"]:
+                    self.patient_info = metadata["patient_info"]
+                if isinstance(metadata.get("summary"), dict) and metadata["summary"]:
+                    self._summary = dict(metadata["summary"])
+        except Exception as e:
+            print(f"[Replay] Could not load session metadata: {e}")
 
     # ── Callbacks ─────────────────────────────────────────────────────────────
 
@@ -258,13 +305,10 @@ class HolterReplayEngine:
                 all_rr_intervals.extend(m['rr_intervals_list'])
         
         all_rr = np.array(all_rr_intervals, dtype=float)
-        if len(all_rr) > 1:
-            global_sdnn = round(float(np.std(all_rr)), 1)
-            diff_rr = np.diff(all_rr)
-            global_rmssd = round(float(np.sqrt(np.mean(diff_rr ** 2))), 1)
-            global_pnn50 = round(float(100.0 * np.sum(np.abs(diff_rr) > 50) / len(diff_rr)), 2)
-        else:
-            global_sdnn = global_rmssd = global_pnn50 = 0.0
+        hrv = compute_hrv_summary(all_rr)
+        global_sdnn = hrv.get("sdnn", 0.0)
+        global_rmssd = hrv.get("rmssd", 0.0)
+        global_pnn50 = hrv.get("pnn50", 0.0)
 
         # Arrhythmia counts
         arrhy_counts: Dict[str, int] = {}
@@ -306,6 +350,12 @@ class HolterReplayEngine:
             'sdnn': global_sdnn,
             'rmssd': global_rmssd,
             'pnn50': global_pnn50,
+            'triidx': hrv.get("triangular_index", 0.0),
+            'vlf_power': hrv.get("vlf", 0.0),
+            'lf_power': hrv.get("lf", 0.0),
+            'hf_power': hrv.get("hf", 0.0),
+            'lf_hf_ratio': hrv.get("lf_hf_ratio", 0.0),
+            'total_power': hrv.get("total_power", 0.0),
             'avg_quality': round(float(np.mean(qualities)), 3) if qualities else 1.0,
             'arrhythmia_counts': arrhy_counts,
             'hourly_hr': hourly_avg,

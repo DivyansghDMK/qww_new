@@ -142,6 +142,8 @@ def build_args(project_root: Path, name: str, onefile: bool, console: bool) -> l
         "--collect-submodules=core",
         "--hidden-import=PyQt5",
         "--hidden-import=PyQt5.sip",
+        "--hidden-import=fitz",
+        "--hidden-import=pymupdf",
         "--collect-submodules=PyQt5",
         "--collect-all=pyqtgraph",
         "--exclude-module=PyQt6",

@@ -36,6 +36,10 @@ import time
 import uuid
 from pathlib import Path
 from typing import Dict, Optional, Tuple
+from dotenv import find_dotenv, load_dotenv
+
+# Load project .env so standalone imports and the app share the same settings.
+load_dotenv(find_dotenv(usecwd=True), override=False)
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 # Override LICENSE_SERVER_URL via environment variable in production.

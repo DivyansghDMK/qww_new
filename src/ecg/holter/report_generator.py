@@ -21,6 +21,8 @@ import numpy as np
 from datetime import datetime
 from typing import List, Dict, Optional
 
+from .session_store import load_events
+
 # Add project root
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(_THIS_DIR)))
@@ -239,6 +241,30 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
     else:
         story.append(Paragraph("No significant arrhythmias detected during this recording.", body_style))
 
+    timeline_events = load_events(session_dir)
+    if timeline_events:
+        story.append(Spacer(1, 6*mm))
+        story.append(Paragraph("2B. EVENT TIMELINE", h2_style))
+        timeline_rows = [["Time", "Label", "Source", "Confidence"]]
+        for event in timeline_events[:50]:
+            timeline_rows.append([
+                _sec_to_hms(float(event.get("timestamp", 0.0) or 0.0)),
+                str(event.get("label", event.get("event_type", "Event"))),
+                str(event.get("source", "")),
+                f"{float(event.get('confidence', 0.0) or 0.0):.2f}",
+            ])
+        timeline_table = Table(timeline_rows, colWidths=[28*mm, 72*mm, 35*mm, 25*mm])
+        timeline_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), BLUE),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F5FAFF')]),
+            ('GRID', (0, 0), (-1, -1), 0.4, colors.lightgrey),
+            ('PADDING', (0, 0), (-1, -1), 4),
+        ]))
+        story.append(timeline_table)
+
     # ── HOURLY ANALYSIS ────────────────────────────────────────────────
     story.append(Spacer(1, 15*mm))
     story.append(Paragraph("HOURLY ANALYSIS", title_style))
@@ -264,6 +290,11 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
     sdnn  = summary.get('sdnn', 0)
     rmssd = summary.get('rmssd', 0)
     pnn50 = summary.get('pnn50', 0)
+    triidx = summary.get('triidx', 0)
+    vlf = summary.get('vlf_power', 0)
+    lf = summary.get('lf_power', 0)
+    hf = summary.get('hf_power', 0)
+    lf_hf = summary.get('lf_hf_ratio', 0)
 
     def hrv_status(sdnn):
         if sdnn > 100: return 'Normal', GREEN
@@ -277,6 +308,11 @@ def _generate_pdf_report(session_dir, patient_info, summary, output_path, settin
         ['SDNN',   f"{sdnn:.1f} ms",  '>100 ms',  hrv_label],
         ['rMSSD',  f"{rmssd:.1f} ms", '>42 ms',   'Normal' if rmssd > 42 else 'Low'],
         ['pNN50',  f"{pnn50:.2f}%",   '>20%',     'Normal' if pnn50 > 20 else 'Low'],
+        ['TriIdx', f"{triidx:.2f}",   'Higher is better', '—'],
+        ['VLF',    f"{vlf:.3f}",      '0.0033-0.04 Hz',   '—'],
+        ['LF',     f"{lf:.3f}",       '0.04-0.15 Hz',     '—'],
+        ['HF',     f"{hf:.3f}",       '0.15-0.40 Hz',     '—'],
+        ['LF/HF',  f"{lf_hf:.3f}",    'Balance marker',   '—'],
     ]
     hrv_table = Table(hrv_data, colWidths=[40*mm, 35*mm, 35*mm, 30*mm])
     hrv_table.setStyle(TableStyle([
@@ -517,6 +553,11 @@ def _generate_text_report(session_dir, patient_info, summary, output_path) -> st
         f"  SDNN:  {summary.get('sdnn',0):.1f} ms",
         f"  rMSSD: {summary.get('rmssd',0):.1f} ms",
         f"  pNN50: {summary.get('pnn50',0):.2f}%",
+        f"  TriIdx: {summary.get('triidx',0):.2f}",
+        f"  VLF: {summary.get('vlf_power',0):.3f}",
+        f"  LF: {summary.get('lf_power',0):.3f}",
+        f"  HF: {summary.get('hf_power',0):.3f}",
+        f"  LF/HF: {summary.get('lf_hf_ratio',0):.3f}",
         "",
         "ARRHYTHMIAS",
     ]
@@ -527,9 +568,27 @@ def _generate_text_report(session_dir, patient_info, summary, output_path) -> st
     else:
         lines.append("  None detected")
 
+    timeline_events = load_events(session_dir)
+    if timeline_events:
+        lines += ["", "EVENT TIMELINE"]
+        for event in timeline_events[:100]:
+            lines.append(
+                f"  {_sec_to_hms(float(event.get('timestamp', 0.0) or 0.0))} | "
+                f"{event.get('label', event.get('event_type', 'Event'))} | "
+                f"{event.get('source', '')} | conf={float(event.get('confidence', 0.0) or 0.0):.2f}"
+            )
+
     lines += ["", "=" * 60, "Physician Signature: _______________", "Date: _______________"]
 
     with open(output_path, 'w') as f:
         f.write('\n'.join(lines))
 
     return output_path
+
+
+def _sec_to_hms(seconds: float) -> str:
+    seconds = max(0.0, float(seconds or 0.0))
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = int(seconds % 60)
+    return f"{h:02d}:{m:02d}:{s:02d}"

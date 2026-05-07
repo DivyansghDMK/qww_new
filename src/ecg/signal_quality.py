@@ -91,6 +91,8 @@ WARNING FIX #9: SQI Gating
 import numpy as np
 from typing import Tuple, Optional
 
+from ecg.holter.clinical_config import load_clinical_config
+
 
 def calculate_signal_quality_index(signal: np.ndarray, r_peaks: np.ndarray, sampling_rate: float = 500) -> float:
     """
@@ -147,17 +149,19 @@ def calculate_signal_quality_index(signal: np.ndarray, r_peaks: np.ndarray, samp
         return 0.0
 
 
-def is_signal_quality_acceptable(sqi: float, threshold: float = 0.6) -> bool:
+def is_signal_quality_acceptable(sqi: float, threshold: Optional[float] = None) -> bool:
     """
     Check if signal quality is acceptable for metric calculation
     
     Args:
         sqi: Signal quality index (0-1)
-        threshold: Minimum acceptable SQI (default: 0.6)
+        threshold: Minimum acceptable SQI. Defaults to the clinical config value.
     
     Returns:
         bool: True if quality is acceptable, False otherwise
     """
+    if threshold is None:
+        threshold = float(load_clinical_config().signal_quality_threshold)
     return sqi >= threshold
 
 
@@ -179,6 +183,31 @@ def get_quality_label(sqi: float) -> str:
         return "Fair"
     else:
         return "Poor"
+
+
+def detect_lead_off(signal: np.ndarray, sampling_rate: float = 500, flat_std_threshold: float = 0.05) -> bool:
+    """Return True when a lead looks disconnected or effectively flat."""
+    if signal is None:
+        return True
+    arr = np.asarray(signal, dtype=float).reshape(-1)
+    if arr.size < int(sampling_rate * 2):
+        return True
+    if not np.any(arr):
+        return True
+    return float(np.std(arr)) < float(flat_std_threshold)
+
+
+def per_lead_quality_scores(leads: dict, sampling_rate: float = 500) -> dict:
+    """Compute a basic SQI for each lead, useful for lead-off and poor-quality detection."""
+    scores = {}
+    for lead_name, signal in (leads or {}).items():
+        arr = np.asarray(signal, dtype=float).reshape(-1)
+        if arr.size == 0:
+            scores[str(lead_name)] = 0.0
+            continue
+        sqi = calculate_signal_quality_index(arr, np.array([], dtype=int), sampling_rate=sampling_rate)
+        scores[str(lead_name)] = float(sqi)
+    return scores
 
 
 def calculate_sqi_with_details(signal: np.ndarray, r_peaks: np.ndarray, sampling_rate: float = 500) -> Tuple[float, dict]:

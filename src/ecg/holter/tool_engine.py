@@ -24,7 +24,7 @@ TOOL_TOOLTIPS = {
     TOOL_SELECT: "Select / Pan",
     TOOL_RULER: "Measurement ruler\nDrag to measure dt and dmV",
     TOOL_CALIPER: "Interval caliper\nClick x2 -> RR/PP bpm",
-    TOOL_MAGNIFY: "Magnifier\nHover to inspect local waveform",
+    TOOL_MAGNIFY: "Magnifier\nClick a waveform to lock zoom, or hover to inspect",
     TOOL_ANNOTATE: "Quick annotate\nClick start then end on lead",
 }
 
@@ -32,7 +32,7 @@ TOOL_HINTS = {
     TOOL_SELECT: "",
     TOOL_RULER: "Ruler active. Drag on any lead to measure time and amplitude.",
     TOOL_CALIPER: "Caliper active. Click once for line 1, again for line 2.",
-    TOOL_MAGNIFY: "Magnify active. Hover over waveform to inspect the local signal.",
+    TOOL_MAGNIFY: "Magnify active. Click a waveform to lock zoom, or hover to inspect.",
     TOOL_ANNOTATE: "Annotate active. Click start point, then click end point.",
 }
 

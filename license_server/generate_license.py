@@ -31,6 +31,10 @@ import sys
 import time
 import urllib.request
 from datetime import datetime, timezone
+from dotenv import find_dotenv, load_dotenv
+
+# Load .env from the project tree so the generator matches the server secret.
+load_dotenv(find_dotenv(usecwd=True), override=False)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 HMAC_SECRET: bytes = os.getenv(

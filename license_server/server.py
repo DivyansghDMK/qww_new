@@ -40,6 +40,10 @@ from functools import wraps
 from pathlib import Path
 
 from flask import Flask, jsonify, request, abort
+from dotenv import find_dotenv, load_dotenv
+
+# Load environment variables from the project .env or the current working dir.
+load_dotenv(find_dotenv(usecwd=True), override=False)
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 HMAC_SECRET: bytes = os.getenv(
