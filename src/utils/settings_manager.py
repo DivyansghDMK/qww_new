@@ -4,7 +4,11 @@ import re
 
 class SettingsManager:
     def __init__(self):
-        self.settings_file = "ecg_settings.json"
+        # Always resolve settings from the project root so different launch
+        # directories or machines do not pick up different config files.
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        self.settings_file = os.path.join(project_root, "ecg_settings.json")
+        self.legacy_settings_file = os.path.abspath("ecg_settings.json")
         self.default_settings = {
             "wave_speed": "25",  # mm/s (default)
             "wave_gain": "10",   # mm/mV
@@ -79,14 +83,31 @@ class SettingsManager:
         return value
     
     def load_settings(self):
+        source_file = None
         if os.path.exists(self.settings_file):
+            source_file = self.settings_file
+        elif os.path.exists(self.legacy_settings_file):
+            # Backward compatibility: migrate older cwd-relative config files.
+            source_file = self.legacy_settings_file
+
+        if source_file:
             try:
-                with open(self.settings_file, 'r') as f:
+                with open(source_file, 'r') as f:
                     loaded_settings = json.load(f)
-                    
-                    merged_settings = self.default_settings.copy()
-                    merged_settings.update(loaded_settings)
-                    return merged_settings
+
+                merged_settings = self.default_settings.copy()
+                merged_settings.update(loaded_settings)
+
+                # If we loaded from an old path, persist the canonical copy so
+                # all future runs use the same configuration file.
+                if source_file != self.settings_file:
+                    try:
+                        with open(self.settings_file, 'w') as out_f:
+                            json.dump(merged_settings, out_f, indent=2)
+                    except Exception:
+                        pass
+
+                return merged_settings
             except:
                 return self.default_settings.copy()
         return self.default_settings.copy()
