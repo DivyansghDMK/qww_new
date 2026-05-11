@@ -826,106 +826,69 @@ class HRVTestWindow(QWidget):
                         'value': smoothed_value  # Reports use smoothed values for clean graphs
                     })
                 
-            # Update plot (show last 10 seconds for real-time view)
-            # Use circular buffer data for smoother display
-            if len(self.captured_data) > 0:
-                # Use the circular buffer for display (contains smoothed data)
-                buffer_data = self.data[self.data != 0]  # Get non-zero values
+            # Update plot using a stable sliding window.
+            # Do not drop zero-valued samples here because real ECG data can cross zero,
+            # and filtering them out makes the trace reflow and jerk.
+            valid_count = min(self.active_samples, len(self.data))
+            if valid_count <= 0:
+                return
 
-                if len(buffer_data) > 100: # Ensure enough data for filtering
-                    # Get filter settings from SettingsManager
-                    ac_val = self.settings_manager.get_setting("filter_ac", "50")
-                    emg_val = self.settings_manager.get_setting("filter_emg", "35")
-                    
-                    fs = self.sampling_rate if self.sampling_rate > 0 else 500.0
+            fs = float(self.sampling_rate) if self.sampling_rate > 0 else 500.0
+            window_seconds = 10.0
+            window_samples = max(50, int(window_seconds * fs))
+            window_samples = min(window_samples, valid_count)
 
-                    # Pad data to reduce transient response at start and end
-                    # This fixes the "noise" at the start of acquisition
-                    pad_len = 50
-                    if len(buffer_data) > pad_len:
-                        start_pad = np.full(pad_len, buffer_data[0])
-                        end_pad = np.full(pad_len, buffer_data[-1])
-                        padded_data = np.concatenate((start_pad, buffer_data, end_pad))
-                    else:
-                        padded_data = buffer_data
-                        pad_len = 0
-                    
-                    # Apply AC Filter
-                    if ac_val != "Off" and ac_val != "off":
-                        padded_data = apply_ac_filter(padded_data, fs, ac_val)
-                        
-                    # Apply EMG Filter
-                    if emg_val != "Off" and emg_val != "off":
-                        padded_data = apply_emg_filter(padded_data, fs, emg_val)
+            buffer_data = np.asarray(self.data[-window_samples:], dtype=float)
 
-                    # Trim padding
-                    if pad_len > 0:
-                        buffer_data = padded_data[pad_len:-pad_len]
-                    else:
-                        buffer_data = padded_data
+            if len(buffer_data) > 100:
+                # Get filter settings from SettingsManager
+                ac_val = self.settings_manager.get_setting("filter_ac", "50")
+                emg_val = self.settings_manager.get_setting("filter_emg", "35")
 
-                    # edge_trim = int(0.5 * fs)
-                    # if len(buffer_data) > 2 * edge_trim:
-                    #     buffer_data = buffer_data[edge_trim:-edge_trim]
-
-                if len(buffer_data) > 0:
-                    # Create time axis based on sampling rate
-                    num_samples = len(buffer_data)
-                    if self.sampling_rate > 0:
-                        time_axis = np.arange(num_samples) / self.sampling_rate
-                        # Show last 15 seconds
-                        max_time = time_axis[-1] if len(time_axis) > 0 else 0
-                        min_time = max(0, max_time - 15)
-                        mask = time_axis >= min_time
-                        display_times = time_axis[mask].tolist()
-                        display_values = buffer_data[mask].tolist()
-                    else:
-                        # Fallback to timestamp-based display
-                        times = [d['time'] for d in self.captured_data]
-                        values = [d['value'] for d in self.captured_data]
-                        if len(times) > 0:
-                            max_time = max(times)
-                            min_time = max(0, max_time - 15)
-                            display_times = [t for t in times if t >= min_time]
-                            display_values = [v for i, v in enumerate(values) if times[i] >= min_time]
-                        else:
-                            display_times = []
-                            display_values = []
+                # Pad data to reduce transient response at the edges.
+                pad_len = 50
+                if len(buffer_data) > pad_len:
+                    start_pad = np.full(pad_len, buffer_data[0])
+                    end_pad = np.full(pad_len, buffer_data[-1])
+                    padded_data = np.concatenate((start_pad, buffer_data, end_pad))
                 else:
-                    # Fallback to timestamp-based display if buffer is empty
-                    times = [d['time'] for d in self.captured_data]
-                    values = [d['value'] for d in self.captured_data]
-                    if len(times) > 0:
-                        max_time = max(times)
-                        min_time = max(0, max_time - 15)
-                        display_times = [t for t in times if t >= min_time]
-                        display_values = [v for i, v in enumerate(values) if times[i] >= min_time]
-                    else:
-                        display_times = []
-                        display_values = []
+                    padded_data = buffer_data
+                    pad_len = 0
 
-                # --- Add Gaussian smoothing here ---
-                if len(display_values) > 5:
-                    gaussian_sigma = 2  # You can adjust this value for more/less smoothing
-                    display_values = gaussian_filter1d(display_values, sigma=gaussian_sigma)
-                
-                if len(display_times) > 0:
-                    # Plot RAW data directly without centering/scaling
-                    # User requested: "raw plot... from 0 to 4096 along y-axis and center of lead II should be from 2048"
-                    
-                    scaled_values = [2048 + (v - 2048) * 0.5 for v in display_values]
-                    self.plot_curve.setData(display_times, scaled_values)
-                            
-                    # Auto-scale X axis
-                    self.plot_widget.setXRange(min(display_times), max(display_times), padding=0.1)
-                            
-                    # Fixed Y-axis scaling (0-4096)
-                    self.plot_widget.setYRange(0, 4096, padding=0)
-                    
-                    # # Draw a center line at 2048 for reference (optional, but helpful)
-                    # if not hasattr(self, 'center_line'):
-                    #     self.center_line = pg.InfiniteLine(pos=2048, angle=0, pen=pg.mkPen(color='gray', width=0.7, style=Qt.DashLine))
-                    #     self.plot_widget.addItem(self.center_line)
+                if ac_val != "Off" and ac_val != "off":
+                    padded_data = apply_ac_filter(padded_data, fs, ac_val)
+
+                if emg_val != "Off" and emg_val != "off":
+                    padded_data = apply_emg_filter(padded_data, fs, emg_val)
+
+                if pad_len > 0:
+                    buffer_data = padded_data[pad_len:-pad_len]
+                else:
+                    buffer_data = padded_data
+
+            if len(buffer_data) > 5:
+                # Gentle smoothing for HRV display so the trace looks continuous.
+                buffer_data = gaussian_filter1d(buffer_data, sigma=1.5)
+
+            if len(buffer_data) > 0:
+                # Keep the trace visually centered around 2048 so it does not float.
+                display_values = 2048.0 + (buffer_data - np.median(buffer_data))
+                display_values = np.clip(display_values, 0, 4096)
+
+                # Resample to a fixed density for smooth rendering.
+                display_len = min(2000, max(250, int(window_seconds * 200)))
+                if len(display_values) >= 2:
+                    x_src = np.linspace(0.0, 1.0, len(display_values))
+                    x_dst = np.linspace(0.0, 1.0, display_len)
+                    display_values = np.interp(x_dst, x_src, display_values)
+
+                display_times = np.linspace(-window_seconds, 0.0, len(display_values))
+
+                self.plot_curve.setData(display_times, display_values)
+
+                # Fixed plot ranges avoid the visible jump caused by repeated auto-scaling.
+                self.plot_widget.setXRange(-window_seconds, 0.0, padding=0)
+                self.plot_widget.setYRange(0, 4096, padding=0)
         
         except Exception as e:
             # Silently handle errors during capture
