@@ -359,7 +359,7 @@ class HRVTestWindow(QWidget):
         self.plot_widget.hideAxis('bottom')
         
         # Plot curve
-        self.plot_curve = self.plot_widget.plot([], [], pen=pg.mkPen(color='#00FF00', width=0.7))
+        self.plot_curve = self.plot_widget.plot([], [], pen=pg.mkPen(color='#00FF00', width=1.7))
         
         plot_layout.addWidget(self.plot_widget)
         layout.addWidget(plot_frame, stretch=1)
@@ -902,9 +902,20 @@ class HRVTestWindow(QWidget):
                     x_dst = np.linspace(0.0, 1.0, display_len)
                     display_values = np.interp(x_dst, x_src, display_values)
 
-                display_times = np.linspace(0.0, window_seconds, len(display_values))
+                # Right-align the data in a fixed buffer so the newest samples enter
+                # smoothly from the right edge instead of causing a visible jump.
+                if not hasattr(self, "_hrv_plot_buffer") or len(self._hrv_plot_buffer) != display_len:
+                    self._hrv_plot_buffer = np.full(display_len, np.nan, dtype=float)
 
-                self.plot_curve.setData(display_times, display_values, connect='finite')
+                plot_buffer = np.full(display_len, np.nan, dtype=float)
+                copy_len = min(display_len, len(display_values))
+                if copy_len > 0:
+                    plot_buffer[-copy_len:] = display_values[-copy_len:]
+                self._hrv_plot_buffer = plot_buffer
+
+                display_times = np.linspace(0.0, window_seconds, display_len)
+
+                self.plot_curve.setData(display_times, self._hrv_plot_buffer, connect='finite')
 
                 # Fixed plot ranges avoid the visible jump caused by repeated auto-scaling.
                 self.plot_widget.setXRange(0.0, window_seconds, padding=0)
