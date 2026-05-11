@@ -702,7 +702,7 @@ class ECGTestPage(QWidget):
         "V6": "#ff0066"
     }
 
-    def __init__(self, test_name, stacked_widget):
+    def __init__(self, test_name, stacked_widget, settings_manager=None):
         super().__init__()
         
         # Set responsive size policy
@@ -712,7 +712,9 @@ class ECGTestPage(QWidget):
         self.setWindowTitle("12-Lead ECG Monitor")
         self.stacked_widget = stacked_widget  # Save reference for navigation
 
-        self.settings_manager = SettingsManager()
+        # Use a shared SettingsManager when provided (keeps filters/settings consistent
+        # across dashboard mini-wave, overlays, expanded lead view, and reports).
+        self.settings_manager = settings_manager if settings_manager is not None else SettingsManager()
         # Ensure AC filter starts at "50" each launch (Set Filter default)
         try:
             self.settings_manager.set_setting("filter_ac", "50")
@@ -7507,7 +7509,7 @@ class ECGTestPage(QWidget):
                             # Match main grid behavior: when low-frequency respiration/motion drift dominates
                             # AND a DFT cutoff is selected, apply DFT high-pass before baseline anchoring.
                             try:
-                                from ecg.ecg_filters import apply_dft_filter
+                                from ecg.ecg_filters import apply_dft_filter, apply_baseline_wander_median_mean
                                 dft_setting = None
                                 if hasattr(self, "settings_manager"):
                                     dft_setting = str(self.settings_manager.get_setting("filter_dft", "off")).strip()
@@ -7515,13 +7517,8 @@ class ECGTestPage(QWidget):
                                     # Always apply 0.5 Hz in streaming-safe mode when selected.
                                     # Gating on/off per frame can cause visible baseline "wobble" on real body signals.
                                     if str(dft_setting).strip() == "0.5":
-                                        raw = self._apply_realtime_dft_highpass(raw, float(sampling_rate), 0.5, idx, stage=0)
-                                        try:
-                                            if self._has_respiration_baseline_drift(raw, float(sampling_rate)):
-                                                raw = self._apply_realtime_dft_highpass(raw, float(sampling_rate), 0.5, idx, stage=1)
-                                        except Exception:
-                                            pass
-                                    elif self._has_respiration_baseline_drift(raw, float(sampling_rate)):
+                                        raw = apply_baseline_wander_median_mean(raw, float(sampling_rate))
+                                    else:
                                         raw = apply_dft_filter(raw, float(sampling_rate), dft_setting)
                             except Exception:
                                 pass
@@ -8369,19 +8366,14 @@ class ECGTestPage(QWidget):
                             # Match main grid behavior: when low-frequency respiration/motion drift dominates
                             # AND a DFT cutoff is selected, apply DFT high-pass before baseline anchoring.
                             try:
-                                from ecg.ecg_filters import apply_dft_filter
+                                from ecg.ecg_filters import apply_dft_filter, apply_baseline_wander_median_mean
                                 dft_setting = None
                                 if hasattr(self, "settings_manager"):
                                     dft_setting = str(self.settings_manager.get_setting("filter_dft", "off")).strip()
                                 if dft_setting and dft_setting not in ("off", ""):
                                     if str(dft_setting).strip() == "0.5":
-                                        raw = self._apply_realtime_dft_highpass(raw, float(sampling_rate), 0.5, lead_index, stage=0)
-                                        try:
-                                            if self._has_respiration_baseline_drift(raw, float(sampling_rate)):
-                                                raw = self._apply_realtime_dft_highpass(raw, float(sampling_rate), 0.5, lead_index, stage=1)
-                                        except Exception:
-                                            pass
-                                    elif self._has_respiration_baseline_drift(raw, float(sampling_rate)):
+                                        raw = apply_baseline_wander_median_mean(raw, float(sampling_rate))
+                                    else:
                                         raw = apply_dft_filter(raw, float(sampling_rate), dft_setting)
                             except Exception:
                                 pass
@@ -8823,49 +8815,6 @@ class ECGTestPage(QWidget):
         except Exception:
             return False
 
-    def _apply_realtime_dft_highpass(self, signal: np.ndarray, fs: float, cutoff_hz: float, lead_index: int, stage: int = 0) -> np.ndarray:
-        """
-        Streaming-safe high-pass used for LIVE display only.
-
-        Rationale: `scipy.signal.filtfilt` on sliding acquisition windows can create
-        frame-to-frame edge transients ("wobble"), especially at low cutoffs (0.5 Hz).
-        A causal IIR with preserved state provides stable baseline behavior during acquisition.
-        """
-        try:
-            arr = np.asarray(signal, dtype=float)
-            if arr.size < 3:
-                return arr
-            fs = float(fs)
-            if fs <= 5.0:
-                return arr
-            cutoff_hz = float(cutoff_hz)
-            if cutoff_hz <= 0.0 or cutoff_hz >= (fs / 2.0):
-                return arr
-
-            # Per-lead state: keep filter memory across frames to avoid re-initialization transients.
-            if not hasattr(self, "_realtime_dft_hp_state"):
-                self._realtime_dft_hp_state = {}
-
-            # Reset state when the (fs, cutoff) configuration changes.
-            state_key = (int(lead_index), int(stage), float(fs), float(cutoff_hz))
-            state = self._realtime_dft_hp_state.get(state_key)
-
-            from scipy.signal import butter, sosfilt, sosfilt_zi
-
-            if state is None:
-                sos = butter(2, cutoff_hz / (fs / 2.0), btype="high", output="sos")
-                # Initialize zi so the first output sample starts near the first input value.
-                zi = sosfilt_zi(sos) * (arr[0] if np.isfinite(arr[0]) else 0.0)
-                state = {"sos": sos, "zi": zi}
-                self._realtime_dft_hp_state[state_key] = state
-
-            x = np.nan_to_num(arr, copy=False)
-            y, zi = sosfilt(state["sos"], x, zi=state["zi"])
-            state["zi"] = zi
-            return y
-        except Exception:
-            return np.asarray(signal, dtype=float)
-
     def update_plots(self):
         """Update all ECG plots with current data using PyQtGraph (GitHub version)"""
         try:
@@ -8942,7 +8891,7 @@ class ECGTestPage(QWidget):
                                     # If slow respiration/motion drift dominates this window AND the user has a DFT
                                     # cutoff selected, apply the DFT high-pass before baseline anchoring.
                                     try:
-                                        from ecg.ecg_filters import apply_dft_filter
+                                        from ecg.ecg_filters import apply_dft_filter, apply_baseline_wander_median_mean
                                         if hasattr(self, "_last_display_dft_applied") and i < len(self._last_display_dft_applied):
                                             self._last_display_dft_applied[i] = False
                                         dft_setting = None
@@ -8952,13 +8901,8 @@ class ECGTestPage(QWidget):
                                             # Always apply 0.5 Hz in streaming-safe mode when selected.
                                             # Per-frame gating can cause visible baseline wobble on body signals.
                                             if str(dft_setting).strip() == "0.5":
-                                                raw = self._apply_realtime_dft_highpass(raw, float(fs), 0.5, i, stage=0)
-                                                try:
-                                                    if self._has_respiration_baseline_drift(raw, float(fs)):
-                                                        raw = self._apply_realtime_dft_highpass(raw, float(fs), 0.5, i, stage=1)
-                                                except Exception:
-                                                    pass
-                                            elif self._has_respiration_baseline_drift(raw, float(fs)):
+                                                raw = apply_baseline_wander_median_mean(raw, float(fs))
+                                            else:
                                                 raw = apply_dft_filter(raw, float(fs), dft_setting)
                                             if hasattr(self, "_last_display_dft_applied") and i < len(self._last_display_dft_applied):
                                                 self._last_display_dft_applied[i] = True
@@ -9454,7 +9398,7 @@ class ECGTestPage(QWidget):
                                     # 0.5 Hz removed drift in reports but not in the live grid. Apply it only
                                     # when slow drift dominates this window.
                                     try:
-                                        from ecg.ecg_filters import apply_dft_filter
+                                        from ecg.ecg_filters import apply_dft_filter, apply_baseline_wander_median_mean
                                         if hasattr(self, "_last_display_dft_applied") and i < len(self._last_display_dft_applied):
                                             self._last_display_dft_applied[i] = False
                                         dft_setting = None
@@ -9462,13 +9406,8 @@ class ECGTestPage(QWidget):
                                             dft_setting = str(self.settings_manager.get_setting("filter_dft", "off")).strip()
                                         if dft_setting and dft_setting not in ("off", ""):
                                             if str(dft_setting).strip() == "0.5":
-                                                filtered_slice = self._apply_realtime_dft_highpass(filtered_slice, float(sampling_rate), 0.5, i, stage=0)
-                                                try:
-                                                    if self._has_respiration_baseline_drift(filtered_slice, float(sampling_rate)):
-                                                        filtered_slice = self._apply_realtime_dft_highpass(filtered_slice, float(sampling_rate), 0.5, i, stage=1)
-                                                except Exception:
-                                                    pass
-                                            elif self._has_respiration_baseline_drift(filtered_slice, float(sampling_rate)):
+                                                filtered_slice = apply_baseline_wander_median_mean(filtered_slice, float(sampling_rate))
+                                            else:
                                                 filtered_slice = apply_dft_filter(filtered_slice, float(sampling_rate), dft_setting)
                                             if hasattr(self, "_last_display_dft_applied") and i < len(self._last_display_dft_applied):
                                                 self._last_display_dft_applied[i] = True

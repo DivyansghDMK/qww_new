@@ -163,7 +163,7 @@ class HyperkalemiaTestWindow(QWidget):
             try:
                 # Create a dummy stacked widget for ECGTestPage initialization
                 dummy_stack = QStackedWidget()
-                self.ecg_calculator = ECGTestPage("12 Lead ECG Test", dummy_stack)
+                self.ecg_calculator = ECGTestPage("12 Lead ECG Test", dummy_stack, settings_manager=self.settings_manager)
                 
                 # IMPORTANT: Sync sampling rate from parent dashboard if available
                 if parent and hasattr(parent, 'ecg_test_page'):
@@ -983,6 +983,7 @@ class HyperkalemiaTestWindow(QWidget):
             # Get filter settings from SettingsManager
             ac_val = self.settings_manager.get_setting("filter_ac", "50")
             emg_val = self.settings_manager.get_setting("filter_emg", "35")
+            dft_val = self.settings_manager.get_setting("filter_dft", "off")
             fs = self.sampling_rate if self.sampling_rate > 0 else 500.0
             if fs < 100.0 or fs > 1000.0:
                 fs = 500.0
@@ -1020,13 +1021,26 @@ class HyperkalemiaTestWindow(QWidget):
                 # Apply Filters only when lead is connected (avoid distorting flat OFF trace)
                 if not lead_is_off:
                     try:
-                        from ecg.ecg_filters import apply_ac_filter, apply_emg_filter
+                        from ecg.ecg_filters import (
+                            apply_ac_filter,
+                            apply_emg_filter,
+                            apply_dft_filter,
+                            apply_baseline_wander_median_mean,
+                        )
                         if len(values) > 100:  # Ensure enough data
                             values_array = np.array(values, dtype=float)
                             if ac_val not in ["Off", "off"]:
                                 values_array = apply_ac_filter(values_array, fs, ac_val)
                             if emg_val not in ["Off", "off"]:
                                 values_array = apply_emg_filter(values_array, fs, emg_val)
+                            if dft_val not in ["Off", "off", "", None]:
+                                dft_text = str(dft_val).strip()
+                                if dft_text == "0.5":
+                                    values_array = apply_baseline_wander_median_mean(values_array, fs)
+                                else:
+                                    values_array = apply_dft_filter(values_array, fs, dft_text)
+
+                                values_array = values_array + float(self._adc_center)
                             values = values_array.tolist()
                     except ImportError:
                         pass

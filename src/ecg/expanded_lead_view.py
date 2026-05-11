@@ -20,13 +20,21 @@ from matplotlib.figure import Figure
 import matplotlib.patches as patches
 from .arrhythmia_detector import ArrhythmiaDetector
 try:
-    from .ecg_filters import extract_respiration, estimate_baseline_drift, apply_ac_filter, apply_emg_filter, apply_ecg_filters
+    from .ecg_filters import (
+        extract_respiration,
+        estimate_baseline_drift,
+        apply_ac_filter,
+        apply_emg_filter,
+        apply_ecg_filters,
+        apply_baseline_wander_median_mean,
+    )
 except ImportError:
     extract_respiration = None
     estimate_baseline_drift = None
     apply_ac_filter = None
     apply_emg_filter = None
     apply_ecg_filters = None
+    apply_baseline_wander_median_mean = None
 try:
     from .clinical_measurements import (
         build_median_beat, get_tp_baseline, measure_pr_from_median_beat,
@@ -1889,13 +1897,20 @@ class ExpandedLeadView(QDialog):
                     dft_opt = str(self._parent.settings_manager.get_setting('filter_dft', 'off')).strip()
 
                 if apply_ecg_filters is not None:
+                    # Display fix: 0.5 Hz "DFT" high-pass can introduce beat-synchronous baseline droop
+                    # between QRS complexes on short windows. For expanded view display, keep the
+                    # isoelectric line visually straight by using median+mean baseline removal when
+                    # the user selects 0.5 Hz.
+                    use_median_mean_baseline = (str(dft_opt).strip() == '0.5')
                     display_signal = apply_ecg_filters(
                         signal=display_signal,
                         sampling_rate=float(self.sampling_rate),
                         ac_filter=ac_opt if ac_opt in ('50', '60') else None,
                         emg_filter=emg_opt if emg_opt not in ('off', '') else None,
-                        dft_filter=dft_opt if dft_opt not in ('off', '') else None,
+                        dft_filter=None if use_median_mean_baseline else (dft_opt if dft_opt not in ('off', '') else None),
                     )
+                    if use_median_mean_baseline and apply_baseline_wander_median_mean is not None:
+                        display_signal = apply_baseline_wander_median_mean(display_signal, float(self.sampling_rate))
                 else:
                     if apply_emg_filter is not None and emg_opt not in ('off', ''):
                         display_signal = apply_emg_filter(display_signal, float(self.sampling_rate), emg_opt)

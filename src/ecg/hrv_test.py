@@ -48,7 +48,12 @@ except ImportError:
 from utils.settings_manager import SettingsManager
 from utils.crash_logger import get_crash_logger
 from utils.patient_profile import resolve_patient_profile
-from ecg.ecg_filters import apply_ac_filter, apply_emg_filter, apply_dft_filter
+from ecg.ecg_filters import (
+    apply_ac_filter,
+    apply_emg_filter,
+    apply_dft_filter,
+    apply_baseline_wander_median_mean,
+)
 from ecg.utils.helpers import get_display_gain
 from ecg.ui import display_updates as shared_display_updates
 from dashboard.history_window import append_history_entry
@@ -118,7 +123,7 @@ class HRVTestWindow(QWidget):
             try:
                 # Create a dummy stacked widget for ECGTestPage initialization
                 dummy_stack = QStackedWidget()
-                self.ecg_calculator = ECGTestPage("12 Lead ECG Test", dummy_stack)
+                self.ecg_calculator = ECGTestPage("12 Lead ECG Test", dummy_stack, settings_manager=self.settings_manager)
                 
                 # IMPORTANT: Sync sampling rate from parent dashboard if available
                 # This ensures both windows use identical frequency assumptions
@@ -866,8 +871,15 @@ class HRVTestWindow(QWidget):
                 if ac_val != "Off" and ac_val != "off":
                     padded_data = apply_ac_filter(padded_data, fs, ac_val)
 
-                if dft_val and str(dft_val).strip().lower() not in ("off", "0", "none", ""):
-                    padded_data = apply_dft_filter(padded_data, fs, dft_val)
+                # Apply DFT (baseline) Filter
+                if dft_val not in ("Off", "off", "", None):
+                    dft_text = str(dft_val).strip()
+                    if dft_text == "0.5":
+                        padded_data = apply_baseline_wander_median_mean(padded_data, fs)
+                    else:
+                        padded_data = apply_dft_filter(padded_data, fs, dft_text)
+
+                    padded_data = padded_data + 2048.0
 
                 if pad_len > 0:
                     buffer_data = padded_data[pad_len:-pad_len]
