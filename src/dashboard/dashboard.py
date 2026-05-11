@@ -1363,7 +1363,7 @@ class Dashboard(QWidget):
             print(" Creating fallback ECG Test Page")
             # Create a fallback ECG test page
             class ECGTestPage(QWidget):
-                def __init__(self, title, parent):
+                def __init__(self, title, parent, *args, **kwargs):
                     super().__init__()
                     self.title = title
                     self.parent = parent
@@ -1374,7 +1374,9 @@ class Dashboard(QWidget):
                     layout.addWidget(label)
                     self.setLayout(layout)
                     print(" Using fallback ECG Test Page")
-        self.ecg_test_page = ECGTestPage("12 Lead ECG Test", self.page_stack)
+        # Pass the shared SettingsManager so display filter settings (DFT/EMG/AC)
+        # stay consistent across dashboard and ECG test page views.
+        self.ecg_test_page = ECGTestPage("12 Lead ECG Test", self.page_stack, settings_manager=self.settings_manager)
         self.ecg_test_page.dashboard_callback = self.update_ecg_metrics
         # Pass username and dashboard reference to ECGTestPage for report filtering
         self.ecg_test_page.dashboard_instance = self
@@ -2952,49 +2954,6 @@ class Dashboard(QWidget):
         except Exception:
             return False
 
-    def _dashboard_apply_realtime_dft_highpass(
-        self, signal: np.ndarray, fs: float, cutoff_hz: float, stage: int = 0
-    ) -> np.ndarray:
-        """
-        Streaming-safe high-pass for the dashboard Lead II mini-chart.
-
-        Avoids `filtfilt` edge transients on sliding windows (visible "wobble")
-        by using a causal IIR and preserving state across frames.
-        """
-        try:
-            arr = np.asarray(signal, dtype=float)
-            if arr.size < 3:
-                return arr
-            fs = float(fs)
-            if fs <= 5.0:
-                return arr
-            cutoff_hz = float(cutoff_hz)
-            if cutoff_hz <= 0.0 or cutoff_hz >= (fs / 2.0):
-                return arr
-
-            if not hasattr(self, "_dashboard_dft_hp_state"):
-                self._dashboard_dft_hp_state = {}
-
-            # `stage` allows cascading a second identical high-pass stage (independent state)
-            # for stronger wobble suppression when respiration/motion drift dominates.
-            state_key = (int(stage), float(fs), float(cutoff_hz))
-            state = self._dashboard_dft_hp_state.get(state_key)
-
-            from scipy.signal import butter, sosfilt, sosfilt_zi
-
-            if state is None:
-                sos = butter(2, cutoff_hz / (fs / 2.0), btype="high", output="sos")
-                zi = sosfilt_zi(sos) * (arr[0] if np.isfinite(arr[0]) else 0.0)
-                state = {"sos": sos, "zi": zi}
-                self._dashboard_dft_hp_state[state_key] = state
-
-            x = np.nan_to_num(arr, copy=False)
-            y, zi = sosfilt(state["sos"], x, zi=state["zi"])
-            state["zi"] = zi
-            return y
-        except Exception:
-            return np.asarray(signal, dtype=float)
-
     def update_ecg(self, frame):
         try:
             # Try to get data from ECG test page if available
@@ -3113,20 +3072,17 @@ class Dashboard(QWidget):
                             # Use streaming-safe path at 0.5 Hz to prevent acquisition "wobble"
                             # on sliding windows.
                             try:
-                                from ecg.ecg_filters import apply_dft_filter
+                                from ecg.ecg_filters import apply_dft_filter, apply_baseline_wander_median_mean
                                 dft_setting = str(settings_src.get_setting("filter_dft", "off")).strip()
                                 if dft_setting and dft_setting not in ("off", ""):
                                     if str(dft_setting).strip() == "0.5":
-                                        filtered_slice = self._dashboard_apply_realtime_dft_highpass(
-                                            filtered_slice, float(actual_sampling_rate), 0.5, stage=0
+                                        # Display fix: a 0.5 Hz high-pass introduces beat-synchronous baseline
+                                        # "droop" between QRS complexes on short sliding windows.
+                                        # Use the monitor-grade median+mean baseline removal instead so the
+                                        # isoelectric line stays visually straight.
+                                        filtered_slice = apply_baseline_wander_median_mean(
+                                            filtered_slice, float(actual_sampling_rate)
                                         )
-                                        try:
-                                            if self._dashboard_has_respiration_baseline_drift(filtered_slice, float(actual_sampling_rate)):
-                                                filtered_slice = self._dashboard_apply_realtime_dft_highpass(
-                                                    filtered_slice, float(actual_sampling_rate), 0.5, stage=1
-                                                )
-                                        except Exception:
-                                            pass
                                     else:
                                         filtered_slice = apply_dft_filter(filtered_slice, float(actual_sampling_rate), dft_setting)
                             except Exception:
