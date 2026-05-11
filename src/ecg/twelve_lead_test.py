@@ -4251,7 +4251,7 @@ class ECGTestPage(QWidget):
         self.metric_labels['heart_rate'] = heart_rate_val
         
         # --- ADD HOLTER STATUS BADGE ---
-        self.holter_badge = QLabel(" HOLTER RECORDING ")
+        self.holter_badge = QLabel(" COMPREHENSIVE ECG ANALYSIS ")
         self.holter_badge.setStyleSheet("""
             QLabel {
                 background: #00FF00;
@@ -8592,7 +8592,11 @@ class ECGTestPage(QWidget):
             # Try to start real acquisition
             self.start_acquisition()
             
-        QMessageBox.information(self, "Holter Started", "Live Holter Recording has started automatically.")
+            QMessageBox.information(
+                self,
+                "Comprehensive ECG Analysis Started",
+                "Live Comprehensive ECG Analysis recording has started automatically."
+            )
 
     def show_holter_menu(self):
         """Open professional Holter setup and workspace."""
@@ -8657,8 +8661,8 @@ class ECGTestPage(QWidget):
             QMessageBox.information(
                 self,
                 "Holter Mode Ready",
-                "Holter mode is armed.\n\nClick Start (or enable Demo Mode) to begin recording. "
-                "The professional 12‑lead Holter workspace has been opened and the comprehensive report will be generated when the recording stops."
+                "Comprehensive ECG Analysis mode is armed.\n\nClick Start (or enable Demo Mode) to begin recording. "
+                "The professional 12‑lead comprehensive ECG workspace has been opened and the report will be generated when the recording stops."
             )
 
     def _start_holter_session_internal(self):
@@ -8710,7 +8714,7 @@ class ECGTestPage(QWidget):
             except Exception as e:
                 print(f"[Holter] UI attach warning: {e}")
             
-        print(f"[Holter] Automatic recording started in {session_dir}")
+        print(f"[Comprehensive ECG Analysis] Automatic recording started in {session_dir}")
 
     def _stop_holter_session_internal(self):
         """Internal helper to stop a Holter session and generate report"""
@@ -8723,7 +8727,7 @@ class ECGTestPage(QWidget):
             
             # Show dialog to collect patient info AFTER recording
             dialog = HolterStartDialog(self, patient_info=summary.get('patient_info', {}), output_dir=self._holter_output_dir)
-            dialog.setWindowTitle("Save Holter Recording Details")
+            dialog.setWindowTitle("Save Comprehensive ECG Analysis Details")
             if dialog.exec_() == QDialog.Accepted:
                 patient_info, dur, out_dir = dialog.get_result()
                 summary['patient_info'] = patient_info

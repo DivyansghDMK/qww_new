@@ -20,6 +20,7 @@ from typing import Optional, List, Dict, Tuple
 from .file_format import ECGHFileReader, LEAD_NAMES
 from .session_store import load_events, load_metrics, read_session_metadata
 from .hrv_metrics import compute_hrv_summary
+from .summary_utils import derive_hr_focus_summary
 
 
 class HolterReplayEngine:
@@ -340,6 +341,7 @@ class HolterReplayEngine:
         total_tachy = sum(m.get('tachy_beats', 0) for m in self._metrics)
         total_brady = sum(m.get('brady_beats', 0) for m in self._metrics)
         total_pauses = sum(m.get('pauses', 0) for m in self._metrics)
+        focus = derive_hr_focus_summary(self._metrics)
 
         return {
             'duration_sec': self.duration_sec,
@@ -347,6 +349,16 @@ class HolterReplayEngine:
             'avg_hr': round(float(np.mean(hr_values)), 1) if hr_values else 0.0,
             'max_hr': round(float(np.max(hr_values)), 1) if hr_values else 0.0,
             'min_hr': round(float(np.min(hr_values)), 1) if hr_values else 0.0,
+            'max_hr_time': focus.get('max_hr_time', ''),
+            'max_hr_timestamp': focus.get('max_hr_timestamp', 0.0),
+            'min_hr_time': focus.get('min_hr_time', ''),
+            'min_hr_timestamp': focus.get('min_hr_timestamp', 0.0),
+            'sinus_max_hr': focus.get('sinus_max_hr', round(float(np.max(hr_values)), 1) if hr_values else 0.0),
+            'sinus_min_hr': focus.get('sinus_min_hr', round(float(np.min(hr_values)), 1) if hr_values else 0.0),
+            'sinus_max_hr_time': focus.get('sinus_max_hr_time', ''),
+            'sinus_max_hr_timestamp': focus.get('sinus_max_hr_timestamp', 0.0),
+            'sinus_min_hr_time': focus.get('sinus_min_hr_time', ''),
+            'sinus_min_hr_timestamp': focus.get('sinus_min_hr_timestamp', 0.0),
             'sdnn': global_sdnn,
             'rmssd': global_rmssd,
             'pnn50': global_pnn50,

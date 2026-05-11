@@ -226,9 +226,20 @@ class Dashboard(QWidget):
         # Settings for wave speed/gain
         self.settings_manager = SettingsManager()
         self.current_language = self.settings_manager.get_setting("system_language", "en")
-        self.heartbeat_sound_enabled = (
-            str(self.settings_manager.get_setting("system_beat_vol", "on")).lower() == "on"
-        )
+        audio_cfg = {}
+        try:
+            audio_cfg = get_config().get_audio_config()
+        except Exception:
+            audio_cfg = {}
+        cfg_enabled = str(audio_cfg.get("heartbeat_enabled", "on")).lower() in ("1", "true", "yes", "on")
+        settings_enabled = str(self.settings_manager.get_setting("system_beat_vol", "on")).lower() in ("1", "true", "yes", "on")
+        if not settings_enabled:
+            try:
+                self.settings_manager.set_setting("system_beat_vol", "on")
+                settings_enabled = True
+            except Exception:
+                pass
+        self.heartbeat_sound_enabled = bool(cfg_enabled and settings_enabled)
         
         # Initialize crash logger
         self.crash_logger = get_crash_logger()
@@ -3853,6 +3864,12 @@ class Dashboard(QWidget):
                 self.heartbeat_sound.stop()
             except Exception as e:
                 print(f" Unable to stop heartbeat sound: {e}")
+        elif desired_state and self.heartbeat_sound is None and QSound is not None:
+            # Ensure we have a usable sound source when the user enables heartbeat audio.
+            try:
+                self.create_heartbeat_sound()
+            except Exception as e:
+                print(f" Unable to create heartbeat sound: {e}")
 
     def tr(self, text):
         return translate_text(text, getattr(self, "current_language", "en"))

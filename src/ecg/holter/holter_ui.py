@@ -146,6 +146,7 @@ try:
         tooltip as tool_tooltip,
     )
     from .session_store import append_annotation, load_annotations, load_events, load_metrics, read_session_metadata
+    from .summary_utils import derive_hr_focus_summary
 except ImportError:
     from ecg.holter.theme import (
         ADC_TO_MV,
@@ -187,6 +188,7 @@ except ImportError:
         tooltip as tool_tooltip,
     )
     from ecg.holter.session_store import append_annotation, load_annotations, load_events, load_metrics, read_session_metadata
+    from ecg.holter.summary_utils import derive_hr_focus_summary
 
 # Professional UI palette (kept separate from signal colors).
 UI_BG = "#0B1220"
@@ -3676,14 +3678,39 @@ class HolterEditEventPanel(QWidget):
             self._mini.set_data(x, data[0].copy())
 
 
+class ClickableSummaryTile(QFrame):
+    clicked = pyqtSignal(str)
+
+    def __init__(self, tile_key: str, parent=None):
+        super().__init__(parent)
+        self.tile_key = tile_key
+        self.setCursor(Qt.PointingHandCursor)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit(self.tile_key)
+        super().mousePressEvent(event)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # 15. EDIT STRIPS PANEL
 # ══════════════════════════════════════════════════════════════════════════════
 
 class HolterEditStripsPanel(QWidget):
+    seek_requested = pyqtSignal(float)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setStyleSheet(f"background:{COL_BG};")
+        self._events = []
+        self._summary = {}
+        self._metrics_list = []
+        self._focus_cards = {}
+        self._selected_focus_key = "max_hr"
+        self._selected_payload = {}
+        self._tile_widgets = {}
+        self._stat_labels = {}
         self._build_ui()
 
     def _build_ui(self):
@@ -3711,6 +3738,33 @@ class HolterEditStripsPanel(QWidget):
             btn.setStyleSheet(_style_btn())
             nav_row.addWidget(btn)
         left_layout.addLayout(nav_row)
+
+        stats_frame = QFrame()
+        stats_frame.setStyleSheet(
+            f"QFrame{{background:{COL_DARK};border:1px solid {COL_GREEN_DRK};border-radius:6px;}}"
+        )
+        sf_layout = QGridLayout(stats_frame)
+        sf_layout.setContentsMargins(8, 6, 8, 6)
+        sf_layout.setSpacing(6)
+        for i, (key, label) in enumerate([
+            ("hr", "Avg HR"),
+            ("max_hr", "HR Max"),
+            ("min_hr", "HR Min"),
+            ("smax_hr", "Sinus Max HR"),
+            ("smin_hr", "Sinus Min HR"),
+            ("rr_int", "Longest RR"),
+            ("brady", "Brady"),
+            ("user_ev", "User Event"),
+        ]):
+            row, col = divmod(i, 2)
+            l = QLabel(f"{label}:")
+            l.setStyleSheet(f"color:{COL_GREEN_DRK};font-size:10px;font-weight:bold;border:none;")
+            v = QLabel("—")
+            v.setStyleSheet(f"color:{COL_GREEN};font-size:12px;font-weight:bold;border:none;")
+            sf_layout.addWidget(l, row * 2, col)
+            sf_layout.addWidget(v, row * 2 + 1, col)
+            self._stat_labels[key] = v
+        left_layout.addWidget(stats_frame)
         layout.addWidget(left, 2)
 
         # --- CENTER: 2x2 Thumbnail Boxes (30% width) ---
@@ -3730,73 +3784,125 @@ class HolterEditStripsPanel(QWidget):
         center_layout.addLayout(tool_row)
 
         thumb_grid = QGridLayout()
-        thumb_grid.setSpacing(8)
+        thumb_grid.setSpacing(12)
+        thumb_grid.setHorizontalSpacing(12)
+        thumb_grid.setVerticalSpacing(12)
         self._thumb_frames = []
-        for row, col, title in [(0,0,"Maximum Heart Rate"),(0,1,"Minimum Heart Rate"),
-                                 (1,0,"Sinus Max HR"),(1,1,"Sinus Min HR")]:
-            frame = QFrame()
-            # Styled with white/gray border to match reference
-            frame.setStyleSheet(f"QFrame{{background:{COL_DARK};border:1px solid #888888;border-radius:4px;}}")
+        self._tile_style_normal = f"QFrame{{background:{COL_DARK};border:1px solid #888888;border-radius:8px;}}"
+        self._tile_style_active = f"QFrame{{background:{COL_BLACK};border:2px solid {COL_YELLOW};border-radius:8px;}}"
+        self._tile_widgets = {}
+        tile_specs = [
+            (0, 0, "max_hr", "Maximum Heart Rate"),
+            (0, 1, "min_hr", "Minimum Heart Rate"),
+            (1, 0, "smax_hr", "Sinus Max HR"),
+            (1, 1, "smin_hr", "Sinus Min HR"),
+        ]
+        for row, col, key, title in tile_specs:
+            frame = ClickableSummaryTile(key)
+            frame.setMinimumHeight(210)
+            frame.setMinimumWidth(280)
+            frame.setStyleSheet(self._tile_style_normal)
             fl = QVBoxLayout(frame)
-            fl.setContentsMargins(6, 6, 6, 6)
-            fl.setSpacing(2)
-            
+            fl.setContentsMargins(8, 8, 8, 8)
+            fl.setSpacing(4)
+
             header_w = QWidget()
             header_w.setStyleSheet("border:none;")
             hl = QHBoxLayout(header_w)
-            hl.setContentsMargins(0,0,0,0)
-            
+            hl.setContentsMargins(0, 0, 0, 0)
             t_lbl = QLabel(title)
             t_lbl.setStyleSheet("color:#FFFFFF;font-size:12px;font-weight:bold;")
             hl.addWidget(t_lbl)
             hl.addStretch()
             hr_lbl = QLabel("HR: --")
-            hr_lbl.setStyleSheet("color:#FFFF00;font-size:11px;")
+            hr_lbl.setStyleSheet("color:#FFFF00;font-size:11px;font-weight:bold;")
             hl.addWidget(hr_lbl)
             fl.addWidget(header_w)
-            
-            time_lbl = QLabel("19:18:22 (07-31)")
+
+            time_lbl = QLabel("--:--:--")
             time_lbl.setStyleSheet("color:#AAAAAA;font-size:10px;")
             fl.addWidget(time_lbl)
-            
-            # Using 3 mini canvases to simulate 3 channels in the thumbnail box
+
+            strips = []
             for _ in range(3):
-                strip = ECGStripCanvas(height=35)
+                strip = ECGStripCanvas(height=40)
                 strip.setStyleSheet("border:1px solid #444444;")
                 fl.addWidget(strip)
+                strips.append(strip)
                 self._thumb_frames.append(strip)
-                
+
+            self._tile_widgets[key] = {
+                "frame": frame,
+                "title": t_lbl,
+                "hr": hr_lbl,
+                "time": time_lbl,
+                "strips": strips,
+            }
+            frame.clicked.connect(self._select_focus_tile)
             thumb_grid.addWidget(frame, row, col)
-            
+
+        thumb_grid.setColumnStretch(0, 1)
+        thumb_grid.setColumnStretch(1, 1)
         center_layout.addLayout(thumb_grid)
-        center_layout.addStretch() # Keep boxes compact at the top
-        layout.addWidget(center, 3)
+        center_layout.addStretch()
+        layout.addWidget(center, 4)
 
         # --- RIGHT: Large Clinical Strip View (50% width) ---
         right = QWidget()
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(4)
-        
+        right_layout.setSpacing(6)
+
+        detail_frame = QFrame()
+        detail_frame.setStyleSheet(
+            f"QFrame{{background:{COL_BLACK};border:1px solid {COL_GREEN_DRK};border-radius:8px;}}"
+        )
+        df_layout = QGridLayout(detail_frame)
+        df_layout.setContentsMargins(10, 8, 10, 8)
+        df_layout.setHorizontalSpacing(10)
+        df_layout.setVerticalSpacing(4)
+        self._detail_title = QLabel("Select a heart-rate tile")
+        self._detail_title.setStyleSheet(
+            f"color:{COL_YELLOW};font-size:14px;font-weight:bold;border:none;"
+        )
+        self._detail_value = QLabel("-- bpm")
+        self._detail_value.setStyleSheet(
+            f"color:{COL_GREEN};font-size:26px;font-weight:bold;border:none;"
+        )
+        self._detail_time = QLabel("—")
+        self._detail_time.setStyleSheet(
+            f"color:{COL_TIMESTAMP};font-size:11px;font-weight:bold;border:none;"
+        )
+        self._detail_note = QLabel("Click any tile to expand the matching strip view here.")
+        self._detail_note.setStyleSheet(
+            f"color:{COL_WHITE};font-size:11px;border:none;"
+        )
+        self._detail_note.setWordWrap(True)
+        df_layout.addWidget(self._detail_title, 0, 0, 1, 2)
+        df_layout.addWidget(self._detail_value, 1, 0, 1, 1)
+        df_layout.addWidget(self._detail_time, 1, 1, 1, 1, Qt.AlignRight | Qt.AlignVCenter)
+        df_layout.addWidget(self._detail_note, 2, 0, 1, 2)
+        right_layout.addWidget(detail_frame, 0)
+
         main_frame = QFrame()
         main_frame.setStyleSheet(f"QFrame{{background:{COL_BLACK};border:1px solid #888888;border-radius:4px;}}")
         ml = QVBoxLayout(main_frame)
         ml.setContentsMargins(8, 8, 8, 8)
-        
-        header_lbl = QLabel("Detailed View  -  N N N N N N  -  19:18:22")
-        header_lbl.setStyleSheet("color:#FFFF00;font-size:12px;font-weight:bold;border:none;")
-        ml.addWidget(header_lbl)
-        
+
+        self._detail_header_lbl = QLabel("Detailed View")
+        self._detail_header_lbl.setStyleSheet("color:#FFFF00;font-size:12px;font-weight:bold;border:none;")
+        ml.addWidget(self._detail_header_lbl)
+
         self._main_strip_1 = ECGStripCanvas(height=110)
         self._main_strip_2 = ECGStripCanvas(height=110)
         self._main_strip_3 = ECGStripCanvas(height=110)
-        
+
         for name, strip in [("CH1", self._main_strip_1), ("CH2", self._main_strip_2), ("CH3", self._main_strip_3)]:
             lbl = QLabel(name)
             lbl.setStyleSheet(f"color:{COL_GREEN};border:none;font-weight:bold;")
             ml.addWidget(lbl)
             ml.addWidget(strip)
-            
+
         ml.addStretch()
         right_layout.addWidget(main_frame, 1)
 
@@ -3804,13 +3910,142 @@ class HolterEditStripsPanel(QWidget):
         right_layout.addWidget(self._mini)
         layout.addWidget(right, 5)
 
-    def load_events(self, events: list, summary: dict):
+    def _format_bpm(self, value: float) -> str:
+        if value and value > 0:
+            return f"{float(value):.0f} bpm"
+        return "-- bpm"
+
+    def _build_focus_cards(self):
+        summary = self._summary or {}
+        focus = derive_hr_focus_summary(self._metrics_list or [])
+
+        def _metric_value(*keys, default=0.0):
+            for key in keys:
+                for source in (summary, focus):
+                    if source.get(key) is not None:
+                        try:
+                            value = float(source.get(key) or 0.0)
+                            if value > 0:
+                                return value
+                        except Exception:
+                            continue
+            return float(default)
+
+        def _metric_time(*keys):
+            for key in keys:
+                for source in (summary, focus):
+                    val = source.get(f"{key}_time")
+                    if val:
+                        return str(val)
+            return ""
+
+        def _metric_timestamp(*keys):
+            for key in keys:
+                for source in (summary, focus):
+                    val = source.get(f"{key}_timestamp")
+                    if val is not None:
+                        try:
+                            ts = float(val or 0.0)
+                            if ts > 0:
+                                return ts
+                        except Exception:
+                            continue
+            return 0.0
+
+        self._focus_cards = {
+            "max_hr": {
+                "title": "Maximum Heart Rate",
+                "value": _metric_value("max_hr"),
+                "time": _metric_time("max_hr"),
+                "timestamp": _metric_timestamp("max_hr"),
+                "note": "Highest overall heart rate found in the recording.",
+            },
+            "min_hr": {
+                "title": "Minimum Heart Rate",
+                "value": _metric_value("min_hr"),
+                "time": _metric_time("min_hr"),
+                "timestamp": _metric_timestamp("min_hr"),
+                "note": "Lowest overall heart rate found in the recording.",
+            },
+            "smax_hr": {
+                "title": "Sinus Max HR",
+                "value": _metric_value("sinus_max_hr", "max_hr"),
+                "time": _metric_time("sinus_max_hr", "max_hr"),
+                "timestamp": _metric_timestamp("sinus_max_hr", "max_hr"),
+                "note": "Highest heart rate from sinus-like beats.",
+            },
+            "smin_hr": {
+                "title": "Sinus Min HR",
+                "value": _metric_value("sinus_min_hr", "min_hr"),
+                "time": _metric_time("sinus_min_hr", "min_hr"),
+                "timestamp": _metric_timestamp("sinus_min_hr", "min_hr"),
+                "note": "Lowest heart rate from sinus-like beats.",
+            },
+        }
+
+    def _refresh_focus_tiles(self):
+        for key, widget in self._tile_widgets.items():
+            card = self._focus_cards.get(key, {})
+            widget["hr"].setText(f"HR: {self._format_bpm(card.get('value', 0.0))}")
+            widget["time"].setText(card.get("time") or "—")
+            widget["frame"].setStyleSheet(
+                self._tile_style_active if key == self._selected_focus_key else self._tile_style_normal
+            )
+
+    def _update_detail_panel(self, key: str):
+        card = self._focus_cards.get(key) or self._focus_cards.get("max_hr") or {}
+        title = card.get("title", "Heart Rate Detail")
+        value = card.get("value", 0.0)
+        time_str = card.get("time") or "—"
+        note = card.get("note", "")
+        self._detail_title.setText(title)
+        self._detail_value.setText(self._format_bpm(value))
+        self._detail_time.setText(time_str)
+        self._detail_note.setText(note or "Click a tile to expand the matching strip view here.")
+        self._detail_header_lbl.setText(f"Detailed View  -  {title}  -  {time_str}")
+
+    def _select_focus_tile(self, tile_key: str, emit_seek: bool = True):
+        if tile_key not in self._focus_cards:
+            return
+        self._selected_focus_key = tile_key
+        self._refresh_focus_tiles()
+        self._update_detail_panel(tile_key)
+        if emit_seek:
+            timestamp = float(self._focus_cards.get(tile_key, {}).get("timestamp", 0.0) or 0.0)
+            if timestamp > 0:
+                self.seek_requested.emit(timestamp)
+
+    def load_events(self, events: list, summary: dict, metrics_list: Optional[list] = None):
+        self._events = events
+        self._summary = dict(summary or {})
+        self._metrics_list = list(metrics_list or [])
+        self._build_focus_cards()
         self._ev_table.setRowCount(len(events))
         for i, ev in enumerate(events):
             for j, val in enumerate([ev['label'], _sec_to_hms(ev['timestamp']), "3", "7s"]):
                 item = QTableWidgetItem(val)
                 item.setForeground(QColor(COL_WHITE))
                 self._ev_table.setItem(i, j, item)
+        if self._selected_focus_key not in self._focus_cards:
+            self._selected_focus_key = "max_hr"
+        self._refresh_focus_tiles()
+        self._update_detail_panel(self._selected_focus_key)
+        s = self._summary
+        max_card = self._focus_cards.get("max_hr", {})
+        min_card = self._focus_cards.get("min_hr", {})
+        smax_card = self._focus_cards.get("smax_hr", {})
+        smin_card = self._focus_cards.get("smin_hr", {})
+        for key, fmt in [("hr",f"{s.get('avg_hr',0):.0f} bpm"),
+                          ("max_hr",self._format_bpm(float(max_card.get('value', s.get('max_hr',0)) or 0.0))),
+                          ("min_hr",self._format_bpm(float(min_card.get('value', s.get('min_hr',0)) or 0.0))),
+                          ("smax_hr",self._format_bpm(float(smax_card.get('value', s.get('sinus_max_hr', s.get('max_hr',0))) or 0.0))),
+                          ("smin_hr",self._format_bpm(float(smin_card.get('value', s.get('sinus_min_hr', s.get('min_hr',0))) or 0.0))),
+                          ("brady",str(s.get('brady_beats',0))),
+                          ("user_ev","1"),("event","1"),
+                          ("rr_int",f"{s.get('longest_rr_ms',0):.0f} ms"),
+                          ("atrial_ecto","1")]:
+            if key in self._stat_labels:
+                self._stat_labels[key].setText(fmt)
 
     def set_replay_frame(self, data, metrics_dict=None, current_sec=0.0):
         if data is None or data.shape[0] < 1: return
@@ -4013,12 +4248,23 @@ class HolterMainWindow(QDialog):
                 beat_class_totals[cls] = beat_class_totals.get(cls, 0) + int(count or 0)
             template_counts.append(int(m.get('template_count', 0) or 0))
         all_rr = [m.get('longest_rr', 0) for m in ml]
+        focus = derive_hr_focus_summary(ml)
         return {
             'duration_sec': _metrics_duration_sec(ml),
             'total_beats': sum(beat_counts),
             'avg_hr': float(np.mean(hr_vals)) if hr_vals else 0.0,
             'max_hr': float(np.max(hr_vals)) if hr_vals else 0.0,
             'min_hr': float(np.min(hr_vals)) if hr_vals else 0.0,
+            'max_hr_time': focus.get('max_hr_time', ''),
+            'max_hr_timestamp': focus.get('max_hr_timestamp', 0.0),
+            'min_hr_time': focus.get('min_hr_time', ''),
+            'min_hr_timestamp': focus.get('min_hr_timestamp', 0.0),
+            'sinus_max_hr': focus.get('sinus_max_hr', float(np.max(hr_vals)) if hr_vals else 0.0),
+            'sinus_min_hr': focus.get('sinus_min_hr', float(np.min(hr_vals)) if hr_vals else 0.0),
+            'sinus_max_hr_time': focus.get('sinus_max_hr_time', ''),
+            'sinus_max_hr_timestamp': focus.get('sinus_max_hr_timestamp', 0.0),
+            'sinus_min_hr_time': focus.get('sinus_min_hr_time', ''),
+            'sinus_min_hr_timestamp': focus.get('sinus_min_hr_timestamp', 0.0),
             'sdnn': float(np.mean(rr_stds)) if rr_stds else 0.0,
             'rmssd': float(np.mean(rmssds)) if rmssds else 0.0,
             'pnn50': float(np.mean(pnn50s)) if pnn50s else 0.0,
@@ -4361,7 +4607,8 @@ class HolterMainWindow(QDialog):
 
         # Edit Strips
         self._edit_strips_panel = HolterEditStripsPanel()
-        self._edit_strips_panel.load_events(events, self._summary)
+        self._edit_strips_panel.seek_requested.connect(self._on_seek_requested)
+        self._edit_strips_panel.load_events(events, self._summary, self._metrics_list)
         self._tabs.addTab(self._edit_strips_panel, "EDIT STRIPS")
 
         # Report Tendency
@@ -4538,7 +4785,7 @@ class HolterMainWindow(QDialog):
         if hasattr(self, '_edit_event_panel'):
             self._edit_event_panel.load_events(events, self._summary)
         if hasattr(self, '_edit_strips_panel'):
-            self._edit_strips_panel.load_events(events, self._summary)
+            self._edit_strips_panel.load_events(events, self._summary, self._metrics_list)
         if hasattr(self, '_wave_panel'):
             self._wave_panel.set_live_source(self._live_source)
         if hasattr(self, '_record_mgmt_panel'):
