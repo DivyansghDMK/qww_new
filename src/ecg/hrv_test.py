@@ -48,7 +48,7 @@ except ImportError:
 from utils.settings_manager import SettingsManager
 from utils.crash_logger import get_crash_logger
 from utils.patient_profile import resolve_patient_profile
-from ecg.ecg_filters import apply_ac_filter, apply_emg_filter
+from ecg.ecg_filters import apply_ac_filter, apply_emg_filter, apply_dft_filter
 from ecg.ui import display_updates as shared_display_updates
 from dashboard.history_window import append_history_entry
 
@@ -182,6 +182,7 @@ class HRVTestWindow(QWidget):
     def init_ui(self):
         """Initialize the user interface"""
         import pyqtgraph as pg
+        pg.setConfigOptions(antialias=True)
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
         layout.setContentsMargins(20, 20, 20, 20)
@@ -336,6 +337,8 @@ class HRVTestWindow(QWidget):
         self.plot_widget = pg.PlotWidget()
         self.plot_widget.setBackground('black')
         self.plot_widget.setMenuEnabled(False)
+        self.plot_widget.setClipToView(True)
+        self.plot_widget.setDownsampling(auto=True, mode='peak')
 
         # Disable manual zoom/pan (amplitude lock)
         self.plot_widget.setMouseEnabled(x=False, y=False)
@@ -355,7 +358,7 @@ class HRVTestWindow(QWidget):
         self.plot_widget.hideAxis('bottom')
         
         # Plot curve
-        self.plot_curve = self.plot_widget.plot([], [], pen=pg.mkPen(color='#00FF00', width=1.2))
+        self.plot_curve = self.plot_widget.plot([], [], pen=pg.mkPen(color='#00FF00', width=1.7))
         
         plot_layout.addWidget(self.plot_widget)
         layout.addWidget(plot_frame, stretch=1)
@@ -843,7 +846,8 @@ class HRVTestWindow(QWidget):
             if len(buffer_data) > 100:
                 # Get filter settings from SettingsManager
                 ac_val = self.settings_manager.get_setting("filter_ac", "50")
-                emg_val = self.settings_manager.get_setting("filter_emg", "35")
+                emg_val = self.settings_manager.get_setting("filter_emg", "150")
+                dft_val = self.settings_manager.get_setting("filter_dft", "0.5")
 
                 # Pad data to reduce transient response at the edges.
                 pad_len = 50
@@ -855,11 +859,14 @@ class HRVTestWindow(QWidget):
                     padded_data = buffer_data
                     pad_len = 0
 
+                if emg_val != "Off" and emg_val != "off":
+                    padded_data = apply_emg_filter(padded_data, fs, emg_val)
+
                 if ac_val != "Off" and ac_val != "off":
                     padded_data = apply_ac_filter(padded_data, fs, ac_val)
 
-                if emg_val != "Off" and emg_val != "off":
-                    padded_data = apply_emg_filter(padded_data, fs, emg_val)
+                if dft_val and str(dft_val).strip().lower() not in ("off", "0", "none", ""):
+                    padded_data = apply_dft_filter(padded_data, fs, dft_val)
 
                 if pad_len > 0:
                     buffer_data = padded_data[pad_len:-pad_len]
@@ -868,26 +875,25 @@ class HRVTestWindow(QWidget):
 
             if len(buffer_data) > 5:
                 # Gentle smoothing for HRV display so the trace looks continuous.
-                buffer_data = gaussian_filter1d(buffer_data, sigma=1.5)
+                buffer_data = gaussian_filter1d(buffer_data, sigma=0.8)
 
             if len(buffer_data) > 0:
-                # Keep the trace visually centered around 2048 so it does not float.
-                display_values = 2048.0 + (buffer_data - np.median(buffer_data))
-                display_values = np.clip(display_values, 0, 4096)
+                # Keep the display in the raw 0-4096 range used by the hardware.
+                display_values = np.clip(buffer_data, 0, 4096)
 
                 # Resample to a fixed density for smooth rendering.
-                display_len = min(2000, max(250, int(window_seconds * 200)))
+                display_len = min(2400, max(500, int(window_seconds * 250)))
                 if len(display_values) >= 2:
                     x_src = np.linspace(0.0, 1.0, len(display_values))
                     x_dst = np.linspace(0.0, 1.0, display_len)
                     display_values = np.interp(x_dst, x_src, display_values)
 
-                display_times = np.linspace(-window_seconds, 0.0, len(display_values))
+                display_times = np.linspace(0.0, window_seconds, len(display_values))
 
-                self.plot_curve.setData(display_times, display_values)
+                self.plot_curve.setData(display_times, display_values, connect='finite')
 
                 # Fixed plot ranges avoid the visible jump caused by repeated auto-scaling.
-                self.plot_widget.setXRange(-window_seconds, 0.0, padding=0)
+                self.plot_widget.setXRange(0.0, window_seconds, padding=0)
                 self.plot_widget.setYRange(0, 4096, padding=0)
         
         except Exception as e:
