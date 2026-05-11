@@ -49,6 +49,7 @@ from utils.settings_manager import SettingsManager
 from utils.crash_logger import get_crash_logger
 from utils.patient_profile import resolve_patient_profile
 from ecg.ecg_filters import apply_ac_filter, apply_emg_filter, apply_dft_filter
+from ecg.utils.helpers import get_display_gain
 from ecg.ui import display_updates as shared_display_updates
 from dashboard.history_window import append_history_entry
 
@@ -358,7 +359,7 @@ class HRVTestWindow(QWidget):
         self.plot_widget.hideAxis('bottom')
         
         # Plot curve
-        self.plot_curve = self.plot_widget.plot([], [], pen=pg.mkPen(color='#00FF00', width=1.7))
+        self.plot_curve = self.plot_widget.plot([], [], pen=pg.mkPen(color='#00FF00', width=0.7))
         
         plot_layout.addWidget(self.plot_widget)
         layout.addWidget(plot_frame, stretch=1)
@@ -878,8 +879,21 @@ class HRVTestWindow(QWidget):
                 buffer_data = gaussian_filter1d(buffer_data, sigma=0.8)
 
             if len(buffer_data) > 0:
-                # Keep the display in the raw 0-4096 range used by the hardware.
-                display_values = np.clip(buffer_data, 0, 4096)
+                # Center the waveform in the middle of the plot so it stays visually stable
+                # across devices with different ADC offsets.
+                if not hasattr(self, "_hrv_display_anchor"):
+                    self._hrv_display_anchor = float(np.nanmedian(buffer_data)) if len(buffer_data) else 2048.0
+                    self._hrv_display_anchor_alpha = 0.02
+
+                baseline_estimate = float(np.nanmedian(buffer_data)) if len(buffer_data) else 2048.0
+                self._hrv_display_anchor = (
+                    (1.0 - self._hrv_display_anchor_alpha) * self._hrv_display_anchor
+                    + self._hrv_display_anchor_alpha * baseline_estimate
+                )
+
+                gain_factor = get_display_gain(self.settings_manager.get_wave_gain())
+                centered = (buffer_data - self._hrv_display_anchor) * gain_factor
+                display_values = np.clip(2048.0 + centered, 0, 4096)
 
                 # Resample to a fixed density for smooth rendering.
                 display_len = min(2400, max(500, int(window_seconds * 250)))
