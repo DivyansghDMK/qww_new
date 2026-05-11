@@ -1,4 +1,5 @@
 import os
+from utils.app_paths import data_file
 import json
 import base64
 import hashlib
@@ -32,7 +33,7 @@ def get_asset_path(asset_name):
     return os.path.join(script_dir, "..", "assets", asset_name)
 
 
-USER_DATA_FILE = os.path.join(os.path.dirname(__file__), '../../users.json')
+USER_DATA_FILE = str(data_file("users.json"))
 
 
 class SignIn:

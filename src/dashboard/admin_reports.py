@@ -3,6 +3,7 @@ import json
 import sys
 from datetime import datetime
 from pathlib import Path
+from utils.app_paths import data_file
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QTableWidget, QTableWidgetItem, QMessageBox, QFileDialog, QFrame,
@@ -1127,6 +1128,7 @@ class AdminReportsDialog(QDialog):
             
             # Find users.json in multiple possible locations
             possible_paths = [
+                str(data_file("users.json")),
                 os.path.join(os.path.dirname(os.path.dirname(__file__)), '..', 'users.json'),
                 os.path.join(os.path.dirname(__file__), '..', '..', 'users.json'),
                 'users.json',
@@ -1418,8 +1420,7 @@ Are you absolutely sure you want to delete this user?
             # Step 1: Delete from local users.json
             try:
                 import json
-                users_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), '..', 'users.json')
-                users_file = os.path.abspath(users_file)
+                users_file = str(data_file("users.json"))
                 
                 if os.path.exists(users_file):
                     with open(users_file, 'r') as f:

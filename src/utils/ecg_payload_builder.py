@@ -214,7 +214,7 @@ def _load_signup_details(signup_details: Optional[Dict], patient: Dict, data: Di
 
     try:
         project_root = Path(__file__).resolve().parents[2]
-        users_path = project_root / "users.json"
+        users_path = data_file("users.json")
         if not users_path.exists():
             return {}
 
@@ -1113,3 +1113,4 @@ def dispatch_hyperkalemia_report(
         send_ecg_payload(payload, async_mode=True)
         send_pdf_report_to_backend(pdf_path, payload, async_mode=True)
     return fpath
+from utils.app_paths import data_file

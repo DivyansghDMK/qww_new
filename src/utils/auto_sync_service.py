@@ -26,7 +26,7 @@ class AutoSyncService:
         # Directories to monitor
         self.project_root = Path(__file__).parent.parent.parent
         self.reports_dir = self.project_root / "reports"
-        self.users_file = self.project_root / "users.json"
+        self.users_file = data_file("users.json")
         
         # Track last modified times
         self.file_timestamps: Dict[str, float] = {}
@@ -327,3 +327,4 @@ if __name__ == "__main__":
     finally:
         stop_auto_sync()
 
+from utils.app_paths import data_file
