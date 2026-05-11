@@ -18,6 +18,7 @@ class TransparentDrawing(Drawing):
         canvas.restoreState()
 from reportlab.pdfbase.pdfmetrics import stringWidth
 import os
+from utils.app_paths import data_file
 import sys
 import json
 import matplotlib.pyplot as plt  
@@ -893,7 +894,7 @@ def get_dashboard_conclusions_from_image(dashboard_instance):
     # **NEW: Try to load from JSON file first (DYNAMIC)**
     try:
         base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-        conclusions_file = os.path.join(base_dir, 'last_conclusions.json')
+        conclusions_file = str(data_file("last_conclusions.json"))
         
         print(f" Looking for conclusions at: {conclusions_file}")
         
@@ -1172,7 +1173,7 @@ def _load_signup_details_for_username(username):
         return {}
     try:
         base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-        users_path = os.path.join(base_dir, 'users.json')
+        users_path = str(data_file("users.json"))
         if not os.path.exists(users_path):
             return {}
         with open(users_path, 'r', encoding='utf-8') as f:

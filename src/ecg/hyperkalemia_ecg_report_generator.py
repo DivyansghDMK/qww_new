@@ -9,6 +9,7 @@ from reportlab.graphics.shapes import Drawing, Line, Rect, Path, String
 from reportlab.lib.units import mm
 from reportlab.pdfbase.pdfmetrics import stringWidth
 import os
+from utils.app_paths import data_file
 import sys
 import json
 import matplotlib.pyplot as plt  
@@ -803,7 +804,7 @@ def get_dashboard_conclusions_from_image(dashboard_instance):
     # **NEW: Try to load from JSON file first (DYNAMIC)**
     try:
         base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-        conclusions_file = os.path.join(base_dir, 'last_conclusions.json')
+        conclusions_file = str(data_file("last_conclusions.json"))
         
         print(f" Looking for conclusions at: {conclusions_file}")
         

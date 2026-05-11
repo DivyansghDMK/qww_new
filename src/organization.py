@@ -6,6 +6,7 @@ for the ECG Monitor application.
 """
 
 import os
+from utils.app_paths import data_file
 import json
 from datetime import datetime
 from PyQt5.QtWidgets import (
@@ -201,7 +202,7 @@ def save_user_to_main_users(user_data, username):
     """Save user to main users.json file for normal login"""
     try:
         # Save to the root users.json file (where sign_in.py looks for it)
-        users_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "users.json")
+        users_file = str(data_file("users.json"))
         
         # Load existing users
         users = {}
@@ -225,7 +226,7 @@ def save_user_to_main_users(user_data, username):
 def load_main_users():
     """Load the root users.json (shared login store)."""
     try:
-        users_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "users.json")
+        users_file = str(data_file("users.json"))
         if os.path.exists(users_file):
             with open(users_file, "r") as f:
                 return json.load(f)
@@ -2419,7 +2420,7 @@ class DashboardWindow(QDialog):
             if old_username in main_users:
                 main_users.pop(old_username, None)
             main_users[new_username] = updated_user
-            root_users_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "users.json")
+            root_users_file = str(data_file("users.json"))
             with open(root_users_file, "w") as f:
                 json.dump(main_users, f, indent=2)
 
@@ -2534,7 +2535,7 @@ class DashboardWindow(QDialog):
                         json.dump(clinical_users, f, indent=2)
                     removed_any = True
 
-            root_users_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "users.json")
+            root_users_file = str(data_file("users.json"))
             if os.path.exists(root_users_file):
                 with open(root_users_file, "r") as f:
                     all_users = json.load(f)

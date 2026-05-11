@@ -2817,6 +2817,7 @@ class ExpandedLeadView(QDialog):
         try:
             import json
             import os
+            from utils.app_paths import data_file
             from datetime import datetime
 
             findings = []
@@ -2849,7 +2850,7 @@ class ExpandedLeadView(QDialog):
                 return
 
             base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-            conclusions_file = os.path.join(base_dir, "last_conclusions.json")
+            conclusions_file = str(data_file("last_conclusions.json"))
             with open(conclusions_file, "w", encoding="utf-8") as f:
                 json.dump(
                     {

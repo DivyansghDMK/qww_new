@@ -3,10 +3,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from utils.app_paths import data_file
 
 SRC_ROOT = Path(__file__).resolve().parent.parent
 PROJECT_ROOT = SRC_ROOT.parent
-USERS_FILE = SRC_ROOT / "users.json"
+USERS_FILE = data_file("users.json")
 ALL_PATIENTS_FILE = PROJECT_ROOT / "all_patients.json"
 
 

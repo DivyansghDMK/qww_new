@@ -25,6 +25,7 @@ from matplotlib.figure import Figure
 from matplotlib.animation import FuncAnimation
 import math
 import os
+from utils.app_paths import data_file
 import json
 import matplotlib.image as mpimg
 import time
@@ -2940,7 +2941,9 @@ class Dashboard(QWidget):
         except Exception:
             return False
 
-    def _dashboard_apply_realtime_dft_highpass(self, signal: np.ndarray, fs: float, cutoff_hz: float) -> np.ndarray:
+    def _dashboard_apply_realtime_dft_highpass(
+        self, signal: np.ndarray, fs: float, cutoff_hz: float, stage: int = 0
+    ) -> np.ndarray:
         """
         Streaming-safe high-pass for the dashboard Lead II mini-chart.
 
@@ -2961,7 +2964,9 @@ class Dashboard(QWidget):
             if not hasattr(self, "_dashboard_dft_hp_state"):
                 self._dashboard_dft_hp_state = {}
 
-            state_key = (float(fs), float(cutoff_hz))
+            # `stage` allows cascading a second identical high-pass stage (independent state)
+            # for stronger wobble suppression when respiration/motion drift dominates.
+            state_key = (int(stage), float(fs), float(cutoff_hz))
             state = self._dashboard_dft_hp_state.get(state_key)
 
             from scipy.signal import butter, sosfilt, sosfilt_zi
@@ -3102,8 +3107,15 @@ class Dashboard(QWidget):
                                 if dft_setting and dft_setting not in ("off", ""):
                                     if str(dft_setting).strip() == "0.5":
                                         filtered_slice = self._dashboard_apply_realtime_dft_highpass(
-                                            filtered_slice, float(actual_sampling_rate), 0.5
+                                            filtered_slice, float(actual_sampling_rate), 0.5, stage=0
                                         )
+                                        try:
+                                            if self._dashboard_has_respiration_baseline_drift(filtered_slice, float(actual_sampling_rate)):
+                                                filtered_slice = self._dashboard_apply_realtime_dft_highpass(
+                                                    filtered_slice, float(actual_sampling_rate), 0.5, stage=1
+                                                )
+                                        except Exception:
+                                            pass
                                     else:
                                         filtered_slice = apply_dft_filter(filtered_slice, float(actual_sampling_rate), dft_setting)
                             except Exception:
@@ -3642,9 +3654,7 @@ class Dashboard(QWidget):
             frozen_conclusions = _normalize_report_conclusions(frozen_conclusions)
             if frozen_conclusions:
                 import json
-                conclusions_file = os.path.abspath(
-                    os.path.join(os.path.dirname(__file__), "..", "..", "last_conclusions.json")
-                )
+                conclusions_file = str(data_file("last_conclusions.json"))
                 with open(conclusions_file, "w", encoding="utf-8") as f:
                     json.dump(
                         {
@@ -4390,8 +4400,7 @@ class Dashboard(QWidget):
                         "recommendations": clean_recommendations
                     }
 
-                    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-                    conclusions_file = os.path.join(base_dir, 'last_conclusions.json')
+                    conclusions_file = str(data_file("last_conclusions.json"))
 
                     with open(conclusions_file, 'w') as f:
                         json.dump(conclusions_data, f, indent=2)

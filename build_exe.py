@@ -11,6 +11,7 @@ Usage:
     python build_exe.py --onefile        # optional, less stable for this app
     python build_exe.py --console        # debug startup crashes
     python build_exe.py --name ECGMonitor
+    python build_exe.py --onefile --runtime-tmpdir "C:\\Temp\\ECGMonitor"
 """
 
 from __future__ import annotations
@@ -62,6 +63,62 @@ def _stage_json_placeholder(staging_dir: Path, dst_name: str) -> Path:
     return target
 
 
+_DEFAULT_DIST_LICENSE_SERVER_URL = (
+    "https://m4qoae4d8e.execute-api.us-east-1.amazonaws.com/prod/api/v1"
+)
+
+
+def _stage_env_for_distribution(src: Path, staging_dir: Path) -> Path | None:
+    """
+    Stage a .env file for distribution.
+
+    Why:
+    - The repo's `.env` commonly points LICENSE_SERVER_URL to localhost for dev.
+    - Bundling that into the EXE makes activation fail on other PCs (WinError 10061).
+
+    Behavior:
+    - Copy `.env` into staging, but rewrite LICENSE_SERVER_URL if it points to localhost/127.*.
+    - You can override the distributed URL via BUILD_LICENSE_SERVER_URL at build time.
+    """
+    if not src.exists():
+        return None
+
+    staging_dir.mkdir(parents=True, exist_ok=True)
+    target = staging_dir / src.name
+
+    try:
+        raw = src.read_text(encoding="utf-8", errors="replace").splitlines()
+    except Exception:
+        return _stage_runtime_file(src, staging_dir)
+
+    dist_url = os.getenv("BUILD_LICENSE_SERVER_URL", "").strip() or _DEFAULT_DIST_LICENSE_SERVER_URL
+
+    out_lines: list[str] = []
+    replaced = False
+    for line in raw:
+        stripped = line.strip()
+        if stripped.startswith("LICENSE_SERVER_URL="):
+            value = stripped.split("=", 1)[1].strip()
+            lower = value.lower()
+            if lower.startswith("http://127.0.0.1") or lower.startswith("http://localhost"):
+                out_lines.append(
+                    f"LICENSE_SERVER_URL={dist_url}"
+                )
+                replaced = True
+                continue
+        out_lines.append(line)
+
+    if not replaced:
+        # Ensure the key exists for consistent behavior in frozen apps.
+        out_lines.append(f"\nLICENSE_SERVER_URL={dist_url}")
+
+    try:
+        target.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
+    except Exception:
+        return _stage_runtime_file(src, staging_dir)
+    return target
+
+
 def _add_data_args(project_root: Path, build_root: Path) -> list[str]:
     sep = _data_sep()
     staging_dir = build_root / "_staging"
@@ -81,7 +138,10 @@ def _add_data_args(project_root: Path, build_root: Path) -> list[str]:
         "ecg_auth_session.json",
     ]:
         file_path = project_root / filename
-        staged = _stage_runtime_file(file_path, staging_dir)
+        if filename == ".env":
+            staged = _stage_env_for_distribution(file_path, staging_dir)
+        else:
+            staged = _stage_runtime_file(file_path, staging_dir)
         if staged is None and filename.endswith(".json"):
             staged = _stage_json_placeholder(staging_dir, filename)
         if staged is not None:
@@ -191,11 +251,43 @@ def main() -> int:
     parser.add_argument("--name", default="ECGMonitor", help="Output application name")
     parser.add_argument("--onefile", action="store_true", help="Build as onefile (not recommended)")
     parser.add_argument("--console", action="store_true", help="Build with console for debugging")
-    parser.add_argument("--admin", action="store_true", help="Request admin rights in the packaged app")
+    parser.add_argument(
+        "--admin",
+        action="store_true",
+        help="Request UAC admin privileges on launch (adds PyInstaller --uac-admin; Windows only).",
+    )
+    parser.add_argument(
+        "--runtime-tmpdir",
+        default=None,
+        help=(
+            "Where PyInstaller onefile extracts runtime files. "
+            "Example (Windows): TEMP\\ECGMonitor (use your TEMP environment variable when running the command). "
+            "If omitted, PyInstaller default is used."
+        ),
+    )
     ns = parser.parse_args()
 
     project_root = Path(__file__).resolve().parent
     args = build_args(project_root, ns.name, ns.onefile, ns.console)
+
+    # Only relevant for onefile builds. If not set, PyInstaller will use its default temp location.
+    if ns.onefile and ns.runtime_tmpdir:
+        runtime_tmpdir_raw = ns.runtime_tmpdir.strip()
+        # IMPORTANT:
+        # - PyInstaller embeds --runtime-tmpdir into the executable at build time.
+        # - Using %TEMP% / $env:TEMP would get expanded on the build machine and break on other PCs.
+        if "%" in runtime_tmpdir_raw or "$env:" in runtime_tmpdir_raw or "$" in runtime_tmpdir_raw:
+            raise SystemExit(
+                "ERROR: --runtime-tmpdir must be an absolute path and must not contain environment variables "
+                "(e.g. %TEMP% or $env:TEMP). Omit --runtime-tmpdir to use the per-user temp directory on each PC."
+            )
+        runtime_tmpdir = Path(runtime_tmpdir_raw)
+        if not runtime_tmpdir.is_absolute():
+            raise SystemExit(
+                "ERROR: --runtime-tmpdir must be an absolute path (e.g. C:\\Temp\\ECGMonitor). "
+                "Omit --runtime-tmpdir to use the per-user temp directory on each PC."
+            )
+        args.insert(5, f"--runtime-tmpdir={runtime_tmpdir}")
 
     print("=" * 70)
     print("Building ECG Monitor executable")

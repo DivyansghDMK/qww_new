@@ -13,6 +13,7 @@ os.environ['QT_AUTO_SCREEN_SCALE_FACTOR'] = '0'
 
 import json
 from dotenv import load_dotenv
+from utils.app_paths import data_file
 
 def _prepare_runtime_workspace() -> str:
     """
@@ -239,7 +240,8 @@ def get_ecg_modules():
 
 # Get configuration
 config = get_config()
-USER_DATA_FILE = resource_path("users.json")
+# Store runtime-created data files in a per-user writable directory for packaged builds.
+USER_DATA_FILE = str(data_file("users.json"))
 
 
 @log_function_call

@@ -1,4 +1,5 @@
 import os
+from utils.app_paths import data_file
 import sys
 import time
 import platform
@@ -6759,7 +6760,7 @@ class ECGTestPage(QWidget):
         try:
             import json as _jc
             base  = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-            cf    = os.path.join(base, 'last_conclusions.json')
+            cf = str(data_file("last_conclusions.json"))
             if os.path.exists(cf):
                 cd = _jc.load(open(cf))
                 conc_list = cd.get('findings', [])
@@ -7510,14 +7511,17 @@ class ECGTestPage(QWidget):
                                 dft_setting = None
                                 if hasattr(self, "settings_manager"):
                                     dft_setting = str(self.settings_manager.get_setting("filter_dft", "off")).strip()
-                                if (
-                                    dft_setting
-                                    and dft_setting not in ("off", "")
-                                    and self._has_respiration_baseline_drift(raw, float(sampling_rate))
-                                ):
+                                if dft_setting and dft_setting not in ("off", ""):
+                                    # Always apply 0.5 Hz in streaming-safe mode when selected.
+                                    # Gating on/off per frame can cause visible baseline "wobble" on real body signals.
                                     if str(dft_setting).strip() == "0.5":
-                                        raw = self._apply_realtime_dft_highpass(raw, float(sampling_rate), 0.5, idx)
-                                    else:
+                                        raw = self._apply_realtime_dft_highpass(raw, float(sampling_rate), 0.5, idx, stage=0)
+                                        try:
+                                            if self._has_respiration_baseline_drift(raw, float(sampling_rate)):
+                                                raw = self._apply_realtime_dft_highpass(raw, float(sampling_rate), 0.5, idx, stage=1)
+                                        except Exception:
+                                            pass
+                                    elif self._has_respiration_baseline_drift(raw, float(sampling_rate)):
                                         raw = apply_dft_filter(raw, float(sampling_rate), dft_setting)
                             except Exception:
                                 pass
@@ -8369,14 +8373,15 @@ class ECGTestPage(QWidget):
                                 dft_setting = None
                                 if hasattr(self, "settings_manager"):
                                     dft_setting = str(self.settings_manager.get_setting("filter_dft", "off")).strip()
-                                if (
-                                    dft_setting
-                                    and dft_setting not in ("off", "")
-                                    and self._has_respiration_baseline_drift(raw, float(sampling_rate))
-                                ):
+                                if dft_setting and dft_setting not in ("off", ""):
                                     if str(dft_setting).strip() == "0.5":
-                                        raw = self._apply_realtime_dft_highpass(raw, float(sampling_rate), 0.5, lead_index)
-                                    else:
+                                        raw = self._apply_realtime_dft_highpass(raw, float(sampling_rate), 0.5, lead_index, stage=0)
+                                        try:
+                                            if self._has_respiration_baseline_drift(raw, float(sampling_rate)):
+                                                raw = self._apply_realtime_dft_highpass(raw, float(sampling_rate), 0.5, lead_index, stage=1)
+                                        except Exception:
+                                            pass
+                                    elif self._has_respiration_baseline_drift(raw, float(sampling_rate)):
                                         raw = apply_dft_filter(raw, float(sampling_rate), dft_setting)
                             except Exception:
                                 pass
@@ -8814,7 +8819,7 @@ class ECGTestPage(QWidget):
         except Exception:
             return False
 
-    def _apply_realtime_dft_highpass(self, signal: np.ndarray, fs: float, cutoff_hz: float, lead_index: int) -> np.ndarray:
+    def _apply_realtime_dft_highpass(self, signal: np.ndarray, fs: float, cutoff_hz: float, lead_index: int, stage: int = 0) -> np.ndarray:
         """
         Streaming-safe high-pass used for LIVE display only.
 
@@ -8838,7 +8843,7 @@ class ECGTestPage(QWidget):
                 self._realtime_dft_hp_state = {}
 
             # Reset state when the (fs, cutoff) configuration changes.
-            state_key = (int(lead_index), float(fs), float(cutoff_hz))
+            state_key = (int(lead_index), int(stage), float(fs), float(cutoff_hz))
             state = self._realtime_dft_hp_state.get(state_key)
 
             from scipy.signal import butter, sosfilt, sosfilt_zi
@@ -8939,15 +8944,17 @@ class ECGTestPage(QWidget):
                                         dft_setting = None
                                         if hasattr(self, "settings_manager"):
                                             dft_setting = str(self.settings_manager.get_setting("filter_dft", "off")).strip()
-                                        if (
-                                            dft_setting
-                                            and dft_setting not in ("off", "")
-                                            and self._has_respiration_baseline_drift(raw, float(fs))
-                                        ):
-                                            # Streaming-safe path at 0.5 Hz to avoid live "wobble" on sliding windows.
+                                        if dft_setting and dft_setting not in ("off", ""):
+                                            # Always apply 0.5 Hz in streaming-safe mode when selected.
+                                            # Per-frame gating can cause visible baseline wobble on body signals.
                                             if str(dft_setting).strip() == "0.5":
-                                                raw = self._apply_realtime_dft_highpass(raw, float(fs), 0.5, i)
-                                            else:
+                                                raw = self._apply_realtime_dft_highpass(raw, float(fs), 0.5, i, stage=0)
+                                                try:
+                                                    if self._has_respiration_baseline_drift(raw, float(fs)):
+                                                        raw = self._apply_realtime_dft_highpass(raw, float(fs), 0.5, i, stage=1)
+                                                except Exception:
+                                                    pass
+                                            elif self._has_respiration_baseline_drift(raw, float(fs)):
                                                 raw = apply_dft_filter(raw, float(fs), dft_setting)
                                             if hasattr(self, "_last_display_dft_applied") and i < len(self._last_display_dft_applied):
                                                 self._last_display_dft_applied[i] = True
@@ -9449,15 +9456,15 @@ class ECGTestPage(QWidget):
                                         dft_setting = None
                                         if hasattr(self, "settings_manager"):
                                             dft_setting = str(self.settings_manager.get_setting("filter_dft", "off")).strip()
-                                        if (
-                                            dft_setting
-                                            and dft_setting not in ("off", "")
-                                            and self._has_respiration_baseline_drift(filtered_slice, float(sampling_rate))
-                                        ):
-                                            # Streaming-safe path at 0.5 Hz to avoid live "wobble" on sliding windows.
+                                        if dft_setting and dft_setting not in ("off", ""):
                                             if str(dft_setting).strip() == "0.5":
-                                                filtered_slice = self._apply_realtime_dft_highpass(filtered_slice, float(sampling_rate), 0.5, i)
-                                            else:
+                                                filtered_slice = self._apply_realtime_dft_highpass(filtered_slice, float(sampling_rate), 0.5, i, stage=0)
+                                                try:
+                                                    if self._has_respiration_baseline_drift(filtered_slice, float(sampling_rate)):
+                                                        filtered_slice = self._apply_realtime_dft_highpass(filtered_slice, float(sampling_rate), 0.5, i, stage=1)
+                                                except Exception:
+                                                    pass
+                                            elif self._has_respiration_baseline_drift(filtered_slice, float(sampling_rate)):
                                                 filtered_slice = apply_dft_filter(filtered_slice, float(sampling_rate), dft_setting)
                                             if hasattr(self, "_last_display_dft_applied") and i < len(self._last_display_dft_applied):
                                                 self._last_display_dft_applied[i] = True
