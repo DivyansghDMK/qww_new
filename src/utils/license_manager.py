@@ -73,6 +73,7 @@ OFFLINE_GRACE_DAYS: int = 7
 # Local cache file location (writable on all platforms).
 _CACHE_DIR = Path(os.getenv("LOCALAPPDATA", Path.home())) / "Deckmount" / "ECGMonitor"
 _CACHE_FILE: Path = _CACHE_DIR / "license.cache"
+_DEVICE_ID_FILE: Path = _CACHE_DIR / "device.id"
 
 # Base-32 alphabet — no ambiguous chars (0, O, 1, I)
 _B32_ALPHA = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -81,45 +82,26 @@ _B32_ALPHA = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 # ── Hardware Fingerprint ───────────────────────────────────────────────────────
 
 def get_hardware_fingerprint() -> str:
-    """Return a stable SHA-256 fingerprint of this machine's hardware."""
-    parts: list[str] = []
-
-    # Primary MAC address (node)
+    """Return a stable installation fingerprint for this app instance."""
     try:
-        parts.append(f"mac:{uuid.getnode():012x}")
+        _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        if _DEVICE_ID_FILE.exists():
+            device_id = _DEVICE_ID_FILE.read_text(encoding="utf-8").strip()
+            if device_id:
+                return device_id
     except Exception:
         pass
 
-    # CPU / host identity
+    # Create the ID once and keep it local to this installation.
     try:
-        parts.append(f"cpu:{platform.processor()[:40]}")
-        parts.append(f"node:{platform.node()[:40]}")
-        parts.append(f"machine:{platform.machine()}")
-        parts.append(f"os:{platform.system()}-{platform.release()}")
+        seed = f"{uuid.uuid4().hex}:{platform.node()}:{os.getenv('USERNAME', '')}:{os.getenv('COMPUTERNAME', '')}"
+        device_id = hashlib.sha256(seed.encode("utf-8")).hexdigest()
+        _DEVICE_ID_FILE.write_text(device_id, encoding="utf-8")
+        return device_id
     except Exception:
-        pass
-
-    # OS-level machine ID (most stable identifier)
-    try:
-        if sys.platform == "win32":
-            import winreg  # type: ignore
-            with winreg.OpenKey(
-                winreg.HKEY_LOCAL_MACHINE,
-                r"SOFTWARE\Microsoft\Cryptography",
-            ) as k:
-                mid, _ = winreg.QueryValueEx(k, "MachineGuid")
-            parts.append(f"mid:{mid}")
-        else:
-            for mid_path in ("/etc/machine-id", "/var/lib/dbus/machine-id"):
-                p = Path(mid_path)
-                if p.exists():
-                    parts.append(f"mid:{p.read_text().strip()}")
-                    break
-    except Exception:
-        pass
-
-    raw = "|".join(parts)
-    return hashlib.sha256(raw.encode()).hexdigest()
+        # Last resort: derive something from the host so activation can still proceed.
+        fallback = f"{platform.node()}|{platform.system()}|{platform.release()}|{uuid.getnode():012x}"
+        return hashlib.sha256(fallback.encode("utf-8")).hexdigest()
 
 
 def get_machine_context() -> Dict[str, str]:
@@ -304,8 +286,16 @@ def remember_valid_license(
     which allows offline launches to trust the most recent successful check.
     """
     try:
-        # Keep only the plaintext key on disk; do not retain a JSON cache file.
-        _cache_clear()
+        payload: Dict[str, object] = {
+            "license_key": license_key.strip().upper().replace(" ", ""),
+            "hardware_fingerprint": fingerprint,
+            "last_online": int(time.time()),
+        }
+        if isinstance(result, dict):
+            for key in ("tier", "expires", "message", "source", "valid", "revoked"):
+                if key in result:
+                    payload[key] = result[key]
+        _cache_write(payload)
     except Exception as e:
         print(f"[License] Could not persist valid license cache: {e}")
 

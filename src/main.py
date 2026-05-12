@@ -1425,7 +1425,6 @@ def main():
             from utils.license_manager import check_license, clear_license_cache, clear_stored_key, load_stored_key
             from utils.license_dialog import LicenseDialog
 
-            clear_license_cache()
             _stored_key = load_stored_key()
             _license_ok = False
             _license_result = {}
